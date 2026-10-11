@@ -21,7 +21,7 @@ describe('image processing', () => {
     const image = await processImage(file, path.join(dir, 'cache'));
     expect(image.renditions.map((r) => r.width)).toEqual([480, 960, 1200]);
     for (const r of image.renditions) {
-      const meta = await sharp(path.join(image.cacheEntry, r.fileName)).metadata();
+      const meta = await sharp(path.join(image.cacheEntry, r.cacheFile)).metadata();
       expect(meta.format).toBe('webp');
       expect(meta.width! / meta.height!).toBeCloseTo(4 / 3, 1);
     }
@@ -48,7 +48,7 @@ describe('image processing', () => {
     const image = await processImage(source, path.join(dir, 'cache'));
     expect(image).toMatchObject({ width: 1600, height: 2400 }); // upright portrait
     for (const r of image.renditions) {
-      const file = path.join(image.cacheEntry, r.fileName);
+      const file = path.join(image.cacheEntry, r.cacheFile);
       expect(await findSensitiveMetadata(file)).toEqual([]);
       const meta = await sharp(file).metadata();
       expect(meta.orientation).toBeUndefined();
@@ -69,8 +69,8 @@ describe('image processing', () => {
       second.renditions.map((r) => r.fileName),
     );
     for (const [i, r] of first.renditions.entries()) {
-      expect(await sha(path.join(first.cacheEntry, r.fileName))).toBe(
-        await sha(path.join(second.cacheEntry, second.renditions[i]!.fileName)),
+      expect(await sha(path.join(first.cacheEntry, r.cacheFile))).toBe(
+        await sha(path.join(second.cacheEntry, second.renditions[i]!.cacheFile)),
       );
     }
   });

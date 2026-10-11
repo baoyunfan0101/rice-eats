@@ -7,19 +7,18 @@ export function printDiagnostics(diagnostics: Diagnostic[], log = console.error)
   }
 }
 
-/** Optional information a maintainer may still want to collect, per restaurant. */
+/**
+ * Information a maintainer may still want to collect, per restaurant. Only
+ * contributorIds is required (to publish); everything else is optional and
+ * must not be invented to fill this list.
+ */
 export function missingInfo(restaurant: LoadedRestaurant): string[] {
-  const { info, review } = restaurant;
+  const { info } = restaurant;
   const missing: string[] = [];
+  if (!info.contributorIds?.length) missing.push('contributorIds (required to publish)');
   if (!info.address) missing.push('address');
   if (!info.location) missing.push('location (not shown on the map)');
   if (!info.cuisines?.length) missing.push('cuisines');
-  if (!info.neighborhood) missing.push('neighborhood');
-  if (!info.summary) missing.push('summary');
-  if (!info.cover) missing.push('cover image');
-  if (info.rating === undefined) missing.push('rating (optional)');
-  if (info.pricePerPerson === undefined) missing.push('pricePerPerson (optional)');
-  if (!review?.trim() && !info.dishes?.length) missing.push('review.md or dishes');
-  if (!info.contributors?.length) missing.push('contributors (required to publish)');
+  if (restaurant.images.length === 0) missing.push('images (no cover)');
   return missing;
 }

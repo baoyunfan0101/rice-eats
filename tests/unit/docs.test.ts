@@ -36,10 +36,10 @@ describe('documentation', () => {
     ]) {
       expect(skill, command).toContain(`npm run ${command}`);
       expect(content, command).toContain(`npm run ${command}`);
-      expect(cli, command).toMatch(new RegExp(`\\n  ${command.split(':')[1]} [<\\[]`));
+      expect(cli, command).toMatch(new RegExp(`\\n  ${command.split(':')[1]} [<\\[a-z-]`));
     }
     for (const text of [skill, agents, content]) {
-      expect(text).toContain('drafts/');
+      expect(text).toContain('private/');
       expect(text).toContain('--approved');
     }
   });

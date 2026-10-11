@@ -49,8 +49,8 @@ describe('image privacy', () => {
       'public/photo.dat',
       'fixtures/clean.jpg',
       'notes.txt',
-      'drafts/secret/info.json',
-      'submissions/x/IMG_1.JPG',
+      'private/drafts/r-secret/info.json',
+      'private/contributors.json',
     ]);
     expect(problems).toHaveLength(4);
     expect(problems[0]).toMatch(
@@ -58,9 +58,9 @@ describe('image privacy', () => {
     );
     expect(problems[1]).toMatch(/public\/photo.dat: contains EXIF metadata with GPS location/);
     expect(problems[2]).toMatch(
-      /drafts\/secret\/info.json: private drafts and submissions must not be committed/,
+      /private\/drafts\/r-secret\/info.json: files in private\/ .* must not be committed/,
     );
-    expect(problems[3]).toMatch(/submissions\/x\/IMG_1.JPG/);
+    expect(problems[3]).toMatch(/private\/contributors.json/);
   });
 
   it('import writes a clean copy that passes the check and leaves the original alone', async () => {

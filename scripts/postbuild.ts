@@ -14,7 +14,7 @@ import { copyFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { ContentIndex, RestaurantDetail } from '../src/content/model.ts';
 import { BASE_PATH, GENERATED_DIR } from '../site.config.ts';
-import { DRAFTS_DIR, RESTAURANT_DIRS, ROOT } from './content/paths.ts';
+import { DRAFTS_DIR, PRIVATE_CONTRIBUTORS, RESTAURANT_DIRS, ROOT } from './content/paths.ts';
 import { findSensitiveMetadata, sniffImageFormat } from './content/privacy.ts';
 
 /** Files in public/ that are deployed as-is. Add new static files here deliberately. */
@@ -29,6 +29,8 @@ export interface PostbuildOptions {
   restaurantsDir: string;
   /** Private drafts whose ids must never appear in the output. */
   draftsDir?: string;
+  /** Private contributor file whose contact details must never appear in the output. */
+  privateContributorsFile?: string;
   base?: string;
   /** Allow fixture data (end-to-end test builds only; never deployed). */
   allowFixtures?: boolean;
@@ -110,6 +112,11 @@ export async function postbuild(distDir: string, options: PostbuildOptions): Pro
       continue;
     }
     const detail = JSON.parse(await readFile(path.join(distDir, file), 'utf8')) as RestaurantDetail;
+    for (const c of detail.contributors ?? []) {
+      if (Object.keys(c).sort().join() !== 'id,name') {
+        problems.push(`${file}: contributor "${c.id}" has fields other than id and name`);
+      }
+    }
     if (detail.id !== id || detail.status !== 'published')
       problems.push(`${file} is not the published "${id}"`);
     collectImages(detail);
@@ -160,6 +167,18 @@ export async function postbuild(distDir: string, options: PostbuildOptions): Pro
     }
   }
 
+  // 6. Private contact details must not appear in any deployed text file.
+  const secrets = await privateContactDetails(options.privateContributorsFile);
+  if (secrets.length > 0) {
+    for (const file of files) {
+      if (!/\.(html|js|css|json|svg|txt)$/.test(file)) continue;
+      const text = (await readFile(path.join(distDir, file), 'utf8')).toLowerCase();
+      if (secrets.some((secret) => text.includes(secret))) {
+        problems.push(`${file} contains a private contributor contact detail`);
+      }
+    }
+  }
+
   if (problems.length > 0) return [...new Set(problems)];
 
   await rm(path.join(distDir, '.vite'), { recursive: true });
@@ -170,6 +189,18 @@ export async function postbuild(distDir: string, options: PostbuildOptions): Pro
     await copyFile(indexHtml, path.join(distDir, 'r', id, 'index.html'));
   }
   return [];
+}
+
+async function privateContactDetails(file: string | undefined): Promise<string[]> {
+  if (!file || !existsSync(file)) return [];
+  const records = JSON.parse(await readFile(file, 'utf8')) as Record<
+    string,
+    { email?: string; contact?: string }
+  >;
+  return Object.values(records)
+    .flatMap((r) => [r.email, r.contact])
+    .filter((v): v is string => typeof v === 'string' && v.trim().length >= 4)
+    .map((v) => v.trim().toLowerCase());
 }
 
 async function readInfos(dir: string | undefined): Promise<{ id?: unknown; status?: unknown }[]> {
@@ -210,6 +241,7 @@ if (import.meta.main) {
   const problems = await postbuild(path.join(ROOT, e2e ? 'dist-e2e' : 'dist'), {
     restaurantsDir: RESTAURANT_DIRS[e2e ? 'fixtures' : 'content'],
     draftsDir: e2e ? undefined : DRAFTS_DIR,
+    privateContributorsFile: PRIVATE_CONTRIBUTORS,
     allowFixtures: e2e,
   });
   if (problems.length > 0) {

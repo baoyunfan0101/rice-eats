@@ -3,9 +3,7 @@
   "status": "published",
   "name": "河湾烤肉（虚构示例）",
   "altNames": ["Bayou BBQ (fictional)"],
-  "summary": "虚构示例：德州风格烟熏牛胸。",
-  "cuisines": ["美式烧烤"],
-  "neighborhood": "Montrose",
+  "cuisines": ["bbq"],
   "address": "200 Example Ave, Houston, TX 77006 (fictional)",
   "location": {
     "lat": 29.7445,
@@ -13,19 +11,16 @@
   },
   "rating": 5,
   "pricePerPerson": 28,
-  "tags": ["烟熏", "聚餐", "示例数据"],
-  "cover": "images/cover.jpg",
-  "coverAlt": "示例图片：烤肉拼盘的抽象插画",
+  "tags": ["group"],
   "dishes": [
     {
       "name": "烟熏牛胸（示例）",
-      "verdict": "推荐",
-      "image": "images/brisket.jpg"
+      "verdict": 1,
+      "image": "images/02-brisket.jpg"
+    },
+    {
+      "name": "冰茶（示例）"
     }
   ],
-  "contributors": [
-    {
-      "name": "示例作者（虚构）"
-    }
-  ]
+  "contributorIds": ["u-001"]
 }

@@ -48,12 +48,13 @@ export const validInfo = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
   status: 'published',
   name: `Test ${id}`,
-  cuisines: ['Test'],
+  cuisines: ['japanese'],
   location: { lat: 29.72, lng: -95.4 },
-  contributors: [{ name: 'Tester' }],
+  contributorIds: ['u-001'],
   ...extra,
 });
 
+/** Writes a restaurant folder named after its id (or `folder`) with extra files. */
 export async function writeRestaurant(
   root: string,
   folder: string,
@@ -73,10 +74,16 @@ export async function writeRestaurant(
   return dir;
 }
 
+/** The public contributor list used by `pipeline()` unless a test passes its own. */
+export const TEST_CONTRIBUTORS = [{ id: 'u-001', name: 'Tester' }];
+
 export async function pipeline(restaurantsDir: string, overrides: Partial<PipelineOptions> = {}) {
   const work = await tempDir();
+  const contributorsFile = path.join(work, 'contributors.json');
+  await writeFile(contributorsFile, JSON.stringify(TEST_CONTRIBUTORS));
   return runPipeline({
     restaurantsDir,
+    contributorsFile,
     source: 'content',
     includeDrafts: false,
     base: '/rice-eats/',

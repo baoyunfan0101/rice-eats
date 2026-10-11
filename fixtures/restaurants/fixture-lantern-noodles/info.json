@@ -3,9 +3,7 @@
   "status": "published",
   "name": "灯笼拉面（虚构示例）",
   "altNames": ["Lantern Noodles (fictional)"],
-  "summary": "虚构示例：浓汤豚骨拉面，适合测试列表、网格和详情页的完整数据。",
-  "cuisines": ["日本菜", "拉面"],
-  "neighborhood": "Rice Village",
+  "cuisines": ["japanese", "ramen"],
   "address": "100 Example St, Houston, TX 77005 (fictional)",
   "location": {
     "lat": 29.7166,
@@ -13,31 +11,21 @@
   },
   "rating": 4,
   "pricePerPerson": 18,
-  "tags": ["汤面", "适合一人食", "示例数据"],
-  "cover": "images/cover.jpg",
-  "coverAlt": "示例图片：一碗拉面的抽象插画",
+  "tags": ["solo"],
   "dishes": [
     {
       "name": "豚骨拉面（示例）",
-      "verdict": "推荐",
-      "comment": "虚构点评：汤底浓郁。",
-      "image": "images/tonkotsu.jpg",
-      "imageAlt": "示例图片：竖幅的拉面插画"
+      "verdict": 1,
+      "comment": "虚构点评：汤底浓郁。"
     },
     {
       "name": "煎饺（示例）",
-      "verdict": "不推荐",
-      "comment": "虚构点评：偏油。",
-      "image": "images/gyoza.jpg",
-      "imageAlt": "示例图片：一盘煎饺的抽象插画"
+      "verdict": -1,
+      "comment": "虚构点评：偏油。"
     }
   ],
   "links": {
     "website": "https://example.com/"
   },
-  "contributors": [
-    {
-      "name": "示例作者（虚构）"
-    }
-  ]
+  "contributorIds": ["u-001"]
 }

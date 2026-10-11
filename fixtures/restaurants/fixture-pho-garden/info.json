@@ -2,9 +2,7 @@
   "id": "fixture-pho-garden",
   "status": "published",
   "name": "河粉花园（虚构示例）",
-  "summary": "虚构示例：清爽的越南河粉，价格友好。",
-  "cuisines": ["越南菜"],
-  "neighborhood": "Midtown",
+  "cuisines": ["vietnamese"],
   "address": "300 Example Blvd, Houston, TX 77002 (fictional)",
   "location": {
     "lat": 29.7406,
@@ -12,12 +10,6 @@
   },
   "rating": 3,
   "pricePerPerson": 14,
-  "tags": ["汤面", "便宜", "示例数据"],
-  "cover": "images/cover.jpg",
-  "coverAlt": "示例图片：一碗河粉的抽象插画",
-  "contributors": [
-    {
-      "name": "示例作者（虚构）"
-    }
-  ]
+  "tags": ["budget"],
+  "contributorIds": ["u-001"]
 }

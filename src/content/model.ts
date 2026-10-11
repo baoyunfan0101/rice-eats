@@ -8,8 +8,8 @@
 export const RATINGS = [5, 4, 3, 2, 1] as const;
 export type Rating = (typeof RATINGS)[number];
 
-export const VERDICTS = ['推荐', '不推荐'] as const;
-export type Verdict = (typeof VERDICTS)[number];
+/** 1: recommended, -1: not recommended. Absent: no opinion. */
+export type Verdict = 1 | -1;
 
 export type PublicationStatus = 'draft' | 'published';
 
@@ -29,9 +29,10 @@ export interface ImageAsset {
   alt: string;
 }
 
+/** Public contributor identity. Contact details are never part of generated data. */
 export interface Contributor {
+  id: string;
   name: string;
-  url?: string;
 }
 
 export interface Dish {
@@ -41,29 +42,37 @@ export interface Dish {
   image?: ImageAsset;
 }
 
+/** Optional explicit map links; otherwise the site derives them from location or address. */
+export interface MapLinks {
+  googleMaps?: string;
+  appleMaps?: string;
+  website?: string;
+}
+
 export interface RestaurantSummary {
   id: string;
   status: PublicationStatus;
   name: string;
   altNames: string[];
-  summary?: string;
+  /** Cuisine keys (see taxonomy.ts). */
   cuisines: string[];
-  neighborhood?: string;
+  /** Tag keys (see taxonomy.ts). */
+  tags: string[];
   address?: string;
   location?: LatLng;
   rating?: Rating;
   pricePerPerson?: number;
-  tags: string[];
+  /** The first image of the restaurant, if any. */
   cover?: ImageAsset;
-  /** Link that opens the restaurant in Google Maps, if one can be derived. */
-  mapsUrl?: string;
+  links: MapLinks;
 }
 
 export interface RestaurantDetail extends RestaurantSummary {
+  /** Every image of the restaurant in its stored order; images[0] is the cover. */
+  images: ImageAsset[];
   dishes: Dish[];
   /** Sanitized HTML rendered from review.md. Empty when there is no review. */
   reviewHtml: string;
-  website?: string;
   contributors: Contributor[];
 }
 

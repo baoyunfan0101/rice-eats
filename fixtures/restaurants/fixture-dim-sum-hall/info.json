@@ -3,9 +3,7 @@
   "status": "published",
   "name": "点心大堂（虚构示例）",
   "altNames": ["Dim Sum Hall (fictional)"],
-  "summary": "虚构示例：周末早茶，详情页包含多张图片和图注。",
-  "cuisines": ["粤菜", "中餐"],
-  "neighborhood": "中国城",
+  "cuisines": ["cantonese", "chinese"],
   "address": "500 Example Dr, Houston, TX 77036 (fictional)",
   "location": {
     "lat": 29.7012,
@@ -13,16 +11,6 @@
   },
   "rating": 3,
   "pricePerPerson": 35,
-  "tags": ["早茶", "聚餐", "示例数据"],
-  "cover": "images/cover.jpg",
-  "coverAlt": "示例图片：餐厅大堂的抽象插画",
-  "contributors": [
-    {
-      "name": "示例作者（虚构）"
-    },
-    {
-      "name": "另一位示例作者（虚构）",
-      "url": "https://example.com/"
-    }
-  ]
+  "tags": ["group"],
+  "contributorIds": ["u-001", "u-002"]
 }

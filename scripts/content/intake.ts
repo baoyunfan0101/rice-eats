@@ -1,9 +1,11 @@
-// Deterministic helpers used by the content-intake Agent Skill:
-// scaffold a draft, import photos safely, extract text from documents, publish.
+// Deterministic helpers used by the content-intake Agent Skill: create or check
+// out a private draft, import photos as canonical images, extract text from
+// documents, and move approved drafts into the public database.
 
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -11,20 +13,30 @@ import mammoth from 'mammoth';
 import sharp from 'sharp';
 import {
   INTAKE_ONLY_IMAGE_EXTENSIONS,
+  STORED_MAX_SIZE,
   SUPPORTED_IMAGE_EXTENSIONS,
   checkImageExtension,
 } from './images.ts';
-import { IMAGES_DIR, INFO_FILE, REVIEW_FILE } from './pipeline.ts';
+import { IMAGES_DIR, INFO_FILE } from './pipeline.ts';
 import { idSchema, type RestaurantInfo } from './schema.ts';
 
 const run = promisify(execFile);
 
-/** Longest side of photos stored in the repository; renditions top out at 1600 px. */
-export const STORED_MAX_SIZE = 2400;
-
 export class IntakeError extends Error {}
 
-/** Creates a draft folder in the private drafts directory. */
+/**
+ * A new restaurant id such as "r-7k3m9q". Ids are random rather than derived
+ * from the name, so names may repeat and can change without changing the URL.
+ */
+export function newRestaurantId(taken: Set<string>): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  for (;;) {
+    const id = `r-${[...randomBytes(6)].map((b) => alphabet[b % alphabet.length]).join('')}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** Creates a draft folder (info.json and images/) in the private drafts directory. */
 export async function createDraft(draftsDir: string, id: string, name: string) {
   const parsedId = idSchema.safeParse(id);
   if (!parsedId.success) throw new IntakeError(`invalid id "${id}": ${parsedId.error.issues[0]?.message}`);
@@ -34,7 +46,6 @@ export async function createDraft(draftsDir: string, id: string, name: string) {
   await mkdir(path.join(dir, IMAGES_DIR), { recursive: true });
   const info: RestaurantInfo = { id, status: 'draft', name: name.trim() };
   await writeFile(path.join(dir, INFO_FILE), `${JSON.stringify(info, null, 2)}\n`);
-  await writeFile(path.join(dir, REVIEW_FILE), '');
   return dir;
 }
 
@@ -57,10 +68,12 @@ export interface ImportedImage {
 }
 
 /**
- * Copies contributor photos into <restaurant>/images/. Originals are never
- * modified. Stored copies are upright, at most STORED_MAX_SIZE px, and free of
- * metadata such as GPS location, because the repository is public.
- * Existing files are never overwritten; a numeric suffix is added instead.
+ * Copies contributor photos into <restaurant>/images/ as canonical images.
+ * Originals are never modified. Stored copies are upright, at most
+ * STORED_MAX_SIZE px, and free of metadata such as GPS location, because the
+ * repository is public. Each copy is named "<NN>-<name>" with the next free
+ * number, so new photos are appended after existing ones and the first image
+ * (the cover) does not change. Existing files are never overwritten.
  */
 export async function importImages(restaurantDir: string, files: string[]): Promise<ImportedImage[]> {
   if (!existsSync(path.join(restaurantDir, INFO_FILE))) {
@@ -90,7 +103,8 @@ export async function importImages(restaurantDir: string, files: string[]): Prom
       // Keep PNG only when transparency matters; photos become JPEG.
       const keepPng = ext === '.png' && !(await sharp(bytes).stats()).isOpaque;
       const outExt = keepPng ? '.png' : '.jpg';
-      const target = uniquePath(imagesDir, safeStem(file), outExt);
+      const target = path.join(imagesDir, `${await nextImageNumber(imagesDir)}-${safeStem(file)}${outExt}`);
+      if (existsSync(target)) throw new IntakeError(`${target} already exists; not overwriting it`);
       const pipeline = image.resize({
         width: STORED_MAX_SIZE,
         height: STORED_MAX_SIZE,
@@ -112,10 +126,9 @@ export async function importImages(restaurantDir: string, files: string[]): Prom
   return imported;
 }
 
-function uniquePath(dir: string, stem: string, ext: string): string {
-  let candidate = path.join(dir, `${stem}${ext}`);
-  for (let n = 2; existsSync(candidate); n++) candidate = path.join(dir, `${stem}-${n}${ext}`);
-  return candidate;
+async function nextImageNumber(imagesDir: string): Promise<string> {
+  const numbers = (await readdir(imagesDir)).map((name) => Number(/^(\d+)-/.exec(name)?.[1] ?? 0));
+  return String(Math.max(0, ...numbers) + 1).padStart(2, '0');
 }
 
 async function convertHeic(file: string, tempDir: string): Promise<string> {
@@ -190,17 +203,74 @@ export async function extractDocument(file: string, imagesOut?: string): Promise
 }
 
 /**
- * Moves an approved draft from the private drafts directory into the public
- * content directory. Refuses to replace an existing folder.
+ * Copies a restaurant from the public database into the private drafts
+ * directory so it can be edited (each restaurant has one review, which is
+ * edited in place rather than added to). The copy is marked "draft".
+ */
+export async function checkoutRestaurant(restaurantsDir: string, draftsDir: string, id: string) {
+  const from = path.join(restaurantsDir, id);
+  const to = path.join(draftsDir, id);
+  if (!existsSync(path.join(from, INFO_FILE))) throw new IntakeError(`no restaurant "${id}" in ${restaurantsDir}`);
+  if (existsSync(to)) throw new IntakeError(`${to} already exists; continue editing that draft`);
+  await mkdir(draftsDir, { recursive: true });
+  await cp(from, to, { recursive: true });
+  await setStatus(to, 'draft');
+  return to;
+}
+
+export interface FolderChanges {
+  added: string[];
+  changed: string[];
+  removed: string[];
+}
+
+/** File-level differences between a draft and the public folder it would replace. */
+export async function folderChanges(draft: string, target: string): Promise<FolderChanges> {
+  const files = async (dir: string) =>
+    existsSync(dir)
+      ? (await readdir(dir, { recursive: true, withFileTypes: true }))
+          .filter((e) => e.isFile() && !e.name.startsWith('.'))
+          .map((e) => path.relative(dir, path.join(e.parentPath, e.name)))
+      : [];
+  const before = new Set(await files(target));
+  const after = await files(draft);
+  const changes: FolderChanges = { added: [], changed: [], removed: [] };
+  for (const file of after.sort()) {
+    if (!before.has(file)) changes.added.push(file);
+    else if (!(await readFile(path.join(draft, file))).equals(await readFile(path.join(target, file)))) {
+      // info.json differs at least by status when an edit is checked out; compare without it.
+      if (file === INFO_FILE && (await sameInfoIgnoringStatus(draft, target))) continue;
+      changes.changed.push(file);
+    }
+  }
+  for (const file of [...before].sort()) if (!after.includes(file)) changes.removed.push(file);
+  return changes;
+}
+
+async function sameInfoIgnoringStatus(a: string, b: string) {
+  const read = async (dir: string) => {
+    const info = JSON.parse(await readFile(path.join(dir, INFO_FILE), 'utf8')) as Record<string, unknown>;
+    delete info.status;
+    return JSON.stringify(info);
+  };
+  return (await read(a)) === (await read(b));
+}
+
+/**
+ * Moves an approved draft into the public database. A new restaurant keeps
+ * "status": "draft". An edited restaurant replaces its public folder and keeps
+ * the public folder's status. Callers show folderChanges() first.
  */
 export async function moveDraft(draftsDir: string, restaurantsDir: string, id: string) {
   const from = path.join(draftsDir, id);
   const to = path.join(restaurantsDir, id);
   if (!existsSync(path.join(from, INFO_FILE))) throw new IntakeError(`no draft at ${from}`);
-  if (existsSync(to)) {
-    throw new IntakeError(`${to} already exists; merge the changes by hand instead of replacing it`);
-  }
   await mkdir(restaurantsDir, { recursive: true });
+  if (existsSync(to)) {
+    const { status } = JSON.parse(await readFile(path.join(to, INFO_FILE), 'utf8')) as { status: 'draft' | 'published' };
+    await setStatus(from, status);
+    await rm(to, { recursive: true });
+  }
   await rename(from, to);
   return to;
 }

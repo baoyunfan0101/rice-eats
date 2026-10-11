@@ -12,6 +12,8 @@
     "content:build": "tsx scripts/content/cli.ts build",
     "content:check": "tsx scripts/content/cli.ts check",
     "content:new": "tsx scripts/content/cli.ts new",
+    "content:edit": "tsx scripts/content/cli.ts edit",
+    "content:contributor": "tsx scripts/content/cli.ts contributor",
     "content:add-images": "tsx scripts/content/cli.ts add-images",
     "content:extract": "tsx scripts/content/cli.ts extract",
     "content:promote": "tsx scripts/content/cli.ts promote",

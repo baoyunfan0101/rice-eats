@@ -1,8 +1,9 @@
 // Repository privacy check (run in CI):
-// - nothing under the private drafts/ or submissions/ folders is tracked by Git;
+// - nothing under the git-ignored private/ folder (drafts, raw submissions,
+//   contributor contact details) is tracked by Git;
 // - no tracked image carries EXIF, XMP, or IPTC metadata (GPS location, camera,
 //   timestamps). Images are recognized by content, not by file extension.
-// Untracked local originals (e.g. in submissions/) are not checked.
+// Untracked local files (e.g. originals in private/submissions/) are not checked.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -10,14 +11,14 @@ import path from 'node:path';
 import { findSensitiveMetadata, PRIVACY_FIX, sniffImageFormat } from './content/privacy.ts';
 import { ROOT } from './content/paths.ts';
 
-export const PRIVATE_DIRS = ['drafts/', 'submissions/'];
+export const PRIVATE_DIRS = ['private/'];
 
 export async function checkTrackedFiles(root: string, files: string[]): Promise<string[]> {
   const problems: string[] = [];
   for (const file of files) {
     if (PRIVATE_DIRS.some((dir) => file.startsWith(dir))) {
       problems.push(
-        `${file}: private drafts and submissions must not be committed; remove it with "git rm --cached"`,
+        `${file}: files in private/ (drafts, submissions, contact details) must not be committed; remove it with "git rm --cached"`,
       );
       continue;
     }

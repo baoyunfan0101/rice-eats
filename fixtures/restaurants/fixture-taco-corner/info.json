@@ -2,21 +2,13 @@
   "id": "fixture-taco-corner",
   "status": "published",
   "name": "街角塔可（虚构示例）",
-  "summary": "虚构示例：快手午餐。",
-  "cuisines": ["墨西哥菜"],
-  "neighborhood": "Rice Village",
+  "cuisines": ["mexican"],
   "location": {
     "lat": 29.7181,
     "lng": -95.4161
   },
   "rating": 2,
   "pricePerPerson": 11,
-  "tags": ["快餐", "便宜", "示例数据"],
-  "cover": "images/cover.jpg",
-  "coverAlt": "示例图片：塔可的抽象插画",
-  "contributors": [
-    {
-      "name": "示例作者（虚构）"
-    }
-  ]
+  "tags": ["quick", "budget"],
+  "contributorIds": ["u-001"]
 }

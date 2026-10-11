@@ -134,6 +134,49 @@ describe('postbuild allowlist', () => {
     expect(problems).toMatch(/published restaurant "a" is missing/);
   });
 
+  it('rejects private contributor contact details and extra contributor fields', async () => {
+    const { dist, write } = await setup();
+    const privateFile = path.join(await tempDir(), 'contributors.json');
+    await writeFile(
+      privateFile,
+      JSON.stringify({ 'u-001': { name: 'Tester', email: 'tester@example.com' } }),
+    );
+    const summary = {
+      id: 'a',
+      status: 'published',
+      name: 'A',
+      altNames: [],
+      cuisines: [],
+      tags: [],
+      links: {},
+    };
+    await write('generated/restaurants/a.json', {
+      ...summary,
+      images: [],
+      dishes: [],
+      reviewHtml: '<p>mail tester@example.com</p>',
+      contributors: [{ id: 'u-001', name: 'Tester', email: 'tester@example.com' }],
+    });
+    await write('generated/index.json', {
+      source: 'content',
+      includesDrafts: false,
+      restaurants: [summary],
+    });
+    const content = await tempDir();
+    await writeRestaurant(content, 'a', validInfo('a'));
+    const problems = (
+      await postbuild(dist, {
+        restaurantsDir: content,
+        privateContributorsFile: privateFile,
+        base: BASE,
+      })
+    ).join('\n');
+    expect(problems).toMatch(/contributor "u-001" has fields other than id and name/);
+    expect(problems).toMatch(
+      /generated\/restaurants\/a.json contains a private contributor contact detail/,
+    );
+  });
+
   it('rejects images that are not clean pipeline renditions', async () => {
     const { dist, run } = await setup();
     await makePhonePhoto(path.join(dist, IMG)); // a JPEG with GPS under a .webp name

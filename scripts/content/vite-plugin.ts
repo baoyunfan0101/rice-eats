@@ -5,10 +5,11 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 import { BASE_PATH } from '../../site.config.ts';
 import {
+  DATABASES,
   DRAFTS_DIR,
   IMAGE_CACHE_DIR,
   OUT_DIR,
-  RESTAURANT_DIRS,
+  PRIVATE_CONTRIBUTORS,
   draftsFromEnv,
   sourceFromEnv,
 } from './paths.ts';
@@ -21,18 +22,21 @@ export function contentDevPlugin(): Plugin {
     apply: (_config, env) => env.command === 'serve' && !process.env.VITEST,
     async configureServer(server) {
       const source = sourceFromEnv();
-      const restaurantsDir = RESTAURANT_DIRS[source];
+      const { restaurants: restaurantsDir, contributors: contributorsFile } = DATABASES[source];
       const includeDrafts = draftsFromEnv();
       // Private drafts are only read for `npm run dev:drafts`.
       const draftsDir = includeDrafts && source === 'content' ? DRAFTS_DIR : undefined;
       const watched = [restaurantsDir, ...(draftsDir ? [draftsDir] : [])];
+      const watchedFiles = [contributorsFile, ...(draftsDir ? [PRIVATE_CONTRIBUTORS] : [])];
       let running: Promise<void> | undefined;
       let queued = false;
 
       const build = async () => {
         const result = await runPipeline({
           restaurantsDir,
+          contributorsFile,
           draftsDir,
+          privateContributorsFile: draftsDir ? PRIVATE_CONTRIBUTORS : undefined,
           source,
           includeDrafts,
           base: BASE_PATH,
@@ -66,9 +70,9 @@ export function contentDevPlugin(): Plugin {
       };
 
       await build();
-      server.watcher.add(watched);
+      server.watcher.add([...watched, ...watchedFiles]);
       const onChange = (file: string) => {
-        if (watched.some((dir) => file.startsWith(dir + path.sep))) rebuild();
+        if (watchedFiles.includes(file) || watched.some((dir) => file.startsWith(dir + path.sep))) rebuild();
       };
       server.watcher.on('add', onChange);
       server.watcher.on('change', onChange);

@@ -17,7 +17,10 @@ export const RENDITION_WIDTHS = [480, 960, 1600];
 const WEBP_OPTIONS = { quality: 78, effort: 4 } as const;
 
 export interface Rendition {
+  /** Output name: "<source name>-<content hash>-<width>.webp". */
   fileName: string;
+  /** Name of the file inside the cache entry ("<width>.webp"). */
+  cacheFile: string;
   width: number;
   height: number;
   bytes: number;
@@ -33,6 +36,36 @@ export interface ProcessedImage {
 }
 
 export class ImageError extends Error {}
+
+/**
+ * Canonical (stored) images: "<NN>-<name>.jpg|png" in a restaurant's images/
+ * folder. The number fixes the order; the first image is the cover. They are
+ * written by content:add-images: upright, at most STORED_MAX_SIZE px, no metadata.
+ */
+export const CANONICAL_IMAGE_NAME = /^\d{2,}-[a-z0-9]+(?:-[a-z0-9]+)*\.(jpg|png)$/;
+export const STORED_MAX_SIZE = 2400;
+
+/** Problems that make a stored image non-canonical (empty when it is fine). */
+export async function canonicalImageProblems(file: string): Promise<string[]> {
+  const problems: string[] = [];
+  const name = path.basename(file);
+  if (!CANONICAL_IMAGE_NAME.test(name)) {
+    problems.push('name must look like "03-dish-name.jpg" (number for ordering, lowercase, .jpg or .png)');
+  }
+  let meta: Metadata;
+  try {
+    meta = await sharp(file).metadata();
+  } catch {
+    return [...problems, 'not a readable image'];
+  }
+  const expected = name.endsWith('.png') ? 'png' : 'jpeg';
+  if (meta.format !== expected) problems.push(`content is ${meta.format}, not ${expected}`);
+  if ((meta.width ?? 0) > STORED_MAX_SIZE || (meta.height ?? 0) > STORED_MAX_SIZE) {
+    problems.push(`larger than ${STORED_MAX_SIZE}px`);
+  }
+  if (meta.orientation && meta.orientation !== 1) problems.push('not rotated upright');
+  return problems;
+}
 
 export function checkImageExtension(file: string): void {
   const ext = path.extname(file).toLowerCase();
@@ -58,15 +91,22 @@ export async function processImage(sourcePath: string, cacheDir: string): Promis
   const input = await readFile(sourcePath);
   const key = createHash('sha256')
     .update(input)
-    .update(JSON.stringify({ RENDITION_WIDTHS, WEBP_OPTIONS, sharp: sharp.versions.sharp }))
+    // Everything that affects the cached files is part of the key.
+    .update(JSON.stringify({ RENDITION_WIDTHS, WEBP_OPTIONS, sharp: sharp.versions.sharp, files: '<width>.webp' }))
     .digest('hex')
     .slice(0, 16);
   const entryDir = path.join(cacheDir, key);
   const manifestPath = path.join(entryDir, 'manifest.json');
 
+  // The cache is keyed by content only; output names also carry the source name.
+  const base = path.basename(sourcePath, path.extname(sourcePath)).toLowerCase();
+  const named = (cached: Omit<ProcessedImage, 'cacheEntry'>): ProcessedImage => ({
+    ...cached,
+    renditions: cached.renditions.map((r) => ({ ...r, fileName: `${base}-${key.slice(0, 8)}-${r.width}.webp` })),
+    cacheEntry: entryDir,
+  });
   try {
-    const cached = JSON.parse(await readFile(manifestPath, 'utf8')) as Omit<ProcessedImage, 'cacheEntry'>;
-    return { ...cached, cacheEntry: entryDir };
+    return named(JSON.parse(await readFile(manifestPath, 'utf8')) as Omit<ProcessedImage, 'cacheEntry'>);
   } catch {
     // Not cached yet.
   }
@@ -86,7 +126,6 @@ export async function processImage(sourcePath: string, cacheDir: string): Promis
   widths.push(Math.min(sourceWidth, RENDITION_WIDTHS.at(-1)!));
 
   await mkdir(entryDir, { recursive: true });
-  const base = path.basename(sourcePath, path.extname(sourcePath)).toLowerCase();
   const renditions: Rendition[] = [];
   for (const width of [...new Set(widths)]) {
     const { data, info } = await sharp(input)
@@ -94,9 +133,9 @@ export async function processImage(sourcePath: string, cacheDir: string): Promis
       .resize({ width, withoutEnlargement: true })
       .webp(WEBP_OPTIONS)
       .toBuffer({ resolveWithObject: true });
-    const fileName = `${base}-${key.slice(0, 8)}-${info.width}.webp`;
-    await writeFile(path.join(entryDir, fileName), data);
-    renditions.push({ fileName, width: info.width, height: info.height, bytes: info.size });
+    const cacheFile = `${info.width}.webp`;
+    await writeFile(path.join(entryDir, cacheFile), data);
+    renditions.push({ fileName: '', cacheFile, width: info.width, height: info.height, bytes: info.size });
   }
 
   const largest = renditions.at(-1)!;
@@ -108,13 +147,13 @@ export async function processImage(sourcePath: string, cacheDir: string): Promis
   // Write the manifest last (atomically) so an interrupted run is never treated as cached.
   await writeFile(`${manifestPath}.tmp`, JSON.stringify(result));
   await rename(`${manifestPath}.tmp`, manifestPath);
-  return { ...result, cacheEntry: entryDir };
+  return named(result);
 }
 
 /** Copies cached renditions into a public output directory. */
 export async function copyRenditions(image: ProcessedImage, outDir: string): Promise<void> {
   await mkdir(outDir, { recursive: true });
   for (const rendition of image.renditions) {
-    await copyFile(path.join(image.cacheEntry, rendition.fileName), path.join(outDir, rendition.fileName));
+    await copyFile(path.join(image.cacheEntry, rendition.cacheFile), path.join(outDir, rendition.fileName));
   }
 }
