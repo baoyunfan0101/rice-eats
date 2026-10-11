@@ -55,33 +55,41 @@ The dev server rebuilds content and reloads the page when anything under the con
 | `npm run typecheck`     | TypeScript                                                                                        |
 | `npm test`              | Unit and component tests                                                                          |
 | `npm run test:e2e`      | Browser tests against a fixture build served like GitHub Pages (uses the installed Google Chrome) |
+| `npm run check:privacy` | Check that no draft, submission, or photo with metadata is tracked by Git                         |
 | `npm run content:check` | Validate all restaurant content                                                                   |
 | `npm run images`        | Process restaurant photos and show the results                                                    |
-| `npm run build`         | Validate content and build the site into `dist/`                                                  |
+| `npm run build`         | Validate content, build the site into `dist/`, and check `dist/` against the allowlist            |
 | `npm run preview`       | Serve the production build locally                                                                |
 
 The site works with zero published restaurants and shows a "coming soon" state; the fictional fixtures in `fixtures/` are only used for development and tests and are never deployed.
 
 ## Content
 
-Each restaurant is a folder under `content/restaurants/` with an `info.json`, an optional `review.md`, and an `images/` folder. There is no index to maintain. See [docs/content.md](docs/content.md) for the schema, Markdown and photo conventions, and the publication workflow.
+Each published restaurant is a folder under `content/restaurants/` with an `info.json`, an optional `review.md`, and an `images/` folder; there is no index to maintain. Ratings are stored as numbers from 1 to 5 and shown as 夯 / 顶级 / 人上人 / NPC / 拉完了. See [docs/content.md](docs/content.md) for the schema, photo and Markdown conventions, and the full publication workflow.
+
+Because this repository is public, contributor material stays private until it is approved: originals go in `submissions/` and drafts in `drafts/`, both git-ignored. A maintainer then approves each restaurant twice: once to add it to the public repository (`npm run content:promote -- <id> --approved`) and once to show it on the website (`npm run content:publish -- <id> --approved`). These commands cannot verify who approved them; the flag only prevents accidental runs.
+
+Photos are imported with `npm run content:add-images`, which keeps the original untouched and stores a clean, upright copy without GPS or other metadata. Tracked photos that still carry metadata fail validation.
 
 ### Contributing a restaurant
 
 1. Write about the restaurant however you like (plain text, a Word document, notes) and collect your photos.
 2. Send them to a maintainer, or give them to a coding agent working in this repository.
-3. Review the draft page the maintainer or agent prepares.
-4. Approve it for publication. Only then does it appear on the site, credited to you.
+3. Review the private draft the maintainer or agent prepares, and confirm how you want to be credited.
+4. Approve it. Only then is it added to the public repository and shown on the site, credited to you.
 
 ### Agent-assisted preparation
 
-Coding agents follow the `restaurant-intake` Agent Skill ([.claude/skills/restaurant-intake/SKILL.md](.claude/skills/restaurant-intake/SKILL.md)), referenced from [AGENTS.md](AGENTS.md). It extracts text from documents, imports and converts photos (including HEIC on macOS) with location metadata removed, writes `info.json` and `review.md` without inventing facts or rewriting opinions, runs validation, and reports what is missing. Content stays a draft until a maintainer runs `npm run content:publish -- <id>`.
+Coding agents follow the `restaurant-intake` Agent Skill ([.claude/skills/restaurant-intake/SKILL.md](.claude/skills/restaurant-intake/SKILL.md)), referenced from [AGENTS.md](AGENTS.md). It extracts text from documents, imports photos (including HEIC on macOS), writes the draft without inventing facts or rewriting opinions, runs `npm run content:check`, and reports what is missing. It never commits, promotes, or publishes without the maintainer's explicit approval.
 
 ## Deployment
 
-Pushes to `main` build and deploy the site with GitHub Actions (`.github/workflows/deploy.yml`); the workflow can also be run manually. Pull requests run lint, type checks, unit tests, end-to-end tests, and a production build (`.github/workflows/ci.yml`).
+`.github/workflows/ci.yml` runs on every pull request: lint and formatting, type checks, unit tests, the privacy check, content validation, the production build with its output allowlist, and end-to-end tests. `.github/workflows/deploy.yml` runs on pushes to `main` (and manually): it runs the same CI workflow first and only then builds and deploys to GitHub Pages, so direct pushes cannot skip the checks.
 
-One-time manual setting: in the repository's **Settings → Pages**, set **Source** to **GitHub Actions**.
+Repository settings this relies on:
+
+- **Settings → Pages → Source: GitHub Actions** (configured).
+- **Settings → Rules → Rulesets → "Protect main"**: changes to `main` go through pull requests, the `check` CI job must pass, force pushes and branch deletion are blocked, and nobody can bypass it.
 
 The site is served from `/rice-eats/`. To build for another path, set `BASE_PATH` (for example `BASE_PATH=/ npm run build`). Map tiles come from OpenStreetMap, whose [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) allows light use with attribution; to use another provider, set `VITE_TILE_URL` and `VITE_TILE_ATTRIBUTION` at build time.
 
