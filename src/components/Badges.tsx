@@ -1,0 +1,52 @@
+import type { Tier, Verdict } from '../content/model';
+import { TIER_HINT, TIER_STYLES } from '../lib/format';
+
+export function TierBadge({ tier, size = 'sm' }: { tier?: Tier; size?: 'sm' | 'lg' }) {
+  if (!tier) return null;
+  return (
+    <span
+      title={TIER_HINT}
+      className={`inline-flex shrink-0 items-center rounded-full font-bold ${TIER_STYLES[tier]} ${
+        size === 'lg' ? 'px-3 py-1 text-base' : 'px-2 py-0.5 text-xs'
+      }`}
+    >
+      <span className="sr-only">评级：</span>
+      {tier}
+    </span>
+  );
+}
+
+export function VerdictBadge({ verdict }: { verdict?: Verdict }) {
+  if (!verdict) return null;
+  const good = verdict === '推荐';
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+        good ? 'bg-basil-50 text-basil-600' : 'bg-stone-200 text-stone-600'
+      }`}
+    >
+      {good ? '👍 推荐' : '👎 不推荐'}
+    </span>
+  );
+}
+
+export function DraftBadge() {
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full border border-dashed border-amber-500 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
+      草稿预览
+    </span>
+  );
+}
+
+export function Tags({ tags }: { tags: string[] }) {
+  if (tags.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap gap-1.5" aria-label="标签">
+      {tags.map((tag) => (
+        <li key={tag} className="rounded-md bg-line/70 px-2 py-0.5 text-xs text-muted">
+          {tag}
+        </li>
+      ))}
+    </ul>
+  );
+}

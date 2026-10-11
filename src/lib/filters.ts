@@ -1,0 +1,124 @@
+// Browsing state (view, search, filters, selection) lives in the URL query so
+// it is shareable and survives reloads. All views use the same filtered list.
+
+import {
+  PRICE_BUCKETS,
+  priceBucketOf,
+  TIERS,
+  type PriceBucketId,
+  type RestaurantSummary,
+} from '../content/model';
+
+export const VIEWS = ['list', 'grid', 'map'] as const;
+export type View = (typeof VIEWS)[number];
+
+export const SORTS = ['tier', 'name', 'price'] as const;
+export type Sort = (typeof SORTS)[number];
+
+export interface BrowseState {
+  view: View;
+  query: string;
+  cuisine: string;
+  neighborhood: string;
+  price: PriceBucketId | '';
+  sort: Sort;
+  /** Selected restaurant (highlighted on the map). */
+  selected: string;
+}
+
+export const DEFAULT_STATE: BrowseState = {
+  view: 'list',
+  query: '',
+  cuisine: '',
+  neighborhood: '',
+  price: '',
+  sort: 'tier',
+  selected: '',
+};
+
+const oneOf = <T extends string>(values: readonly T[], value: string | null, fallback: T): T =>
+  values.includes(value as T) ? (value as T) : fallback;
+
+export function parseBrowseState(params: URLSearchParams): BrowseState {
+  return {
+    view: oneOf(VIEWS, params.get('view'), DEFAULT_STATE.view),
+    query: params.get('q') ?? '',
+    cuisine: params.get('cuisine') ?? '',
+    neighborhood: params.get('area') ?? '',
+    price: oneOf(
+      PRICE_BUCKETS.map((b) => b.id),
+      params.get('price'),
+      '',
+    ),
+    sort: oneOf(SORTS, params.get('sort'), DEFAULT_STATE.sort),
+    selected: params.get('id') ?? '',
+  };
+}
+
+export function toSearchParams(state: BrowseState): URLSearchParams {
+  const params = new URLSearchParams();
+  if (state.view !== DEFAULT_STATE.view) params.set('view', state.view);
+  if (state.query) params.set('q', state.query);
+  if (state.cuisine) params.set('cuisine', state.cuisine);
+  if (state.neighborhood) params.set('area', state.neighborhood);
+  if (state.price) params.set('price', state.price);
+  if (state.sort !== DEFAULT_STATE.sort) params.set('sort', state.sort);
+  if (state.selected) params.set('id', state.selected);
+  return params;
+}
+
+export function hasActiveFilters(state: BrowseState): boolean {
+  return Boolean(state.query || state.cuisine || state.neighborhood || state.price);
+}
+
+export function clearFilters(state: BrowseState): BrowseState {
+  return { ...state, query: '', cuisine: '', neighborhood: '', price: '' };
+}
+
+const normalize = (text: string) =>
+  text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+
+export function filterRestaurants(
+  restaurants: RestaurantSummary[],
+  state: BrowseState,
+): RestaurantSummary[] {
+  const query = normalize(state.query);
+  const result = restaurants.filter((r) => {
+    if (query && ![r.name, ...r.altNames].some((name) => normalize(name).includes(query))) {
+      return false;
+    }
+    if (state.cuisine && !r.cuisines.includes(state.cuisine)) return false;
+    if (state.neighborhood && r.neighborhood !== state.neighborhood) return false;
+    if (state.price && priceBucketOf(r.pricePerPerson) !== state.price) return false;
+    return true;
+  });
+  return sortRestaurants(result, state.sort);
+}
+
+const tierRank = (r: RestaurantSummary) => (r.tier ? TIERS.indexOf(r.tier) : TIERS.length);
+const byName = (a: RestaurantSummary, b: RestaurantSummary) =>
+  a.name.localeCompare(b.name, 'zh-Hans-CN');
+
+export function sortRestaurants(list: RestaurantSummary[], sort: Sort): RestaurantSummary[] {
+  const sorted = [...list];
+  if (sort === 'name') sorted.sort(byName);
+  if (sort === 'tier') sorted.sort((a, b) => tierRank(a) - tierRank(b) || byName(a, b));
+  if (sort === 'price') {
+    sorted.sort(
+      (a, b) => (a.pricePerPerson ?? Infinity) - (b.pricePerPerson ?? Infinity) || byName(a, b),
+    );
+  }
+  return sorted;
+}
+
+/** Distinct values for filter menus, most common first. */
+export function facetValues(
+  restaurants: RestaurantSummary[],
+  pick: (r: RestaurantSummary) => string[],
+): string[] {
+  const counts = new Map<string, number>();
+  for (const r of restaurants) for (const v of pick(r)) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-Hans-CN'))
+    .map(([value]) => value);
+}
