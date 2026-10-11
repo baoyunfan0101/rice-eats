@@ -61,7 +61,7 @@ Desktop.ini
 public/generated/
 
 # Raw contributor submissions; never commit these
-submissions/
+/submissions/
 
 # Playwright
 test-results/
