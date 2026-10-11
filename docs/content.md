@@ -1,72 +1,79 @@
 # Content guide
 
-This is the reference for restaurant content: where it lives, the Restaurant
-Schema, how photos and reviews are processed, and how drafts become public.
-Contributors do not need to read this; they send text and photos and a
-maintainer (usually with the `restaurant-intake` Agent Skill) prepares the files.
+Reference for the restaurant database: where it lives, its formats, how photos
+and reviews are handled, and how drafts become public. Contributors do not need
+to read this; they send text and/or photos, and a maintainer (usually with the
+`restaurant-intake` Agent Skill) turns them into database records.
+
+## Layers
+
+- **Database** (`content/`): the canonical, file-based source of truth.
+- **Content management** (`scripts/content/`, `.claude/skills/restaurant-intake/`):
+  local commands and the Agent Skill that create, check, and approve records.
+- **Website** (`src/`): reads data generated at build time
+  (`public/generated/`, not committed) and never changes the database.
 
 ## Layout and privacy
 
-The GitHub repository is public, and anything committed stays in its history.
-Unapproved material therefore never enters Git:
+The GitHub repository is public and anything committed stays in its history,
+so unapproved material never enters Git:
 
 ```text
-submissions/<id>/        contributors' original files      git-ignored, private
-drafts/<id>/             drafts being prepared/reviewed    git-ignored, private
-content/restaurants/<id>/ approved restaurants             tracked, public
-  info.json              structured data (Restaurant Schema below)
-  review.md              optional long-form review in Markdown
-  images/                clean photos referenced by info.json or review.md
-fixtures/restaurants/    fictional development data        tracked, never deployed
-fixtures/submissions/    a fictional submission used by tests
+content/                          public database (tracked)
+  contributors.json               public contributor identities: [{ "id", "name" }]
+  restaurants/<id>/               one folder per restaurant, named after its id
+    info.json                     metadata (Restaurant Schema below)
+    review.md                     optional; the restaurant's single review
+    images/01-<name>.jpg          standardized photos; the first is the cover
+private/                          git-ignored, never committed or deployed
+  submissions/                    raw submissions while they are processed
+  drafts/<id>/                    drafts, same layout as content/restaurants/<id>/
+  contributors.json               new contributors and contact details
+fixtures/                         fictional development data (never deployed)
 ```
 
-There is no index file to maintain: the build discovers every folder.
-`npm run check:privacy` (also run in CI) fails if anything under `drafts/` or
-`submissions/` is tracked.
+There is no index to maintain: the build discovers every folder.
+`npm run check:privacy` (also in CI) fails if anything under `private/` is
+tracked or a tracked image carries metadata.
 
 ## Restaurant Schema (`info.json`)
 
-Only `id`, `status`, and `name` are required for a draft. Unknown fields are
+Only `id`, `status`, and `name` are required. Everything else is optional and
+is left out when the submission does not provide it. Unknown fields are
 rejected so typos are caught.
 
-| Field            | Type / values                                       | Notes                                                                                                                            |
-| ---------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `id`             | `lowercase-ascii-with-hyphens`                      | Required. Stable and unique; used in URLs (`/r/<id>/`). Use it as the folder name.                                               |
-| `status`         | `"draft"` or `"published"`                          | Required. Only `published` restaurants in `content/restaurants/` are built into the site. Drafts in `drafts/` must stay `draft`. |
-| `name`           | string                                              | Required. Display name.                                                                                                          |
-| `altNames`       | string[]                                            | Other names (e.g. English or Chinese name). Searchable.                                                                          |
-| `summary`        | string, max 160 chars                               | One or two sentences for list and grid views.                                                                                    |
-| `cuisines`       | string[]                                            | Used by the cuisine filter, e.g. `["越南菜"]`.                                                                                   |
-| `neighborhood`   | string                                              | Used by the area filter, e.g. `"Rice Village"`.                                                                                  |
-| `address`        | string                                              |                                                                                                                                  |
-| `location`       | `{ "lat": number, "lng": number }`                  | Needed for the map. Must be within 100 km of Rice University.                                                                    |
-| `rating`         | integer `1`-`5`                                     | Optional personal rating; see below.                                                                                             |
-| `pricePerPerson` | number (USD)                                        | Optional; drives the price filter.                                                                                               |
-| `tags`           | string[]                                            | Free-form labels.                                                                                                                |
-| `cover`          | path, e.g. `"images/pho.jpg"`                       | Cover photo. A neutral placeholder is shown when absent.                                                                         |
-| `coverAlt`       | string                                              | Alt text for the cover; defaults to the name.                                                                                    |
-| `dishes`         | `{ name, verdict?, comment?, image?, imageAlt? }[]` | `verdict` is `推荐` or `不推荐`.                                                                                                 |
-| `links`          | `{ "googleMaps"?: url, "website"?: url }`           | Without `googleMaps`, a Google Maps search link is derived from the address or coordinates.                                      |
-| `contributors`   | `{ name, url? }[]`                                  | Who wrote the text and took the photos. Required to promote or publish.                                                          |
+| Field            | Type / values                                  | Notes                                                                                                                                     |
+| ---------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | e.g. `r-7k3m9q`                                | Required. Generated by `content:new`, unique, never changes (also used in URLs `/r/<id>/`). Must equal the folder name. Names may repeat. |
+| `status`         | `"draft"` or `"published"`                     | Required. Only `published` restaurants are built into the site; private drafts stay `draft`.                                              |
+| `name`           | string                                         | Required. Display name; can change freely.                                                                                                |
+| `altNames`       | string[]                                       | Other names (e.g. English or Chinese). Searchable.                                                                                        |
+| `address`        | string                                         |                                                                                                                                           |
+| `location`       | `{ "lat": number, "lng": number }`             | Needed for the map. Must be within 100 km of Rice University.                                                                             |
+| `cuisines`       | cuisine keys, e.g. `["sichuan"]`               | Keys from `src/content/taxonomy.ts`. Filterable.                                                                                          |
+| `tags`           | tag keys, e.g. `["date", "group"]`             | Scenario tags from `taxonomy.ts`. Filterable. Only when the contributor said so.                                                          |
+| `rating`         | integer `1`-`5`                                | Personal rating; see below.                                                                                                               |
+| `pricePerPerson` | number (USD)                                   | Drives the price filter.                                                                                                                  |
+| `dishes`         | `{ name, verdict?, comment?, image? }[]`       | `verdict`: `1` recommended, `-1` not recommended, absent = no opinion. `image`: `images/<file>`.                                          |
+| `links`          | `{ googleMaps?, appleMaps?, website? }` (URLs) | Map links are derived from location/address; set them only to override a wrong result.                                                    |
+| `contributorIds` | e.g. `["u-001"]`                               | Who wrote the text and took the photos. Required to promote or publish.                                                                   |
 
-Paths are relative to the restaurant folder and must stay inside it. The zod
-definition is `scripts/content/schema.ts`; the generated data shapes the site
-reads are in `src/content/model.ts`.
+The zod definitions are in `scripts/content/schema.ts`; the generated shapes the
+website reads are in `src/content/model.ts`.
 
-### Ratings
+### Controlled values and labels
 
-`rating` is a whole number; the data never contains the label. The labels are
-defined once, in `RATING_LABELS` in `src/lib/format.ts`, so changing the
-wording needs no content changes:
+Data stores keys; `src/content/taxonomy.ts` is the only place display labels
+are defined, so wording can change without touching restaurant data. To add a
+cuisine or tag, add one line there.
 
-| `rating` | Label  |
-| -------- | ------ |
-| 5        | 夯     |
-| 4        | 顶级   |
-| 3        | 人上人 |
-| 2        | NPC    |
-| 1        | 拉完了 |
+| `rating` | Label  |     | `verdict` | Label |
+| -------- | ------ | --- | --------- | ----- |
+| 5        | 夯     |     | 1         | 推荐  |
+| 4        | 顶级   |     | -1        | 避雷  |
+| 3        | 人上人 |     | (absent)  | none  |
+| 2        | NPC    |     |           |       |
+| 1        | 拉完了 |     |           |       |
 
 Sorting by rating puts 5 first and unrated restaurants last.
 
@@ -74,64 +81,74 @@ Example:
 
 ```json
 {
-  "id": "example-noodles",
+  "id": "r-7k3m9q",
   "status": "draft",
   "name": "Example Noodles",
-  "cuisines": ["日本菜"],
-  "neighborhood": "Rice Village",
+  "cuisines": ["japanese", "ramen"],
+  "tags": ["solo"],
   "location": { "lat": 29.7166, "lng": -95.4137 },
   "rating": 4,
   "pricePerPerson": 18,
-  "cover": "images/cover.jpg",
-  "dishes": [{ "name": "豚骨拉面", "verdict": "推荐", "image": "images/ramen.jpg" }],
-  "contributors": [{ "name": "Author Name" }]
+  "dishes": [
+    { "name": "豚骨拉面", "verdict": 1, "image": "images/02-ramen.jpg" },
+    { "name": "煎饺", "verdict": -1 },
+    { "name": "冰茶" }
+  ],
+  "contributorIds": ["u-001"]
 }
 ```
 
+## Contributors
+
+`content/contributors.json` lists public identities only (`id`, `name`).
+New contributors and contact details (email or another contact method) are kept
+in `private/contributors.json`; a contributor's display name is copied to the
+public list when a restaurant crediting them is promoted. Contact details never
+reach Git, the build, or the website (the build output is checked for them).
+
 ## Reviews (`review.md`)
 
-Ordinary Markdown with GitHub extensions (tables, strikethrough, autolinks).
-There is no required structure: write as many paragraphs, headings, and photos
-as the review needs.
+Optional Markdown (GitHub flavor), one per restaurant, with no required
+structure. Leave it out when there is no written content.
 
-- Photos: `![alt text](images/photo.jpg "optional caption")`. A photo on its own
-  line becomes a figure; the quoted title becomes its caption. Only local
-  images are allowed.
+- Photos in the text: `![alt text](images/02-photo.jpg "optional caption")`. A
+  photo on its own line becomes a figure with the title as caption.
 - Headings are shifted so the page title stays the only top-level heading.
-- Raw HTML, scripts, and unsafe links are removed at build time; links open in
-  a new tab.
+- Raw HTML, scripts, and unsafe links are removed at build time.
 
 ## Photos
 
-Import photos with `npm run content:add-images`. It never changes the
-original and writes a clean copy into the restaurant's `images/` folder:
-upright, at most 2400 px, JPEG (PNG only when transparency matters), with all
-EXIF, XMP, and IPTC metadata (GPS location, camera, time) removed. HEIC/HEIF is
-converted with `sips` on macOS, or `heif-convert` if installed; elsewhere ask
-for JPEG copies.
+`npm run content:add-images -- <id> <files...>` stores standardized copies and
+never changes the originals: numbered `NN-<name>.jpg` (PNG only for
+transparency), upright, at most 2400 px, and without EXIF/XMP/IPTC metadata
+(GPS, camera, time). New photos get the next number, so the first image (the
+cover, with the restaurant name as alt text) stays the same. HEIC/HEIF needs
+macOS `sips` or `heif-convert`.
 
-Photos in `content/restaurants/` and `fixtures/` are public, so embedded
-metadata there is a blocking error in `content:check`, the build, and
-`check:privacy` (detected from the file contents, not the extension). Photos in
-`drafts/` are not checked until promotion.
+The database accepts nothing else in `images/`: wrong names, oversized images,
+non-JPEG/PNG content, or embedded metadata are blocking errors in
+`content:check`, the build, and `check:privacy`.
 
-The build then creates WebP renditions 480, 960, and 1600 px wide (never
-upscaled, metadata-free), cached in `.cache/images/` by content hash so output
-is reproducible.
+The website shows the cover at the top, dish photos with their dishes, review
+photos in the text, and all remaining photos in a 照片 section, so a photo
+appears once and photo-only restaurants still show every photo. The build turns
+each photo into WebP renditions 480, 960, and 1600 px wide (never upscaled,
+metadata-free), cached in `.cache/images/` by content hash.
 
-## From draft to website
+## From submission to website
 
-1. **Prepare** a private draft: `content:new`, `content:add-images`, edit
-   `info.json` and `review.md`, then `content:check -- <id>`. Preview with
-   `npm run dev:drafts` (marked 草稿预览). Problems in drafts are warnings and
-   never block builds.
+1. **Prepare** a private draft: `content:new` or `content:edit`,
+   `content:contributor`, `content:add-images`, edit `info.json` (and
+   `review.md`), then `content:check -- <id>`. Preview with
+   `npm run dev:drafts`. Problems in drafts are warnings and never block builds.
 2. **Review** the content and the contributor's permission and attribution.
-3. **Approve for the public repository**: `npm run content:promote -- <id>`
-   lists the files that would become public; with `--approved` it moves the
-   folder to `content/restaurants/<id>/`, still `"status": "draft"`. Commit it.
-4. **Publish on the website**: `npm run content:publish -- <id> --approved`
-   re-validates and sets `"status": "published"`. The site updates when the
-   change reaches `main`.
+3. **Add to the database**: `npm run content:promote -- <id>` lists what would
+   become public (or the file changes for an edit); with `--approved` it moves
+   the folder into `content/restaurants/<id>/` and publishes new contributor
+   names. A new restaurant stays `"status": "draft"`; an edit keeps the public
+   status. Commit it.
+4. **Publish**: `npm run content:publish -- <id> --approved` re-validates and
+   sets `"status": "published"`. The site updates when the change reaches `main`.
 
 Steps 3 and 4 are maintainer decisions. The `--approved` flag only prevents
 accidental runs; the tools cannot verify who approved, and passing validation
@@ -140,22 +157,25 @@ is never approval.
 Errors in published content fail `npm run build`. After `vite build`,
 `scripts/postbuild.ts` checks `dist/` against an allowlist (Vite's build
 manifest, `PUBLIC_STATIC_FILES`, and the generated data and WebP images of
-published restaurants) and fails on anything else, such as stray files copied
-from `public/`, drafts, fixtures, or original photos.
+published restaurants), rejects private contact details, and fails on anything
+else.
 
 ## Commands
 
-| Command                                         | What it does                                                             |
-| ----------------------------------------------- | ------------------------------------------------------------------------ |
-| `npm run content:new -- <id> --name "<name>"`   | Create a private draft in `drafts/<id>/`.                                |
-| `npm run content:add-images -- <id> <files...>` | Import clean photo copies (convert, rotate, strip metadata).             |
-| `npm run content:extract -- <file>`             | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`. |
-| `npm run content:check [-- <id>...]`            | Validate drafts and public content and list missing information.         |
-| `npm run images [-- <id>...]`                   | Process photos and print the renditions.                                 |
-| `npm run content:promote -- <id> [--approved]`  | Move an approved draft into the public repository.                       |
-| `npm run content:publish -- <id> [--approved]`  | Show a promoted restaurant on the website.                               |
-| `npm run content:build`                         | Write site data to `public/generated/` (part of `build`).                |
-| `npm run check:privacy`                         | Check tracked files for private folders and image metadata.              |
+| Command                                                       | What it does                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `npm run content:new -- --name "<name>"`                      | Create a private draft with a new id.                                    |
+| `npm run content:edit -- <id>`                                | Copy a public restaurant into `private/drafts/` to change it.            |
+| `npm run content:contributor -- find <name or email>`         | Find existing contributors to reuse their ids.                           |
+| `npm run content:contributor -- add --name <n> [--email <e>]` | Register a contributor privately.                                        |
+| `npm run content:add-images -- <id> <files...>`               | Store standardized photo copies.                                         |
+| `npm run content:extract -- <file>`                           | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`. |
+| `npm run content:check [-- <id>...]`                          | Validate drafts and the database; list ids, names, missing information.  |
+| `npm run images [-- <id>...]`                                 | Process photos and print the renditions.                                 |
+| `npm run content:promote -- <id> [--approved]`                | Move an approved draft into the public database.                         |
+| `npm run content:publish -- <id> [--approved]`                | Show a restaurant on the website.                                        |
+| `npm run content:build`                                       | Write site data to `public/generated/` (part of `build`).                |
+| `npm run check:privacy`                                       | Check tracked files for private material and image metadata.             |
 
 Add `--source fixtures` to `content:check`, `content:build`, or `images` to
-work with the fictional fixtures instead.
+work with the fictional fixtures.

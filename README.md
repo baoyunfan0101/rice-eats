@@ -10,9 +10,9 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 
 ## Features
 
-- **List, grid, and map views** of the same restaurants, with shared search (by name), cuisine, area, and price filters, and sorting by rating, name, or price.
+- **List, grid, and map views** of the same restaurants, with shared search (by name), cuisine, scenario tag, rating, and price filters, and sorting by rating, name, or price.
 - **Shareable URLs**: the view, filters, and selected restaurant are kept in the address bar, and every restaurant has its own link (`/rice-eats/r/<id>/`).
-- **Restaurant pages** with long-form reviews, any number of photos with captions, recommended and not-recommended dishes, and Google Maps navigation links.
+- **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
 - **Static**: no backend, database, accounts, or paid services. Hosted on GitHub Pages.
 - **Content workflow**: contributors send ordinary text and photos; an Agent Skill turns them into validated drafts, and nothing is published without maintainer review.
@@ -65,22 +65,22 @@ The site works with zero published restaurants and shows a "coming soon" state; 
 
 ## Content
 
-Each published restaurant is a folder under `content/restaurants/` with an `info.json`, an optional `review.md`, and an `images/` folder; there is no index to maintain. Ratings are stored as numbers from 1 to 5 and shown as 夯 / 顶级 / 人上人 / NPC / 拉完了. See [docs/content.md](docs/content.md) for the schema, photo and Markdown conventions, and the full publication workflow.
+The repository holds three independent parts: a file-based **database** (`content/`), local **content-management** commands and an Agent Skill (`scripts/content/`, `.claude/skills/`), and the static **website** (`src/`), which only reads data generated at build time.
 
-Because this repository is public, contributor material stays private until it is approved: originals go in `submissions/` and drafts in `drafts/`, both git-ignored. A maintainer then approves each restaurant twice: once to add it to the public repository (`npm run content:promote -- <id> --approved`) and once to show it on the website (`npm run content:publish -- <id> --approved`). These commands cannot verify who approved them; the flag only prevents accidental runs.
+Each restaurant is a folder `content/restaurants/<id>/` with `info.json`, an optional `review.md` (one review per restaurant), and standardized photos in `images/`; the first photo is the cover. Restaurant ids are generated and never change, so names may repeat or change. Ratings (1-5), dish verdicts (1 推荐 / -1 避雷), cuisines, and tags are stored as language-independent keys; their labels live in `src/content/taxonomy.ts`. Contributors are referenced by id: public names in `content/contributors.json`, contact details only in the git-ignored `private/contributors.json`. The site derives Google Maps and Apple Maps links from each restaurant's location or address. See [docs/content.md](docs/content.md) for the full schema and workflow.
 
-Photos are imported with `npm run content:add-images`, which keeps the original untouched and stores a clean, upright copy without GPS or other metadata. Tracked photos that still carry metadata fail validation.
+Because this repository is public, raw submissions and drafts stay in the git-ignored `private/` folder until approved. A maintainer approves each restaurant twice: once to add it to the public database (`npm run content:promote -- <id> --approved`) and once to show it on the website (`npm run content:publish -- <id> --approved`). These commands cannot verify who approved them; the flag only prevents accidental runs. Photos are imported with `npm run content:add-images`, which leaves the original untouched and stores a numbered, upright copy without GPS or other metadata.
 
 ### Contributing a restaurant
 
-1. Write about the restaurant however you like (plain text, a Word document, notes) and collect your photos.
+1. Write about the restaurant however you like (a few sentences, a Word document, notes), take photos, or both. Photos alone are fine.
 2. Send them to a maintainer, or give them to a coding agent working in this repository.
 3. Review the private draft the maintainer or agent prepares, and confirm how you want to be credited.
 4. Approve it. Only then is it added to the public repository and shown on the site, credited to you.
 
 ### Agent-assisted preparation
 
-Coding agents follow the `restaurant-intake` Agent Skill ([.claude/skills/restaurant-intake/SKILL.md](.claude/skills/restaurant-intake/SKILL.md)), referenced from [AGENTS.md](AGENTS.md). It extracts text from documents, imports photos (including HEIC on macOS), writes the draft without inventing facts or rewriting opinions, runs `npm run content:check`, and reports what is missing. It never commits, promotes, or publishes without the maintainer's explicit approval.
+Coding agents follow the `restaurant-intake` Agent Skill ([.claude/skills/restaurant-intake/SKILL.md](.claude/skills/restaurant-intake/SKILL.md)), referenced from [AGENTS.md](AGENTS.md). It handles text-only, photo-only, and mixed submissions, updates existing restaurants instead of duplicating them, reuses contributor ids, imports photos (including HEIC on macOS), writes the record without inventing facts or rewriting opinions, runs `npm run content:check`, and reports what is missing. It never commits, promotes, or publishes without the maintainer's explicit approval.
 
 ## Deployment
 
