@@ -1,0 +1,17 @@
+{
+  "id": "fixture-draft-only",
+  "status": "draft",
+  "name": "草稿餐厅（虚构示例）",
+  "summary": "虚构示例：这是草稿，绝不能出现在网站上。",
+  "cuisines": ["测试"],
+  "location": {
+    "lat": 29.72,
+    "lng": -95.4
+  },
+  "cover": "images/cover.jpg",
+  "contributors": [
+    {
+      "name": "示例作者（虚构）"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "fixture-coffee-lab",
+  "status": "published",
+  "name": "实验室咖啡（虚构示例）",
+  "summary": "虚构示例：没有评级和人均的条目，用来测试可选字段缺失时的显示。",
+  "cuisines": ["咖啡", "甜品"],
+  "neighborhood": "Medical Center",
+  "location": {
+    "lat": 29.7079,
+    "lng": -95.4013
+  },
+  "tags": ["示例数据"],
+  "cover": "images/cover.jpg",
+  "coverAlt": "示例图片：一杯咖啡的抽象插画",
+  "contributors": [
+    {
+      "name": "示例作者（虚构）"
+    }
+  ]
+}

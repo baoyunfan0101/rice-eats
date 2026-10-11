@@ -1,0 +1,13 @@
+{
+  "id": "fixture-food-truck",
+  "status": "published",
+  "name": "流动餐车（虚构示例）",
+  "summary": "虚构示例：没有坐标和封面图，用来测试地图和图片缺失时的处理。",
+  "cuisines": ["快餐"],
+  "tags": ["示例数据"],
+  "contributors": [
+    {
+      "name": "示例作者（虚构）"
+    }
+  ]
+}

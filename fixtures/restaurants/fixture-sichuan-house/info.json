@@ -1,0 +1,36 @@
+{
+  "id": "fixture-sichuan-house",
+  "status": "published",
+  "name": "蜀味小馆（虚构示例）",
+  "altNames": ["Sichuan House (fictional)"],
+  "summary": "虚构示例：麻辣川菜，适合测试较长的名字和多个标签在卡片中的换行效果。",
+  "cuisines": ["川菜", "中餐"],
+  "neighborhood": "中国城",
+  "address": "400 Example Rd, Houston, TX 77036 (fictional)",
+  "location": {
+    "lat": 29.7053,
+    "lng": -95.5465
+  },
+  "tier": "夯",
+  "pricePerPerson": 25,
+  "tags": ["麻辣", "聚餐", "下饭", "适合多人", "示例数据"],
+  "cover": "images/cover.jpg",
+  "coverAlt": "示例图片：一碗红油菜的抽象插画",
+  "dishes": [
+    {
+      "name": "麻婆豆腐（示例）",
+      "verdict": "推荐",
+      "comment": "虚构点评：麻辣适中。",
+      "image": "images/mapo-tofu.jpg"
+    },
+    {
+      "name": "夫妻肺片（示例）",
+      "verdict": "推荐"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "示例作者（虚构）"
+    }
+  ]
+}

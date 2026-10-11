@@ -1,0 +1,23 @@
+{
+  "id": "fixture-steak-room",
+  "status": "published",
+  "name": "牛排房（虚构示例）",
+  "summary": "虚构示例：昂贵且评级最低，用来测试价格筛选和评级显示。",
+  "cuisines": ["美式", "牛排"],
+  "neighborhood": "Upper Kirby",
+  "address": "600 Example Ln, Houston, TX 77098 (fictional)",
+  "location": {
+    "lat": 29.7362,
+    "lng": -95.4209
+  },
+  "tier": "拉完了",
+  "pricePerPerson": 75,
+  "tags": ["约会", "示例数据"],
+  "cover": "images/cover.jpg",
+  "coverAlt": "示例图片：一盘牛排的抽象插画",
+  "contributors": [
+    {
+      "name": "示例作者（虚构）"
+    }
+  ]
+}
