@@ -11,6 +11,7 @@ node_modules/
 
 # Build output
 dist/
+dist-e2e/
 dist-ssr/
 build/
 *.local
@@ -55,3 +56,13 @@ coverage/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Generated content and image cache (rebuilt by `npm run content:build`)
+public/generated/
+
+# Raw contributor submissions; never commit these
+submissions/
+
+# Playwright
+test-results/
+playwright-report/

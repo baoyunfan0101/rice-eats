@@ -1,0 +1,9 @@
+dist/
+dist-e2e/
+coverage/
+public/generated/
+package-lock.json
+content/
+fixtures/**/*.md
+test-results/
+playwright-report/
