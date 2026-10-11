@@ -1,5 +1,12 @@
-import { PRICE_BUCKETS } from '../content/model';
-import { hasActiveFilters, type BrowseState, type Sort, type View } from '../lib/filters';
+import { PRICE_BUCKETS, type Rating } from '../content/model';
+import { cuisineLabel, RATING_LABELS, tagLabel } from '../content/taxonomy';
+import {
+  clearFilters,
+  hasActiveFilters,
+  type BrowseState,
+  type Sort,
+  type View,
+} from '../lib/filters';
 import { PRICE_LABELS } from '../lib/format';
 
 interface Props {
@@ -7,7 +14,8 @@ interface Props {
   total: number;
   count: number;
   cuisines: string[];
-  neighborhoods: string[];
+  tags: string[];
+  ratings: Rating[];
   onChange: (next: Partial<BrowseState>, options?: { replace?: boolean }) => void;
 }
 
@@ -17,7 +25,7 @@ const SORT_LABELS: Record<Sort, string> = { rating: '按评级', name: '按名�
 const selectClass =
   'h-10 min-w-0 shrink-0 rounded-full border border-line bg-white pr-8 pl-3 text-sm hover:border-chili-600 data-active:border-chili-600 data-active:bg-chili-50';
 
-export function Toolbar({ state, total, count, cuisines, neighborhoods, onChange }: Props) {
+export function Toolbar({ state, total, count, cuisines, tags, ratings, onChange }: Props) {
   const filtered = hasActiveFilters(state);
   return (
     <div className="sticky top-0 z-[1100] border-b border-line bg-paper/95 backdrop-blur">
@@ -66,14 +74,20 @@ export function Toolbar({ state, total, count, cuisines, neighborhoods, onChange
           <FilterSelect
             label="菜系"
             value={state.cuisine}
-            options={cuisines.map((c) => [c, c])}
+            options={cuisines.map((c) => [c, cuisineLabel(c)])}
             onChange={(cuisine) => onChange({ cuisine })}
           />
           <FilterSelect
-            label="区域"
-            value={state.neighborhood}
-            options={neighborhoods.map((n) => [n, n])}
-            onChange={(neighborhood) => onChange({ neighborhood })}
+            label="场景"
+            value={state.tag}
+            options={tags.map((t) => [t, tagLabel(t)])}
+            onChange={(tag) => onChange({ tag })}
+          />
+          <FilterSelect
+            label="评级"
+            value={String(state.rating)}
+            options={ratings.map((r) => [String(r), RATING_LABELS[r]])}
+            onChange={(rating) => onChange({ rating: rating ? (Number(rating) as Rating) : '' })}
           />
           <FilterSelect
             label="人均"
@@ -81,7 +95,7 @@ export function Toolbar({ state, total, count, cuisines, neighborhoods, onChange
             options={PRICE_BUCKETS.map((b) => [b.id, PRICE_LABELS[b.id]])}
             onChange={(price) => onChange({ price: price as BrowseState['price'] })}
           />
-          <label className="shrink-0">
+          <label className="relative shrink-0">
             <span className="sr-only">排序</span>
             <select
               value={state.sort}
@@ -98,7 +112,7 @@ export function Toolbar({ state, total, count, cuisines, neighborhoods, onChange
           {filtered && (
             <button
               type="button"
-              onClick={() => onChange({ query: '', cuisine: '', neighborhood: '', price: '' })}
+              onClick={() => onChange(clearFilters(state))}
               className="h-10 shrink-0 rounded-full px-3 text-sm font-semibold text-chili-700 hover:bg-chili-50"
             >
               清除筛选
@@ -129,7 +143,7 @@ function FilterSelect({
   const all: [string, string][] =
     value && !options.some(([v]) => v === value) ? [...options, [value, value]] : options;
   return (
-    <label className="shrink-0">
+    <label className="relative shrink-0">
       <span className="sr-only">按{label}筛选</span>
       <select
         value={value}

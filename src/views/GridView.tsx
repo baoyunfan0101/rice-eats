@@ -1,5 +1,5 @@
 import type { RestaurantSummary } from '../content/model';
-import { DraftBadge, RatingBadge } from '../components/Badges';
+import { DraftBadge, RatingBadge, Tags } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { metaLine } from '../lib/format';
@@ -34,9 +34,7 @@ export function GridView({ restaurants }: { restaurants: RestaurantSummary[] }) 
                 {r.name}
               </h2>
               <p className="text-sm font-medium text-ink/80">{metaLine(r)}</p>
-              {r.summary && (
-                <p className="line-clamp-2 text-sm leading-6 text-muted">{r.summary}</p>
-              )}
+              <Tags tags={r.tags} />
             </div>
           </Link>
         </li>

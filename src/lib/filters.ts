@@ -4,7 +4,9 @@
 import {
   PRICE_BUCKETS,
   priceBucketOf,
+  RATINGS,
   type PriceBucketId,
+  type Rating,
   type RestaurantSummary,
 } from '../content/model';
 
@@ -17,8 +19,11 @@ export type Sort = (typeof SORTS)[number];
 export interface BrowseState {
   view: View;
   query: string;
+  /** Cuisine key. */
   cuisine: string;
-  neighborhood: string;
+  /** Tag key. */
+  tag: string;
+  rating: Rating | '';
   price: PriceBucketId | '';
   sort: Sort;
   /** Selected restaurant (highlighted on the map). */
@@ -29,7 +34,8 @@ export const DEFAULT_STATE: BrowseState = {
   view: 'list',
   query: '',
   cuisine: '',
-  neighborhood: '',
+  tag: '',
+  rating: '',
   price: '',
   sort: 'rating',
   selected: '',
@@ -39,11 +45,13 @@ const oneOf = <T extends string>(values: readonly T[], value: string | null, fal
   values.includes(value as T) ? (value as T) : fallback;
 
 export function parseBrowseState(params: URLSearchParams): BrowseState {
+  const rating = Number(params.get('rating'));
   return {
     view: oneOf(VIEWS, params.get('view'), DEFAULT_STATE.view),
     query: params.get('q') ?? '',
     cuisine: params.get('cuisine') ?? '',
-    neighborhood: params.get('area') ?? '',
+    tag: params.get('tag') ?? '',
+    rating: (RATINGS as readonly number[]).includes(rating) ? (rating as Rating) : '',
     price: oneOf(
       PRICE_BUCKETS.map((b) => b.id),
       params.get('price'),
@@ -59,7 +67,8 @@ export function toSearchParams(state: BrowseState): URLSearchParams {
   if (state.view !== DEFAULT_STATE.view) params.set('view', state.view);
   if (state.query) params.set('q', state.query);
   if (state.cuisine) params.set('cuisine', state.cuisine);
-  if (state.neighborhood) params.set('area', state.neighborhood);
+  if (state.tag) params.set('tag', state.tag);
+  if (state.rating) params.set('rating', String(state.rating));
   if (state.price) params.set('price', state.price);
   if (state.sort !== DEFAULT_STATE.sort) params.set('sort', state.sort);
   if (state.selected) params.set('id', state.selected);
@@ -67,11 +76,11 @@ export function toSearchParams(state: BrowseState): URLSearchParams {
 }
 
 export function hasActiveFilters(state: BrowseState): boolean {
-  return Boolean(state.query || state.cuisine || state.neighborhood || state.price);
+  return Boolean(state.query || state.cuisine || state.tag || state.rating || state.price);
 }
 
 export function clearFilters(state: BrowseState): BrowseState {
-  return { ...state, query: '', cuisine: '', neighborhood: '', price: '' };
+  return { ...state, query: '', cuisine: '', tag: '', rating: '', price: '' };
 }
 
 const normalize = (text: string) =>
@@ -87,7 +96,8 @@ export function filterRestaurants(
       return false;
     }
     if (state.cuisine && !r.cuisines.includes(state.cuisine)) return false;
-    if (state.neighborhood && r.neighborhood !== state.neighborhood) return false;
+    if (state.tag && !r.tags.includes(state.tag)) return false;
+    if (state.rating && r.rating !== state.rating) return false;
     if (state.price && priceBucketOf(r.pricePerPerson) !== state.price) return false;
     return true;
   });
@@ -97,7 +107,7 @@ export function filterRestaurants(
 // Highest rating first; unrated restaurants (0) last.
 const ratingOf = (r: RestaurantSummary) => r.rating ?? 0;
 const byName = (a: RestaurantSummary, b: RestaurantSummary) =>
-  a.name.localeCompare(b.name, 'zh-Hans-CN');
+  a.name.localeCompare(b.name, 'zh-Hans-CN') || a.id.localeCompare(b.id);
 
 export function sortRestaurants(list: RestaurantSummary[], sort: Sort): RestaurantSummary[] {
   const sorted = [...list];
@@ -119,6 +129,6 @@ export function facetValues(
   const counts = new Map<string, number>();
   for (const r of restaurants) for (const v of pick(r)) counts.set(v, (counts.get(v) ?? 0) + 1);
   return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-Hans-CN'))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([value]) => value);
 }

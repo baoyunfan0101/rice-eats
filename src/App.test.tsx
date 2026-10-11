@@ -15,38 +15,55 @@ const summary = (id: string, extra: Partial<RestaurantSummary> = {}): Restaurant
   altNames: [],
   cuisines: [],
   tags: [],
+  links: {},
   ...extra,
 });
 
+const img = (name: string, alt: string) => ({
+  src: `/${name}.webp`,
+  srcset: `/${name}.webp 480w`,
+  width: 480,
+  height: 320,
+  alt,
+});
+
 const restaurants = [
-  summary('Bayou BBQ', {
-    cuisines: ['美式烧烤'],
-    neighborhood: 'Montrose',
+  summary('bayou-bbq', {
+    name: 'Bayou BBQ',
+    cuisines: ['bbq'],
+    tags: ['group'],
     rating: 5,
     pricePerPerson: 28,
-    summary: '烟熏牛胸',
+    location: { lat: 29.74, lng: -95.39 },
   }),
-  summary('Pho Garden', {
-    cuisines: ['越南菜'],
-    neighborhood: 'Midtown',
+  summary('pho-garden', {
+    name: 'Pho Garden',
+    cuisines: ['vietnamese'],
+    tags: ['budget'],
     rating: 3,
     pricePerPerson: 14,
   }),
-  summary('Food Truck', { cuisines: ['快餐'] }),
-].map((r) => ({ ...r, id: r.name.toLowerCase().replace(' ', '-') }));
+  summary('food-truck', { name: 'Food Truck', cuisines: ['fast-food'] }),
+];
 
 const detail: RestaurantDetail = {
   ...restaurants[0]!,
   address: '1 Example St',
-  mapsUrl: 'https://www.google.com/maps/search/?api=1&query=x',
-  cover: { src: '/c.webp', srcset: '/c.webp 480w', width: 480, height: 320, alt: '封面' },
+  cover: img('cover', 'Bayou BBQ'),
+  images: [
+    img('cover', 'Bayou BBQ'),
+    img('brisket', '牛胸'),
+    img('a', '图片说明'),
+    img('extra', 'Bayou BBQ (4)'),
+  ],
   dishes: [
-    { name: '牛胸', verdict: '推荐', comment: '好吃' },
-    { name: '豆子', verdict: '不推荐' },
+    { name: '牛胸', verdict: 1, comment: '好吃', image: img('brisket', '牛胸') },
+    { name: '冰茶' },
+    { name: '豆子', verdict: -1 },
   ],
   reviewHtml:
     '<h2>标题</h2><figure><img src="/a.webp" alt="图片说明"><figcaption>图注</figcaption></figure><p>正文</p>',
-  contributors: [{ name: '作者甲' }],
+  contributors: [{ id: 'u-001', name: '作者甲' }],
 };
 
 let index: ContentIndex;
@@ -84,8 +101,8 @@ describe('browsing', () => {
     visit('');
     const list = await screen.findByRole('list', { name: '餐厅列表' });
     expect(names(list)).toEqual(['Bayou BBQ', 'Pho Garden', 'Food Truck']);
-    expect(within(list).getByText('美式烧烤 · Montrose · 人均 $28')).toBeInTheDocument();
-    expect(within(list).getByText('烟熏牛胸')).toBeInTheDocument();
+    expect(within(list).getByText('美式烧烤 · 人均 $28')).toBeInTheDocument();
+    expect(within(list).getByText('适合聚餐')).toBeInTheDocument();
     expect(screen.getByText('共 3 家')).toBeInTheDocument();
   });
 
@@ -93,12 +110,12 @@ describe('browsing', () => {
     const user = userEvent.setup();
     visit('');
     await screen.findByRole('list', { name: '餐厅列表' });
-    await user.selectOptions(screen.getByLabelText('按区域筛选'), 'Montrose');
-    expect(window.location.search).toBe('?area=Montrose');
+    await user.selectOptions(screen.getByLabelText('按场景筛选'), 'group');
+    expect(window.location.search).toBe('?tag=group');
     expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['Bayou BBQ']);
 
     await user.click(screen.getByRole('button', { name: '网格' }));
-    expect(window.location.search).toBe('?view=grid&area=Montrose');
+    expect(window.location.search).toBe('?view=grid&tag=group');
     expect(names(screen.getByRole('list', { name: '餐厅网格' }))).toEqual(['Bayou BBQ']);
     expect(screen.getByText('找到 1 家 / 共 3 家')).toBeInTheDocument();
 
@@ -156,14 +173,35 @@ describe('restaurant details', () => {
     await user.click(await screen.findByRole('link', { name: /Bayou BBQ/ }));
     expect(window.location.pathname).toBe(`${BASE}r/bayou-bbq/`);
     expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: '封面' })).toHaveAttribute('srcset', '/c.webp 480w');
+    // Cover = first image, alt text = restaurant name.
+    expect(screen.getByRole('img', { name: 'Bayou BBQ' })).toHaveAttribute(
+      'srcset',
+      '/cover.webp 480w',
+    );
     expect(screen.getByRole('img', { name: '图片说明' })).toBeInTheDocument();
     expect(screen.getByText('图注')).toBeInTheDocument();
-    expect(screen.getByText('👍 推荐')).toBeInTheDocument();
-    expect(screen.getByText('踩雷提醒')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Google 地图/ })).toHaveAttribute(
-      'href',
-      detail.mapsUrl,
+    // Dishes: only explicit verdicts get labels; no verdict is not a recommendation.
+    expect(screen.getByText(/推荐$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/避雷/)).toHaveLength(2); // section heading + badge
+    expect(screen.getByRole('heading', { name: '冰茶' }).closest('li')).not.toHaveTextContent(
+      '推荐',
+    );
+    // Gallery shows only photos not already on the page.
+    const gallery = screen.getByRole('region', { name: '照片' });
+    expect(
+      within(gallery)
+        .getAllByRole('img')
+        .map((i) => i.getAttribute('src')),
+    ).toEqual(['/extra.webp']);
+    expect(
+      screen.getAllByRole('img').filter((i) => i.getAttribute('src') === '/brisket.webp'),
+    ).toHaveLength(1);
+    // Map apps.
+    expect(screen.getByRole('link', { name: /Google 地图导航/ }).getAttribute('href')).toContain(
+      'https://www.google.com/maps/search/?api=1&query=Bayou%20BBQ%2C%201%20Example%20St',
+    );
+    expect(screen.getByRole('link', { name: /Apple 地图导航/ }).getAttribute('href')).toBe(
+      'https://maps.apple.com/?q=Bayou+BBQ&ll=29.74%2C-95.39',
     );
     expect(screen.getByText(/作者甲/)).toBeInTheDocument();
     expect(document.title).toBe('Bayou BBQ · Rice吃啥');

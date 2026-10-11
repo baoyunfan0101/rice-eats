@@ -42,11 +42,15 @@ export default function MapView({ restaurants, selected, onSelect }: Props) {
   const missing = restaurants.length - located.length;
   const current = restaurants.find((r) => r.id === selected);
   const [tilesFailed, setTilesFailed] = useState(false);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  useFillViewport(mapRef);
+  useFillViewport(listRef);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 gap-4 lg:px-4 lg:py-4">
       <aside className="hidden w-80 shrink-0 lg:block" aria-label="地图上的餐厅">
-        <ul className="h-[calc(100dvh-13rem)] min-h-[420px] space-y-1 overflow-y-auto pr-1">
+        <ul ref={listRef} className="min-h-[420px] space-y-1 overflow-y-auto pr-1">
           {restaurants.map((r) => (
             <li key={r.id}>
               <button
@@ -76,7 +80,10 @@ export default function MapView({ restaurants, selected, onSelect }: Props) {
         </ul>
       </aside>
 
-      <div className="relative h-[calc(100dvh-11rem)] min-h-[420px] flex-1 overflow-hidden lg:h-[calc(100dvh-13rem)] lg:rounded-2xl lg:border lg:border-line">
+      <div
+        ref={mapRef}
+        className="relative min-h-[420px] flex-1 overflow-hidden lg:rounded-2xl lg:border lg:border-line"
+      >
         <MapContainer
           center={[RICE_CENTER.lat, RICE_CENTER.lng]}
           zoom={13}
@@ -100,7 +107,14 @@ export default function MapView({ restaurants, selected, onSelect }: Props) {
               title={r.name}
               alt={r.name}
               zIndexOffset={r.id === selected ? 1000 : 0}
-              eventHandlers={{ click: () => onSelect(r.id) }}
+              eventHandlers={{
+                click: () => onSelect(r.id),
+                // Leaflet makes markers focusable but does not activate them from the keyboard.
+                keypress: (e) => {
+                  const key = (e as L.LeafletKeyboardEvent).originalEvent.key;
+                  if (key === 'Enter' || key === ' ') onSelect(r.id);
+                },
+              }}
             />
           ))}
         </MapContainer>
@@ -161,7 +175,6 @@ function Preview({
           <RatingBadge rating={r.rating} />
           <span className="truncate">{metaLine(r)}</span>
         </div>
-        {r.summary && <p className="line-clamp-2 text-xs leading-5 text-muted">{r.summary}</p>}
         <Link
           href={restaurantHref(r.id)}
           className="mt-auto self-start rounded-full bg-chili-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-chili-700"
@@ -186,6 +199,26 @@ function FocusWithoutScrolling() {
     container.focus = (options?: FocusOptions) => focus({ ...options, preventScroll: true });
   }, [map]);
   return null;
+}
+
+/**
+ * Sizes an element to reach the bottom of the viewport from where it starts, so
+ * the map (and its preview card) fits on screen whatever is above it
+ * (header, notices, toolbar). The bottom margin leaves room on wide screens.
+ */
+function useFillViewport(ref: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const update = () => {
+      const top = element.getBoundingClientRect().top + window.scrollY;
+      const margin = window.matchMedia('(min-width: 1024px)').matches ? 16 : 0;
+      element.style.height = `${Math.max(420, window.innerHeight - top - margin)}px`;
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [ref]);
 }
 
 /** Fits the map to the filtered restaurants whenever the filter result changes. */

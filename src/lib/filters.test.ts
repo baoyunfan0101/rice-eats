@@ -15,19 +15,20 @@ const r = (id: string, extra: Partial<RestaurantSummary> = {}): RestaurantSummar
   altNames: [],
   cuisines: [],
   tags: [],
+  links: {},
   ...extra,
 });
 
 const list = [
-  r('Bayou', { cuisines: ['BBQ'], neighborhood: 'Montrose', rating: 5, pricePerPerson: 28 }),
+  r('Bayou', { cuisines: ['bbq'], tags: ['group'], rating: 5, pricePerPerson: 28 }),
   r('Pho', {
     altNames: ['河粉'],
-    cuisines: ['Vietnamese'],
-    neighborhood: 'Midtown',
+    cuisines: ['vietnamese'],
+    tags: ['budget', 'solo'],
     rating: 2,
     pricePerPerson: 12,
   }),
-  r('Steak', { cuisines: ['BBQ', 'Steak'], neighborhood: 'Montrose', pricePerPerson: 80 }),
+  r('Steak', { cuisines: ['bbq', 'steak'], tags: ['date', 'group'], pricePerPerson: 80 }),
 ];
 
 describe('browse state', () => {
@@ -36,27 +37,31 @@ describe('browse state', () => {
       ...DEFAULT_STATE,
       view: 'map' as const,
       query: 'pho',
-      cuisine: 'BBQ',
+      cuisine: 'bbq',
+      tag: 'date',
+      rating: 5 as const,
       price: '2' as const,
       selected: 'x',
     };
     expect(parseBrowseState(toSearchParams(state))).toEqual(state);
     expect(toSearchParams(DEFAULT_STATE).toString()).toBe('');
-    expect(parseBrowseState(new URLSearchParams('view=nope&price=9&sort=bad'))).toEqual(
+    expect(parseBrowseState(new URLSearchParams('view=nope&price=9&sort=bad&rating=7'))).toEqual(
       DEFAULT_STATE,
     );
   });
 
-  it('filters by name, alternative name, cuisine, neighborhood, and price', () => {
+  it('filters by name, alternative name, cuisine, tag, rating, and price', () => {
     const ids = (s: Partial<typeof DEFAULT_STATE>) =>
       filterRestaurants(list, { ...DEFAULT_STATE, ...s }).map((x) => x.id);
     expect(ids({ query: 'PHO' })).toEqual(['Pho']);
     expect(ids({ query: '河粉' })).toEqual(['Pho']);
-    expect(ids({ cuisine: 'BBQ' })).toEqual(['Bayou', 'Steak']);
-    expect(ids({ neighborhood: 'Midtown' })).toEqual(['Pho']);
+    expect(ids({ cuisine: 'bbq' })).toEqual(['Bayou', 'Steak']);
+    expect(ids({ tag: 'group' })).toEqual(['Bayou', 'Steak']);
+    expect(ids({ tag: 'date' })).toEqual(['Steak']);
+    expect(ids({ rating: 2 })).toEqual(['Pho']);
     expect(ids({ price: '1' })).toEqual(['Pho']);
     expect(ids({ price: '4' })).toEqual(['Steak']);
-    expect(ids({ cuisine: 'BBQ', price: '2' })).toEqual(['Bayou']);
+    expect(ids({ cuisine: 'bbq', price: '2' })).toEqual(['Bayou']);
     expect(ids({ query: 'nothing' })).toEqual([]);
   });
 
@@ -80,7 +85,15 @@ describe('browse state', () => {
     expect(ids('name')).toEqual(['Bayou', 'Pho', 'Steak']);
   });
 
+  it('keeps restaurants with the same name apart', () => {
+    const twins = [r('r-2', { name: '街角塔可' }), r('r-1', { name: '街角塔可' })];
+    expect(filterRestaurants(twins, { ...DEFAULT_STATE, sort: 'name' }).map((x) => x.id)).toEqual([
+      'r-1',
+      'r-2',
+    ]);
+  });
+
   it('lists facet values by frequency', () => {
-    expect(facetValues(list, (x) => x.cuisines)).toEqual(['BBQ', 'Steak', 'Vietnamese']);
+    expect(facetValues(list, (x) => x.cuisines)).toEqual(['bbq', 'steak', 'vietnamese']);
   });
 });

@@ -6,7 +6,9 @@ import { RestaurantImage } from '../components/RestaurantImage';
 import { ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex, useRestaurantDetail } from '../lib/content';
 import { toSearchParams, DEFAULT_STATE } from '../lib/filters';
+import { cuisineLabel } from '../content/taxonomy';
 import { priceText, RATING_HINT, RATING_LABELS } from '../lib/format';
+import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
 import { browseHref, canGoBack } from '../lib/router';
 
 export function RestaurantPage({ id }: { id: string }) {
@@ -42,8 +44,16 @@ export function RestaurantPage({ id }: { id: string }) {
 }
 
 function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
-  const recommended = r.dishes.filter((d) => d.verdict !== '不推荐');
-  const avoided = r.dishes.filter((d) => d.verdict === '不推荐');
+  // Dishes keep their stored order within each group. No verdict means no
+  // opinion, so those dishes are not listed as recommendations.
+  const recommended = r.dishes.filter((d) => d.verdict === 1);
+  const unrated = r.dishes.filter((d) => d.verdict === undefined);
+  const avoided = r.dishes.filter((d) => d.verdict === -1);
+  // Photos not already shown as the cover, with a dish, or inside the review.
+  const shown = new Set([r.cover?.src, ...r.dishes.map((d) => d.image?.src)]);
+  const gallery = r.images.filter((img) => !shown.has(img.src) && !r.reviewHtml.includes(img.src));
+  const google = googleMapsUrl(r);
+  const apple = appleMapsUrl(r);
   const onMap = r.location
     ? browseHref(toSearchParams({ ...DEFAULT_STATE, view: 'map', selected: r.id }))
     : undefined;
@@ -69,7 +79,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           {r.status === 'draft' && <DraftBadge />}
           {r.cuisines.map((c) => (
             <span key={c} className="text-sm font-semibold text-chili-700">
-              {c}
+              {cuisineLabel(c)}
             </span>
           ))}
         </div>
@@ -78,7 +88,6 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           <RatingBadge rating={r.rating} size="lg" />
         </div>
         {r.altNames.length > 0 && <p className="text-muted">{r.altNames.join(' / ')}</p>}
-        {r.summary && <p className="text-lg leading-8">{r.summary}</p>}
 
         <dl className="grid gap-x-6 gap-y-2 rounded-2xl border border-line bg-white p-4 text-sm sm:grid-cols-2">
           {r.rating !== undefined && (
@@ -87,19 +96,23 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           {r.pricePerPerson !== undefined && (
             <Fact label="人均" value={priceText(r.pricePerPerson)!.replace('人均 ', '')} />
           )}
-          {r.neighborhood && <Fact label="区域" value={r.neighborhood} />}
           {r.address && <Fact label="地址" value={r.address} />}
         </dl>
 
         <div className="flex flex-wrap gap-2">
-          {r.mapsUrl && (
-            <ActionLink href={r.mapsUrl} external primary>
-              在 Google 地图中导航
+          {google && (
+            <ActionLink href={google} external primary>
+              Google 地图导航
+            </ActionLink>
+          )}
+          {apple && (
+            <ActionLink href={apple} external>
+              Apple 地图导航
             </ActionLink>
           )}
           {onMap && <ActionLink href={onMap}>在本站地图中查看</ActionLink>}
-          {r.website && (
-            <ActionLink href={r.website} external>
+          {r.links.website && (
+            <ActionLink href={r.links.website} external>
               餐厅官网
             </ActionLink>
           )}
@@ -110,12 +123,13 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
       {r.dishes.length > 0 && (
         <section className="mx-auto mt-10 max-w-3xl px-4" aria-labelledby="dishes">
           <h2 id="dishes" className="text-xl font-bold">
-            点菜参考
+            菜品
           </h2>
           <DishList dishes={recommended} />
+          <DishList dishes={unrated} />
           {avoided.length > 0 && (
             <>
-              <h3 className="mt-6 text-base font-semibold text-muted">踩雷提醒</h3>
+              <h3 className="mt-6 text-base font-semibold text-muted">避雷</h3>
               <DishList dishes={avoided} />
             </>
           )}
@@ -129,29 +143,27 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
         </section>
       )}
 
-      <footer className="mx-auto mt-12 max-w-3xl space-y-1 border-t border-line px-4 pt-6 text-sm text-muted">
-        {r.contributors.length > 0 && (
-          <p>
-            撰稿：
-            {r.contributors.map((c, i) => (
-              <span key={c.name}>
-                {i > 0 && '、'}
-                {c.url ? (
-                  <a
-                    href={c.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-ink"
-                  >
-                    {c.name}
-                  </a>
-                ) : (
-                  c.name
-                )}
-              </span>
+      {gallery.length > 0 && (
+        <section className="mx-auto mt-10 max-w-3xl px-4" aria-labelledby="photos">
+          <h2 id="photos" className="text-xl font-bold">
+            照片
+          </h2>
+          <ul className="mt-4 grid gap-4 sm:grid-cols-2">
+            {gallery.map((image) => (
+              <li key={image.src}>
+                <RestaurantImage
+                  image={image}
+                  sizes="(min-width: 640px) 360px, 100vw"
+                  className="h-auto w-full rounded-2xl"
+                />
+              </li>
             ))}
-          </p>
-        )}
+          </ul>
+        </section>
+      )}
+
+      <footer className="mx-auto mt-12 max-w-3xl space-y-1 border-t border-line px-4 pt-6 text-sm text-muted">
+        {r.contributors.length > 0 && <p>撰稿：{r.contributors.map((c) => c.name).join('、')}</p>}
         <p>点评内容和照片代表作者个人体验，版权归作者所有，不适用本项目代码的 MIT 许可。</p>
       </footer>
     </article>
@@ -214,10 +226,14 @@ function ActionLink({
 }
 
 function DishList({ dishes }: { dishes: Dish[] }) {
+  if (dishes.length === 0) return null;
   return (
     <ul className="mt-4 grid gap-4 sm:grid-cols-2">
       {dishes.map((dish) => (
-        <li key={dish.name} className="overflow-hidden rounded-2xl border border-line bg-white">
+        <li
+          key={`${dish.name}-${dish.image?.src ?? ''}`}
+          className="overflow-hidden rounded-2xl border border-line bg-white"
+        >
           {dish.image && (
             <RestaurantImage
               image={dish.image}

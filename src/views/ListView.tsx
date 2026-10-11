@@ -32,9 +32,6 @@ export function ListView({ restaurants }: { restaurants: RestaurantSummary[] }) 
                 <p className="text-sm text-muted">{r.altNames.join(' / ')}</p>
               )}
               <p className="text-sm font-medium text-ink/80">{metaLine(r)}</p>
-              {r.summary && (
-                <p className="line-clamp-2 text-sm leading-6 text-muted">{r.summary}</p>
-              )}
               {r.address && <p className="hidden text-xs text-muted sm:block">{r.address}</p>}
               <Tags tags={r.tags} />
             </div>

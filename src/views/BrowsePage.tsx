@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import type { ContentIndex } from '../content/model';
+import { RATINGS, type ContentIndex } from '../content/model';
 import { Toolbar } from '../components/Toolbar';
 import { Button, ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex } from '../lib/content';
@@ -36,8 +36,9 @@ function Browse({ index, params }: { index: ContentIndex; params: URLSearchParam
   const all = index.restaurants;
   const results = useMemo(() => filterRestaurants(all, state), [all, state]);
   const cuisines = useMemo(() => facetValues(all, (r) => r.cuisines), [all]);
-  const neighborhoods = useMemo(
-    () => facetValues(all, (r) => (r.neighborhood ? [r.neighborhood] : [])),
+  const tags = useMemo(() => facetValues(all, (r) => r.tags), [all]);
+  const ratings = useMemo(
+    () => RATINGS.filter((rating) => all.some((r) => r.rating === rating)),
     [all],
   );
 
@@ -58,7 +59,8 @@ function Browse({ index, params }: { index: ContentIndex; params: URLSearchParam
             total={all.length}
             count={results.length}
             cuisines={cuisines}
-            neighborhoods={neighborhoods}
+            tags={tags}
+            ratings={ratings}
             onChange={update}
           />
           {results.length === 0 ? (

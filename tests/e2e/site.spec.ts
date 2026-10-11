@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// Fixture data (fixtures/restaurants): 9 published restaurants, 8 with coordinates, 1 draft.
-const PUBLISHED = 9;
-const WITH_LOCATION = 8;
+// Fixture data (fixtures/restaurants): 11 published restaurants, 10 with coordinates, 1 draft.
+const PUBLISHED = 11;
+const WITH_LOCATION = 10;
 
 test.beforeEach(async ({ page }) => {
   // Keep tests offline and avoid loading real map tiles.
@@ -18,13 +18,13 @@ test('list, grid, and map share filters and the URL', async ({ page }) => {
   await expect(page.getByText('虚构的示例数据')).toBeVisible();
   expect(await listNames(page)).not.toContain('草稿餐厅（虚构示例）');
 
-  await page.getByLabel('按区域筛选').selectOption('中国城');
-  await expect(page).toHaveURL(/area=/);
+  await page.getByLabel('按菜系筛选').selectOption('chinese');
+  await expect(page).toHaveURL(/cuisine=chinese/);
   expect(await listNames(page)).toEqual(['蜀味小馆（虚构示例）', '点心大堂（虚构示例）']);
 
   await page.getByRole('button', { name: '网格' }).click();
   const grid = page.getByRole('list', { name: '餐厅网格' });
-  await expect(grid.getByRole('listitem')).toHaveCount(2);
+  await expect(grid.getByRole('link')).toHaveCount(2);
 
   await page.getByRole('button', { name: '地图' }).click();
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2);
@@ -32,10 +32,10 @@ test('list, grid, and map share filters and the URL', async ({ page }) => {
 
   await page.reload();
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2);
-  await expect(page.getByText('找到 2 家 / 共 9 家')).toBeVisible();
+  await expect(page.getByText('找到 2 家 / 共 11 家')).toBeVisible();
 
   await page.goBack();
-  await expect(grid.getByRole('listitem')).toHaveCount(2);
+  await expect(grid.getByRole('link')).toHaveCount(2);
 });
 
 test('map shows located restaurants and opens details from a marker', async ({ page }) => {
@@ -45,8 +45,12 @@ test('map shows located restaurants and opens details from a marker', async ({ p
   await expect(page.getByText('部分地图底图加载失败')).toBeVisible();
   await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap');
 
-  // The marker (the sidebar list is hidden on small screens).
-  await page.getByRole('button', { name: '灯笼拉面（虚构示例）', exact: true }).click();
+  // The marker (the sidebar list is hidden on small screens). Nearby markers
+  // overlap at this zoom, so select it with the keyboard (Enter), as a screen
+  // reader or keyboard user would.
+  const marker = page.getByRole('button', { name: '灯笼拉面（虚构示例）', exact: true });
+  await marker.focus();
+  await marker.press('Enter');
   await expect(page).toHaveURL(/id=fixture-lantern-noodles/);
   const preview = page.getByRole('region', { name: '灯笼拉面（虚构示例） 预览' });
   await expect(preview).toBeVisible();
@@ -85,6 +89,31 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   await expect(page).toHaveURL(/\/rice-eats\/$/);
 });
 
+test('photo-only restaurants show their photos; same-name restaurants stay separate', async ({
+  page,
+}) => {
+  await page.goto('/rice-eats/r/fixture-photo-only/');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('只有照片的小店（虚构示例）');
+  await expect(
+    page.getByRole('img', { name: '只有照片的小店（虚构示例）', exact: true }),
+  ).toBeVisible(); // cover
+  await expect(page.getByRole('region', { name: '照片' }).getByRole('img')).toHaveCount(2);
+  await expect(page.getByRole('link', { name: /Google 地图导航/ })).toHaveAttribute(
+    'href',
+    /google\.com\/maps/,
+  );
+  await expect(page.getByRole('link', { name: /Apple 地图导航/ })).toHaveAttribute(
+    'href',
+    /maps\.apple\.com/,
+  );
+
+  await page.goto('/rice-eats/?q=街角塔可');
+  await expect(page.getByText('找到 2 家 / 共 11 家')).toBeVisible();
+  const links = page.getByRole('list', { name: '餐厅列表' }).getByRole('link');
+  const hrefs = await links.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
+  expect(new Set(hrefs).size).toBe(2);
+});
+
 test('unknown pages and drafts are not found', async ({ page }) => {
   const draft = await page.goto('/rice-eats/r/fixture-draft-only/');
   expect(draft?.status()).toBe(404);
@@ -107,10 +136,11 @@ test('layout fits the viewport without horizontal scrolling', async ({ page }) =
     await page.goto(url);
     await expect(page.getByRole('main')).not.toBeEmpty();
     await page.waitForLoadState('networkidle');
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - window.innerWidth,
-    );
-    expect(overflow, url).toBeLessThanOrEqual(0);
+    // Compare with the device viewport: on phones, content wider than the screen
+    // also widens window.innerWidth (the page gets zoomed out), hiding overflow.
+    const width = page.viewportSize()!.width;
+    const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    expect(pageWidth, url).toBeLessThanOrEqual(width);
   }
 });
 
