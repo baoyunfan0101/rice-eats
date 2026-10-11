@@ -3,7 +3,8 @@ name: CI
 on:
   pull_request:
   push:
-    branches-ignore: [main]
+    branches-ignore: [main] # main runs this workflow from deploy.yml before deploying
+  workflow_call:
 
 permissions:
   contents: read
@@ -21,7 +22,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - run: npm run check:privacy
       - run: npm run content:check
+      # Builds real content and checks dist/ against the allowlist.
       - run: npm run build
       # Google Chrome is preinstalled on GitHub-hosted Ubuntu runners.
       - run: npm run test:e2e
