@@ -22,14 +22,14 @@ const restaurants = [
   summary('Bayou BBQ', {
     cuisines: ['美式烧烤'],
     neighborhood: 'Montrose',
-    tier: '夯',
+    rating: 5,
     pricePerPerson: 28,
     summary: '烟熏牛胸',
   }),
   summary('Pho Garden', {
     cuisines: ['越南菜'],
     neighborhood: 'Midtown',
-    tier: '人上人',
+    rating: 3,
     pricePerPerson: 14,
   }),
   summary('Food Truck', { cuisines: ['快餐'] }),

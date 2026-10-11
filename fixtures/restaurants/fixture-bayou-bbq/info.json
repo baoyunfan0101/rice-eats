@@ -11,7 +11,7 @@
     "lat": 29.7445,
     "lng": -95.3905
   },
-  "tier": "夯",
+  "rating": 5,
   "pricePerPerson": 28,
   "tags": ["烟熏", "聚餐", "示例数据"],
   "cover": "images/cover.jpg",

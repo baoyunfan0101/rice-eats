@@ -2,7 +2,7 @@
 // See docs/content.md for the field reference.
 
 import { z } from 'zod';
-import { TIERS, VERDICTS } from '../../src/content/model.ts';
+import { VERDICTS, type Rating } from '../../src/content/model.ts';
 
 const text = z.string().trim().min(1, 'must not be empty');
 
@@ -48,7 +48,13 @@ export const restaurantInfoSchema = z.strictObject({
       }
     })
     .optional(),
-  tier: z.enum(TIERS, { message: `must be one of ${TIERS.join(', ')}` }).optional(),
+  rating: z
+    .number()
+    .int('must be a whole number from 1 (lowest) to 5 (highest)')
+    .min(1, 'must be a whole number from 1 (lowest) to 5 (highest)')
+    .max(5, 'must be a whole number from 1 (lowest) to 5 (highest)')
+    .transform((value) => value as Rating)
+    .optional(),
   pricePerPerson: z.number().positive().max(1000).optional(),
   tags: z.array(text).optional(),
   cover: assetPathSchema.optional(),

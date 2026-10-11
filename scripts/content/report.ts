@@ -17,7 +17,7 @@ export function missingInfo(restaurant: LoadedRestaurant): string[] {
   if (!info.neighborhood) missing.push('neighborhood');
   if (!info.summary) missing.push('summary');
   if (!info.cover) missing.push('cover image');
-  if (!info.tier) missing.push('tier (optional rating)');
+  if (info.rating === undefined) missing.push('rating (optional)');
   if (info.pricePerPerson === undefined) missing.push('pricePerPerson (optional)');
   if (!review?.trim() && !info.dishes?.length) missing.push('review.md or dishes');
   if (!info.contributors?.length) missing.push('contributors (required to publish)');

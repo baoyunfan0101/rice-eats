@@ -4,7 +4,6 @@
 import {
   PRICE_BUCKETS,
   priceBucketOf,
-  TIERS,
   type PriceBucketId,
   type RestaurantSummary,
 } from '../content/model';
@@ -12,7 +11,7 @@ import {
 export const VIEWS = ['list', 'grid', 'map'] as const;
 export type View = (typeof VIEWS)[number];
 
-export const SORTS = ['tier', 'name', 'price'] as const;
+export const SORTS = ['rating', 'name', 'price'] as const;
 export type Sort = (typeof SORTS)[number];
 
 export interface BrowseState {
@@ -32,7 +31,7 @@ export const DEFAULT_STATE: BrowseState = {
   cuisine: '',
   neighborhood: '',
   price: '',
-  sort: 'tier',
+  sort: 'rating',
   selected: '',
 };
 
@@ -95,14 +94,15 @@ export function filterRestaurants(
   return sortRestaurants(result, state.sort);
 }
 
-const tierRank = (r: RestaurantSummary) => (r.tier ? TIERS.indexOf(r.tier) : TIERS.length);
+// Highest rating first; unrated restaurants (0) last.
+const ratingOf = (r: RestaurantSummary) => r.rating ?? 0;
 const byName = (a: RestaurantSummary, b: RestaurantSummary) =>
   a.name.localeCompare(b.name, 'zh-Hans-CN');
 
 export function sortRestaurants(list: RestaurantSummary[], sort: Sort): RestaurantSummary[] {
   const sorted = [...list];
   if (sort === 'name') sorted.sort(byName);
-  if (sort === 'tier') sorted.sort((a, b) => tierRank(a) - tierRank(b) || byName(a, b));
+  if (sort === 'rating') sorted.sort((a, b) => ratingOf(b) - ratingOf(a) || byName(a, b));
   if (sort === 'price') {
     sorted.sort(
       (a, b) => (a.pricePerPerson ?? Infinity) - (b.pricePerPerson ?? Infinity) || byName(a, b),

@@ -9,7 +9,7 @@
     "lat": 29.7181,
     "lng": -95.4161
   },
-  "tier": "npc",
+  "rating": 2,
   "pricePerPerson": 11,
   "tags": ["快餐", "便宜", "示例数据"],
   "cover": "images/cover.jpg",

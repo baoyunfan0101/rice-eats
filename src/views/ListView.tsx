@@ -1,5 +1,5 @@
 import type { RestaurantSummary } from '../content/model';
-import { DraftBadge, Tags, TierBadge } from '../components/Badges';
+import { DraftBadge, Tags, RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { metaLine } from '../lib/format';
@@ -25,7 +25,7 @@ export function ListView({ restaurants }: { restaurants: RestaurantSummary[] }) 
                 <h2 className="text-lg font-bold leading-snug group-hover:text-chili-700">
                   {r.name}
                 </h2>
-                <TierBadge tier={r.tier} />
+                <RatingBadge rating={r.rating} />
                 {r.status === 'draft' && <DraftBadge />}
               </div>
               {r.altNames.length > 0 && (

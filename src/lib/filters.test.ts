@@ -19,12 +19,12 @@ const r = (id: string, extra: Partial<RestaurantSummary> = {}): RestaurantSummar
 });
 
 const list = [
-  r('Bayou', { cuisines: ['BBQ'], neighborhood: 'Montrose', tier: '夯', pricePerPerson: 28 }),
+  r('Bayou', { cuisines: ['BBQ'], neighborhood: 'Montrose', rating: 5, pricePerPerson: 28 }),
   r('Pho', {
     altNames: ['河粉'],
     cuisines: ['Vietnamese'],
     neighborhood: 'Midtown',
-    tier: 'npc',
+    rating: 2,
     pricePerPerson: 12,
   }),
   r('Steak', { cuisines: ['BBQ', 'Steak'], neighborhood: 'Montrose', pricePerPerson: 80 }),
@@ -60,10 +60,22 @@ describe('browse state', () => {
     expect(ids({ query: 'nothing' })).toEqual([]);
   });
 
-  it('sorts by tier (unrated last), name, or price', () => {
+  it('sorts by numeric rating (highest first, unrated last), name, or price', () => {
     const ids = (sort: typeof DEFAULT_STATE.sort) =>
       filterRestaurants(list, { ...DEFAULT_STATE, sort }).map((x) => x.id);
-    expect(ids('tier')).toEqual(['Bayou', 'Pho', 'Steak']);
+    expect(ids('rating')).toEqual(['Bayou', 'Pho', 'Steak']);
+    const more = [
+      r('Low', { rating: 1 }),
+      r('None'),
+      r('Top', { rating: 5 }),
+      r('Mid', { rating: 3 }),
+    ];
+    expect(filterRestaurants(more, DEFAULT_STATE).map((x) => x.id)).toEqual([
+      'Top',
+      'Mid',
+      'Low',
+      'None',
+    ]);
     expect(ids('price')).toEqual(['Pho', 'Bayou', 'Steak']);
     expect(ids('name')).toEqual(['Bayou', 'Pho', 'Steak']);
   });

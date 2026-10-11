@@ -1,17 +1,17 @@
-import type { Tier, Verdict } from '../content/model';
-import { TIER_HINT, TIER_STYLES } from '../lib/format';
+import type { Rating, Verdict } from '../content/model';
+import { RATING_HINT, RATING_LABELS, RATING_STYLES } from '../lib/format';
 
-export function TierBadge({ tier, size = 'sm' }: { tier?: Tier; size?: 'sm' | 'lg' }) {
-  if (!tier) return null;
+export function RatingBadge({ rating, size = 'sm' }: { rating?: Rating; size?: 'sm' | 'lg' }) {
+  if (rating === undefined) return null;
   return (
     <span
-      title={TIER_HINT}
-      className={`inline-flex shrink-0 items-center rounded-full font-bold ${TIER_STYLES[tier]} ${
+      title={RATING_HINT}
+      className={`inline-flex shrink-0 items-center rounded-full font-bold ${RATING_STYLES[rating]} ${
         size === 'lg' ? 'px-3 py-1 text-base' : 'px-2 py-0.5 text-xs'
       }`}
     >
       <span className="sr-only">评级：</span>
-      {tier}
+      {RATING_LABELS[rating]}
     </span>
   );
 }

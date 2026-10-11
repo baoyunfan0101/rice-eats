@@ -10,7 +10,7 @@
     "lat": 29.7362,
     "lng": -95.4209
   },
-  "tier": "拉完了",
+  "rating": 1,
   "pricePerPerson": 75,
   "tags": ["约会", "示例数据"],
   "cover": "images/cover.jpg",

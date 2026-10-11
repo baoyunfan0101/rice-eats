@@ -11,7 +11,7 @@
     "lat": 29.7012,
     "lng": -95.5571
   },
-  "tier": "人上人",
+  "rating": 3,
   "pricePerPerson": 35,
   "tags": ["早茶", "聚餐", "示例数据"],
   "cover": "images/cover.jpg",

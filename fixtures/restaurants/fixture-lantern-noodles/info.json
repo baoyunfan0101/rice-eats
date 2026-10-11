@@ -11,7 +11,7 @@
     "lat": 29.7166,
     "lng": -95.4137
   },
-  "tier": "顶级",
+  "rating": 4,
   "pricePerPerson": 18,
   "tags": ["汤面", "适合一人食", "示例数据"],
   "cover": "images/cover.jpg",

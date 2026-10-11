@@ -1,5 +1,5 @@
 import type { RestaurantSummary } from '../content/model';
-import { DraftBadge, TierBadge } from '../components/Badges';
+import { DraftBadge, RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { metaLine } from '../lib/format';
@@ -25,7 +25,7 @@ export function GridView({ restaurants }: { restaurants: RestaurantSummary[] }) 
                 className="aspect-[4/3] w-full transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none"
               />
               <div className="absolute top-3 left-3 flex gap-1.5">
-                <TierBadge tier={r.tier} />
+                <RatingBadge rating={r.rating} />
                 {r.status === 'draft' && <DraftBadge />}
               </div>
             </div>

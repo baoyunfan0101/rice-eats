@@ -11,7 +11,7 @@
     "lat": 29.7053,
     "lng": -95.5465
   },
-  "tier": "夯",
+  "rating": 5,
   "pricePerPerson": 25,
   "tags": ["麻辣", "聚餐", "下饭", "适合多人", "示例数据"],
   "cover": "images/cover.jpg",

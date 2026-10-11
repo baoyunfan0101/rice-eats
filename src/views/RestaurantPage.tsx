@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { Dish, RestaurantDetail } from '../content/model';
-import { DraftBadge, Tags, TierBadge, VerdictBadge } from '../components/Badges';
+import { DraftBadge, Tags, RatingBadge, VerdictBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex, useRestaurantDetail } from '../lib/content';
 import { toSearchParams, DEFAULT_STATE } from '../lib/filters';
-import { priceText, TIER_HINT } from '../lib/format';
+import { priceText, RATING_HINT, RATING_LABELS } from '../lib/format';
 import { browseHref, canGoBack } from '../lib/router';
 
 export function RestaurantPage({ id }: { id: string }) {
@@ -75,13 +75,15 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl leading-tight font-black sm:text-4xl">{r.name}</h1>
-          <TierBadge tier={r.tier} size="lg" />
+          <RatingBadge rating={r.rating} size="lg" />
         </div>
         {r.altNames.length > 0 && <p className="text-muted">{r.altNames.join(' / ')}</p>}
         {r.summary && <p className="text-lg leading-8">{r.summary}</p>}
 
         <dl className="grid gap-x-6 gap-y-2 rounded-2xl border border-line bg-white p-4 text-sm sm:grid-cols-2">
-          {r.tier && <Fact label="评级" value={r.tier} title={TIER_HINT} />}
+          {r.rating !== undefined && (
+            <Fact label="评级" value={RATING_LABELS[r.rating]} title={RATING_HINT} />
+          )}
           {r.pricePerPerson !== undefined && (
             <Fact label="人均" value={priceText(r.pricePerPerson)!.replace('人均 ', '')} />
           )}

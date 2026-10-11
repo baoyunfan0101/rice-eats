@@ -1,8 +1,12 @@
 // Shared data model for generated restaurant content.
 // The content pipeline (scripts/content) writes these shapes; the website reads them.
 
-export const TIERS = ['夯', '顶级', '人上人', 'npc', '拉完了'] as const;
-export type Tier = (typeof TIERS)[number];
+/**
+ * Personal rating: an integer from 1 (lowest) to 5 (highest). Restaurant data
+ * stores only the number; display labels live in src/lib/format.ts.
+ */
+export const RATINGS = [5, 4, 3, 2, 1] as const;
+export type Rating = (typeof RATINGS)[number];
 
 export const VERDICTS = ['推荐', '不推荐'] as const;
 export type Verdict = (typeof VERDICTS)[number];
@@ -47,7 +51,7 @@ export interface RestaurantSummary {
   neighborhood?: string;
   address?: string;
   location?: LatLng;
-  tier?: Tier;
+  rating?: Rating;
   pricePerPerson?: number;
   tags: string[];
   cover?: ImageAsset;

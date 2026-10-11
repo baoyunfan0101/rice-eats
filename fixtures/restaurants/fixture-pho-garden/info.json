@@ -10,7 +10,7 @@
     "lat": 29.7406,
     "lng": -95.3776
   },
-  "tier": "人上人",
+  "rating": 3,
   "pricePerPerson": 14,
   "tags": ["汤面", "便宜", "示例数据"],
   "cover": "images/cover.jpg",

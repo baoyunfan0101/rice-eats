@@ -12,7 +12,7 @@ interface Props {
 }
 
 const VIEW_LABELS: Record<View, string> = { list: '列表', grid: '网格', map: '地图' };
-const SORT_LABELS: Record<Sort, string> = { tier: '按评级', name: '按名称', price: '按人均' };
+const SORT_LABELS: Record<Sort, string> = { rating: '按评级', name: '按名称', price: '按人均' };
 
 const selectClass =
   'h-10 min-w-0 shrink-0 rounded-full border border-line bg-white pr-8 pl-3 text-sm hover:border-chili-600 data-active:border-chili-600 data-active:bg-chili-50';

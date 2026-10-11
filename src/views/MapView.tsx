@@ -3,7 +3,7 @@ import 'leaflet/dist/leaflet.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
 import { RICE_CENTER, type LatLng, type RestaurantSummary } from '../content/model';
-import { TierBadge } from '../components/Badges';
+import { RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { metaLine } from '../lib/format';
@@ -64,7 +64,7 @@ export default function MapView({ restaurants, selected, onSelect }: Props) {
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate font-semibold">{r.name}</span>
-                    <TierBadge tier={r.tier} />
+                    <RatingBadge rating={r.rating} />
                   </span>
                   <span className="block truncate text-xs text-muted">
                     {r.location ? metaLine(r) : '暂无位置信息'}
@@ -158,7 +158,7 @@ function Preview({
           </button>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted">
-          <TierBadge tier={r.tier} />
+          <RatingBadge rating={r.rating} />
           <span className="truncate">{metaLine(r)}</span>
         </div>
         {r.summary && <p className="line-clamp-2 text-xs leading-5 text-muted">{r.summary}</p>}
