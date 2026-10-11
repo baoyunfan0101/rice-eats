@@ -6,6 +6,8 @@ import { BASE_PATH } from './site.config.ts';
 
 export default defineConfig({
   base: BASE_PATH,
+  // The manifest lets scripts/postbuild.ts allowlist exactly the files Vite emitted.
+  build: { manifest: true },
   plugins: [react(), tailwindcss(), contentDevPlugin()],
   server: {
     watch: { ignored: ['**/public/generated/**', '**/.cache/**'] },
