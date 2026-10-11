@@ -60,8 +60,10 @@ Desktop.ini
 # Generated content and image cache (rebuilt by `npm run content:build`)
 public/generated/
 
-# Raw contributor submissions; never commit these
+# Private content: contributors' original files and unapproved drafts.
+# They stay local until a maintainer approves them (npm run content:promote).
 /submissions/
+/drafts/
 
 # Playwright
 test-results/

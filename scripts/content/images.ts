@@ -28,8 +28,6 @@ export interface ProcessedImage {
   /** Size of the largest rendition. */
   width: number;
   height: number;
-  /** True when the source still carries EXIF metadata (which may include GPS). */
-  sourceHasExif: boolean;
   /** Cache directory holding the rendition files. */
   cacheEntry: string;
 }
@@ -106,7 +104,6 @@ export async function processImage(sourcePath: string, cacheDir: string): Promis
     renditions,
     width: largest.width,
     height: largest.height,
-    sourceHasExif: Boolean(meta.exif),
   };
   // Write the manifest last (atomically) so an interrupted run is never treated as cached.
   await writeFile(`${manifestPath}.tmp`, JSON.stringify(result));

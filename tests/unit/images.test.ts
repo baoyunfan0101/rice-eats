@@ -4,7 +4,8 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 import { processImage, RENDITION_WIDTHS } from '../../scripts/content/images.ts';
-import { makeImage, tempDir } from './helpers.ts';
+import { findSensitiveMetadata } from '../../scripts/content/privacy.ts';
+import { makeImage, makePhonePhoto, tempDir } from './helpers.ts';
 
 const SAMPLE = path.resolve('fixtures/submissions/sample-submission');
 const sha = async (file: string) =>
@@ -37,22 +38,23 @@ describe('image processing', () => {
     expect(small.renditions.map((r) => [r.width, r.height])).toEqual([[300, 200]]);
   });
 
-  it('applies EXIF orientation and strips metadata including GPS', async () => {
-    const source = path.join(SAMPLE, 'IMG_0001.JPG'); // 3000x2000 stored sideways, orientation 6, GPS
-    const before = await sharp(source).metadata();
-    expect(before.orientation).toBe(6);
-    expect(before.exif).toBeDefined();
-
+  it('applies EXIF orientation and produces renditions without any metadata', async () => {
     const dir = await tempDir();
-    const image = await processImage(source, dir);
-    expect(image.sourceHasExif).toBe(true);
+    const source = path.join(dir, 'IMG_0001.JPG');
+    await makePhonePhoto(source);
+    expect(await findSensitiveMetadata(source)).toEqual(['EXIF metadata with GPS location']);
+    const before = await sha(source);
+
+    const image = await processImage(source, path.join(dir, 'cache'));
     expect(image).toMatchObject({ width: 1600, height: 2400 }); // upright portrait
     for (const r of image.renditions) {
-      const meta = await sharp(path.join(image.cacheEntry, r.fileName)).metadata();
-      expect(meta.exif).toBeUndefined();
+      const file = path.join(image.cacheEntry, r.fileName);
+      expect(await findSensitiveMetadata(file)).toEqual([]);
+      const meta = await sharp(file).metadata();
       expect(meta.orientation).toBeUndefined();
-      expect(meta.height).toBeGreaterThan(meta.width!);
+      expect(meta.height! / meta.width!).toBeCloseTo(1.5, 2);
     }
+    expect(await sha(source)).toBe(before);
   });
 
   it('does not modify source files and produces identical output on every run', async () => {

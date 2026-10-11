@@ -14,6 +14,7 @@
     "content:new": "tsx scripts/content/cli.ts new",
     "content:add-images": "tsx scripts/content/cli.ts add-images",
     "content:extract": "tsx scripts/content/cli.ts extract",
+    "content:promote": "tsx scripts/content/cli.ts promote",
     "content:publish": "tsx scripts/content/cli.ts publish",
     "images": "tsx scripts/content/cli.ts images",
     "build": "npm run content:build && tsc -b && vite build && tsx scripts/postbuild.ts",
@@ -24,7 +25,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build:e2e && playwright test",
-    "build:e2e": "RICE_EATS_SOURCE=fixtures tsx scripts/content/cli.ts build && vite build --outDir dist-e2e && tsx scripts/postbuild.ts --e2e"
+    "build:e2e": "RICE_EATS_SOURCE=fixtures tsx scripts/content/cli.ts build && vite build --outDir dist-e2e && tsx scripts/postbuild.ts --e2e",
+    "check:privacy": "tsx scripts/check-privacy.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

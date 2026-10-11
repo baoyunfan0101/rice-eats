@@ -3,7 +3,7 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -24,11 +24,12 @@ export const STORED_MAX_SIZE = 2400;
 
 export class IntakeError extends Error {}
 
-export async function createDraft(restaurantsDir: string, id: string, name: string) {
+/** Creates a draft folder in the private drafts directory. */
+export async function createDraft(draftsDir: string, id: string, name: string) {
   const parsedId = idSchema.safeParse(id);
   if (!parsedId.success) throw new IntakeError(`invalid id "${id}": ${parsedId.error.issues[0]?.message}`);
   if (!name.trim()) throw new IntakeError('a restaurant name is required (--name "...")');
-  const dir = path.join(restaurantsDir, id);
+  const dir = path.join(draftsDir, id);
   if (existsSync(dir)) throw new IntakeError(`${dir} already exists; not overwriting it`);
   await mkdir(path.join(dir, IMAGES_DIR), { recursive: true });
   const info: RestaurantInfo = { id, status: 'draft', name: name.trim() };
@@ -188,7 +189,23 @@ export async function extractDocument(file: string, imagesOut?: string): Promise
   );
 }
 
-/** Sets "status" in info.json without reformatting other fields. */
+/**
+ * Moves an approved draft from the private drafts directory into the public
+ * content directory. Refuses to replace an existing folder.
+ */
+export async function moveDraft(draftsDir: string, restaurantsDir: string, id: string) {
+  const from = path.join(draftsDir, id);
+  const to = path.join(restaurantsDir, id);
+  if (!existsSync(path.join(from, INFO_FILE))) throw new IntakeError(`no draft at ${from}`);
+  if (existsSync(to)) {
+    throw new IntakeError(`${to} already exists; merge the changes by hand instead of replacing it`);
+  }
+  await mkdir(restaurantsDir, { recursive: true });
+  await rename(from, to);
+  return to;
+}
+
+/** Sets "status" in info.json; other fields keep their values. */
 export async function setStatus(restaurantDir: string, status: 'draft' | 'published') {
   const infoPath = path.join(restaurantDir, INFO_FILE);
   const original = await readFile(infoPath, 'utf8');

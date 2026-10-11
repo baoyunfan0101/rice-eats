@@ -20,6 +20,30 @@ export async function makeImage(
     .toFile(file);
 }
 
+/**
+ * A synthetic phone photo: 3000x2000 pixels stored sideways (EXIF orientation 6)
+ * with camera and GPS metadata. Generated at test time so no photo with
+ * location metadata is ever committed.
+ */
+export async function makePhonePhoto(file: string): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  await sharp({
+    create: { width: 3000, height: 2000, channels: 3, background: { r: 230, g: 160, b: 90 } },
+  })
+    .jpeg({ quality: 80 })
+    .withExif({
+      IFD0: { Make: 'ExamplePhone', Model: 'Synthetic' },
+      IFD3: {
+        GPSLatitudeRef: 'N',
+        GPSLatitude: '0/1 0/1 0/1',
+        GPSLongitudeRef: 'E',
+        GPSLongitude: '0/1 0/1 0/1',
+      },
+    })
+    .withMetadata({ orientation: 6 })
+    .toFile(file);
+}
+
 export const validInfo = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
   status: 'published',

@@ -4,7 +4,14 @@
 import path from 'node:path';
 import type { Plugin } from 'vite';
 import { BASE_PATH } from '../../site.config.ts';
-import { IMAGE_CACHE_DIR, OUT_DIR, RESTAURANT_DIRS, draftsFromEnv, sourceFromEnv } from './paths.ts';
+import {
+  DRAFTS_DIR,
+  IMAGE_CACHE_DIR,
+  OUT_DIR,
+  RESTAURANT_DIRS,
+  draftsFromEnv,
+  sourceFromEnv,
+} from './paths.ts';
 import { runPipeline } from './pipeline.ts';
 import { printDiagnostics } from './report.ts';
 
@@ -16,12 +23,16 @@ export function contentDevPlugin(): Plugin {
       const source = sourceFromEnv();
       const restaurantsDir = RESTAURANT_DIRS[source];
       const includeDrafts = draftsFromEnv();
+      // Private drafts are only read for `npm run dev:drafts`.
+      const draftsDir = includeDrafts && source === 'content' ? DRAFTS_DIR : undefined;
+      const watched = [restaurantsDir, ...(draftsDir ? [draftsDir] : [])];
       let running: Promise<void> | undefined;
       let queued = false;
 
       const build = async () => {
         const result = await runPipeline({
           restaurantsDir,
+          draftsDir,
           source,
           includeDrafts,
           base: BASE_PATH,
@@ -55,9 +66,9 @@ export function contentDevPlugin(): Plugin {
       };
 
       await build();
-      server.watcher.add(restaurantsDir);
+      server.watcher.add(watched);
       const onChange = (file: string) => {
-        if (file.startsWith(restaurantsDir + path.sep)) rebuild();
+        if (watched.some((dir) => file.startsWith(dir + path.sep))) rebuild();
       };
       server.watcher.on('add', onChange);
       server.watcher.on('change', onChange);

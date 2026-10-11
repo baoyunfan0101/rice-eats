@@ -15,6 +15,7 @@ import {
   type RestaurantSummary,
 } from '../../src/content/model.ts';
 import { checkImageExtension, copyRenditions, processImage, type ProcessedImage } from './images.ts';
+import { findSensitiveMetadata, PRIVACY_FIX } from './privacy.ts';
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
 import { formatIssues, restaurantInfoSchema, type RestaurantInfo } from './schema.ts';
 
@@ -25,8 +26,16 @@ export const IMAGES_DIR = 'images';
 export const MAX_DISTANCE_KM = 100;
 
 export interface PipelineOptions {
-  /** Folder that contains one subfolder per restaurant. */
+  /**
+   * Publicly tracked restaurants (content/restaurants or fixtures/restaurants):
+   * one subfolder per restaurant. Images here must be free of metadata.
+   */
   restaurantsDir: string;
+  /**
+   * Private, git-ignored drafts (drafts/). Read only for checks and draft
+   * previews; production builds never pass it.
+   */
+  draftsDir?: string;
   source: ContentSource;
   /** Include drafts in the output (local preview only). */
   includeDrafts: boolean;
@@ -52,6 +61,8 @@ export interface Diagnostic {
 export interface LoadedRestaurant {
   folder: string;
   dir: string;
+  /** "public": tracked in Git. "private": a local, git-ignored draft. */
+  visibility: 'public' | 'private';
   info: RestaurantInfo;
   review?: string;
 }
@@ -72,54 +83,59 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
 
   // 1. Discover and parse.
   const loaded: LoadedRestaurant[] = [];
-  const folders = existsSync(options.restaurantsDir)
-    ? (await readdir(options.restaurantsDir, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-        .map((entry) => entry.name)
-        .sort()
-    : [];
-
-  for (const folder of folders) {
-    const dir = path.join(options.restaurantsDir, folder);
-    const infoPath = path.join(dir, INFO_FILE);
-    if (!existsSync(infoPath)) {
-      diagnostics.push({
-        level: 'warning',
-        file: display(dir),
-        message: `skipped: no ${INFO_FILE} (run "npm run content:new -- <id>" to create one)`,
-      });
-      continue;
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(await readFile(infoPath, 'utf8'));
-    } catch (error) {
-      diagnostics.push({
-        level: 'error',
-        file: display(infoPath),
-        message: `invalid JSON: ${(error as Error).message}`,
-      });
-      continue;
-    }
-    const parsed = restaurantInfoSchema.safeParse(raw);
-    const statusHint =
-      raw && typeof raw === 'object' && 'status' in raw ? String(raw.status) : undefined;
-    const idHint = raw && typeof raw === 'object' && 'id' in raw ? String(raw.id) : undefined;
-    if (!parsed.success) {
-      for (const message of formatIssues(parsed.error)) {
+  const roots: [string, LoadedRestaurant['visibility']][] = [[options.restaurantsDir, 'public']];
+  if (options.draftsDir) roots.push([options.draftsDir, 'private']);
+  for (const [root, visibility] of roots) {
+    const folders = existsSync(root)
+      ? (await readdir(root, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+          .map((entry) => entry.name)
+          .sort()
+      : [];
+    for (const folder of folders) {
+      const dir = path.join(root, folder);
+      const infoPath = path.join(dir, INFO_FILE);
+      const isPrivate = visibility === 'private';
+      if (!existsSync(infoPath)) {
+        diagnostics.push({
+          level: 'warning',
+          file: display(dir),
+          message: `skipped: no ${INFO_FILE} (run "npm run content:new -- <id>" to create a draft)`,
+        });
+        continue;
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(await readFile(infoPath, 'utf8'));
+      } catch (error) {
         diagnostics.push({
           level: 'error',
           file: display(infoPath),
-          message,
-          restaurantId: idHint,
-          draft: statusHint === 'draft',
+          message: `invalid JSON: ${(error as Error).message}`,
+          draft: isPrivate,
         });
+        continue;
       }
-      continue;
+      const parsed = restaurantInfoSchema.safeParse(raw);
+      const statusHint =
+        raw && typeof raw === 'object' && 'status' in raw ? String(raw.status) : undefined;
+      const idHint = raw && typeof raw === 'object' && 'id' in raw ? String(raw.id) : undefined;
+      if (!parsed.success) {
+        for (const message of formatIssues(parsed.error)) {
+          diagnostics.push({
+            level: 'error',
+            file: display(infoPath),
+            message,
+            restaurantId: idHint,
+            draft: isPrivate || statusHint === 'draft',
+          });
+        }
+        continue;
+      }
+      const reviewPath = path.join(dir, REVIEW_FILE);
+      const review = existsSync(reviewPath) ? await readFile(reviewPath, 'utf8') : undefined;
+      loaded.push({ folder, dir, visibility, info: parsed.data, review });
     }
-    const reviewPath = path.join(dir, REVIEW_FILE);
-    const review = existsSync(reviewPath) ? await readFile(reviewPath, 'utf8') : undefined;
-    loaded.push({ folder, dir, info: parsed.data, review });
   }
 
   // 2. Cross-restaurant checks.
@@ -142,7 +158,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
           .map((other) => display(other.dir))
           .join(', ')})`,
         restaurantId: id,
-        draft: restaurant.info.status === 'draft',
+        draft: isDraft(restaurant),
       });
     }
   }
@@ -151,11 +167,18 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
   for (const restaurant of loaded) {
     const { info, dir } = restaurant;
     const infoFile = display(path.join(dir, INFO_FILE));
-    const draft = info.status === 'draft';
-    const error = (message: string, file = infoFile) => {
+    const draft = isDraft(restaurant);
+    const error = (message: string, file = infoFile, blocking = false) => {
       invalid.add(restaurant);
-      diagnostics.push({ level: 'error', file, message, restaurantId: info.id, draft });
+      diagnostics.push({ level: 'error', file, message, restaurantId: info.id, draft: draft && !blocking });
     };
+
+    if (restaurant.visibility === 'private' && info.status !== 'draft') {
+      error(
+        'private drafts must keep "status": "draft"; after approval, move it into the public ' +
+          'repository with "npm run content:promote -- <id>" and then publish it',
+      );
+    }
     const warn = (message: string, file = infoFile) =>
       diagnostics.push({ level: 'warning', file, message, restaurantId: info.id });
 
@@ -210,12 +233,29 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
 
     // Unreferenced photos are fine in drafts but usually mean something was forgotten.
     const imagesDir = path.join(dir, IMAGES_DIR);
-    if (existsSync(imagesDir)) {
-      const used = new Set(references.map((r) => path.resolve(dir, r.ref)));
-      for (const name of (await readdir(imagesDir)).sort()) {
-        if (name.startsWith('.')) continue;
-        if (!used.has(path.resolve(imagesDir, name))) {
-          warn(`${IMAGES_DIR}/${name} is not used by ${INFO_FILE} or ${REVIEW_FILE}`);
+    const imageFiles = existsSync(imagesDir)
+      ? (await readdir(imagesDir)).filter((name) => !name.startsWith('.')).sort()
+      : [];
+    const used = new Set(references.map((r) => path.resolve(dir, r.ref)));
+    for (const name of imageFiles) {
+      if (!used.has(path.resolve(imagesDir, name))) {
+        warn(`${IMAGES_DIR}/${name} is not used by ${INFO_FILE} or ${REVIEW_FILE}`);
+      }
+    }
+
+    // Everything in a public folder is in the public repository, published or
+    // not, so embedded metadata (e.g. GPS) is a blocking error there.
+    if (restaurant.visibility === 'public') {
+      for (const name of imageFiles) {
+        const file = path.join(imagesDir, name);
+        let problems: string[];
+        try {
+          problems = await findSensitiveMetadata(file);
+        } catch {
+          continue; // Unreadable or non-image files are reported when referenced.
+        }
+        if (problems.length > 0) {
+          error(`contains ${problems.join(', ')}; ${PRIVACY_FIX}`, display(file), true);
         }
       }
     }
@@ -230,31 +270,20 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
     }
   }
   const valid = loaded.filter((r) => !invalid.has(r));
-  const isIncluded = (info: RestaurantInfo) =>
-    info.status === 'published' || (options.includeDrafts && info.status === 'draft');
+  const isIncluded = (r: LoadedRestaurant) =>
+    options.includeDrafts || (r.visibility === 'public' && r.info.status === 'published');
   const failed = diagnostics.some((d) => d.level === 'error');
 
   // 4. Render included restaurants.
-  const included = valid.filter((r) => isIncluded(r.info));
+  const included = valid.filter(isIncluded);
   const details: RestaurantDetail[] = [];
   const processed = new Map<string, ProcessedImage>();
   if (!failed) {
     for (const restaurant of included) {
       try {
-        details.push(
-          await renderRestaurant(restaurant, options, processed, (ref) =>
-            diagnostics.push({
-              level: 'warning',
-              file: display(path.join(restaurant.dir, ref)),
-              message:
-                'photo still has EXIF metadata (possibly GPS location) and the repository is public; ' +
-                're-import it with "npm run content:add-images" to strip metadata',
-              restaurantId: restaurant.info.id,
-            }),
-          ),
-        );
+        details.push(await renderRestaurant(restaurant, options, processed));
       } catch (e) {
-        const draft = restaurant.info.status === 'draft';
+        const draft = isDraft(restaurant);
         diagnostics.push({
           level: draft ? 'warning' : 'error',
           file: display(restaurant.dir),
@@ -293,11 +322,15 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
   return { diagnostics, restaurants: valid, index, details, failed: finalFailed };
 }
 
+/** Drafts (private, or public but unpublished) never block builds. */
+function isDraft(r: LoadedRestaurant): boolean {
+  return r.visibility === 'private' || r.info.status === 'draft';
+}
+
 async function renderRestaurant(
   restaurant: LoadedRestaurant,
   options: PipelineOptions,
   processed: Map<string, ProcessedImage>,
-  onExif: (ref: string) => void,
 ): Promise<RestaurantDetail> {
   const { info, dir } = restaurant;
   const assets = new Map<string, ImageAsset>();
@@ -313,7 +346,6 @@ async function renderRestaurant(
         throw new Error(`${ref}: ${(e as Error).message}`, { cause: e });
       }
       processed.set(key, image);
-      if (image.sourceHasExif) onExif(ref);
     }
     const url = (fileName: string) => `${options.base}generated/images/${info.id}/${fileName}`;
     const mid = [...image.renditions].reverse().find((r) => r.width <= 960) ?? image.renditions[0]!;
@@ -358,7 +390,7 @@ async function renderRestaurant(
     neighborhood: info.neighborhood,
     address: info.address,
     location: info.location,
-    tier: info.tier,
+    rating: info.rating,
     pricePerPerson: info.pricePerPerson,
     tags: info.tags ?? [],
     cover,
@@ -393,7 +425,7 @@ function toSummary(detail: RestaurantDetail): RestaurantSummary {
     neighborhood: detail.neighborhood,
     address: detail.address,
     location: detail.location,
-    tier: detail.tier,
+    rating: detail.rating,
     pricePerPerson: detail.pricePerPerson,
     tags: detail.tags,
     cover: detail.cover,

@@ -2,7 +2,15 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { errors, makeImage, pipeline, tempDir, validInfo, writeRestaurant } from './helpers.ts';
+import {
+  errors,
+  makeImage,
+  makePhonePhoto,
+  pipeline,
+  tempDir,
+  validInfo,
+  writeRestaurant,
+} from './helpers.ts';
 
 describe('content pipeline', () => {
   it('includes valid published content and writes website data', async () => {
@@ -178,6 +186,79 @@ describe('content pipeline', () => {
     const empty = await pipeline(path.join(await tempDir(), 'does-not-exist'));
     expect(empty.failed).toBe(false);
     expect(empty.index.restaurants).toEqual([]);
+  });
+
+  it('accepts whole-number ratings 1-5, rejects others, and allows no rating', async () => {
+    const root = await tempDir();
+    for (const rating of [1, 2, 3, 4, 5])
+      await writeRestaurant(root, `r${rating}`, validInfo(`r${rating}`, { rating }));
+    await writeRestaurant(root, 'unrated', validInfo('unrated'));
+    const ok = await pipeline(root);
+    expect(errors(ok)).toEqual([]);
+    expect(ok.details.map((d) => d.rating).sort()).toEqual([1, 2, 3, 4, 5, undefined]);
+
+    for (const [i, rating] of [0, 6, 3.5, '5', '夯'].entries()) {
+      const bad = await tempDir();
+      await writeRestaurant(bad, 'x', validInfo(`x${i}`, { rating }));
+      expect(errors(await pipeline(bad)).join('\n'), String(rating)).toMatch(/^rating: /m);
+    }
+  });
+
+  it('stores only the numeric rating in generated data', async () => {
+    const root = await tempDir();
+    await writeRestaurant(root, 'a', validInfo('a', { rating: 2 }));
+    const json = JSON.stringify((await pipeline(root)).details);
+    expect(json).toContain('"rating":2');
+    expect(json).not.toMatch(/NPC|npc/);
+  });
+
+  it('blocks public photos with embedded metadata, even in unpublished restaurants', async () => {
+    const root = await tempDir();
+    const dir = await writeRestaurant(
+      root,
+      'a',
+      validInfo('a', { status: 'draft', cover: 'images/gps.jpg' }),
+    );
+    await makePhonePhoto(path.join(dir, 'images/gps.jpg'));
+    const result = await pipeline(root);
+    expect(result.failed).toBe(true);
+    expect(errors(result)[0]).toMatch(
+      /contains EXIF metadata with GPS location; import the photo with "npm run content:add-images"/,
+    );
+    expect(result.diagnostics[0]!.file).toContain(path.join('a', 'images', 'gps.jpg'));
+  });
+
+  it('reads private drafts for checks and previews only, without blocking on their photos', async () => {
+    const root = await tempDir();
+    const drafts = await tempDir();
+    await writeRestaurant(root, 'pub', validInfo('pub'));
+    const draft = await writeRestaurant(drafts, 'wip', {
+      id: 'wip',
+      status: 'draft',
+      name: 'WIP',
+      cover: 'images/raw.jpg',
+    });
+    await makePhonePhoto(path.join(draft, 'images/raw.jpg')); // a local original may keep camera metadata
+    await writeRestaurant(drafts, 'early', validInfo('early')); // "published" while still private
+
+    const build = await pipeline(root);
+    expect(build.index.restaurants.map((r) => r.id)).toEqual(['pub']);
+
+    const preview = await pipeline(root, { draftsDir: drafts, includeDrafts: true });
+    expect(preview.failed).toBe(false);
+    expect(preview.index.restaurants.map((r) => r.id).sort()).toEqual(['pub', 'wip']);
+    const early = preview.diagnostics.find((d) => d.restaurantId === 'early')!;
+    expect(early).toMatchObject({ level: 'warning', draftError: true });
+    expect(early.message).toMatch(/private drafts must keep "status": "draft"/);
+  });
+
+  it('detects duplicate ids between drafts and public content', async () => {
+    const root = await tempDir();
+    const drafts = await tempDir();
+    await writeRestaurant(root, 'a', validInfo('same'));
+    await writeRestaurant(drafts, 'b', { id: 'same', status: 'draft', name: 'Copy' });
+    const result = await pipeline(root, { draftsDir: drafts, includeDrafts: true });
+    expect(errors(result)[0]).toMatch(/duplicate id "same"/);
   });
 
   it('derives a Google Maps link when none is given', async () => {
