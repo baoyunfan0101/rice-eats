@@ -234,3 +234,98 @@ describe('restaurant details', () => {
     expect(await screen.findByText('页面不存在')).toBeInTheDocument();
   });
 });
+
+describe('submissions', () => {
+  const FORM = 'https://tally.so/r/wMq8xY';
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('hides every submission link until the form is configured', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', '');
+    const { unmount } = visit('r/bayou-bbq');
+    await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' });
+    expect(screen.queryByRole('link', { name: '投稿' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '补充点评或照片' })).not.toBeInTheDocument();
+    unmount();
+    visit('submit/');
+    expect(screen.getByText('投稿功能即将开放')).toBeInTheDocument();
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('treats an invalid setting as not configured', () => {
+    vi.stubEnv('VITE_TALLY_FORM', 'https://example.com/form');
+    visit('submit/');
+    expect(screen.getByText('投稿功能即将开放')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '投稿' })).not.toBeInTheDocument();
+  });
+
+  it('offers a general entry in the header that works without restaurants', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', FORM);
+    index = { ...index, restaurants: [] };
+    const user = userEvent.setup();
+    visit('');
+    await screen.findByText('餐厅点评正在准备中');
+    expect(screen.getByRole('link', { name: '推荐一家餐厅或分享照片' })).toHaveAttribute(
+      'href',
+      `${BASE}submit/`,
+    );
+    await user.click(screen.getByRole('link', { name: '投稿' }));
+    expect(window.location.pathname).toBe(`${BASE}submit/`);
+    expect(
+      screen.getByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/不会立即出现在网站上，也不保证一定发布/)).toBeInTheDocument();
+    expect(screen.getByTitle('Rice吃啥 投稿表单')).toHaveAttribute(
+      'src',
+      'https://tally.so/embed/wMq8xY?alignLeft=1&hideTitle=1&transparentBackground=1&source=site',
+    );
+    expect(screen.getByRole('link', { name: /在新窗口打开投稿表单/ })).toHaveAttribute(
+      'href',
+      'https://tally.so/r/wMq8xY?source=site',
+    );
+    expect(document.title).toBe('投稿 · Rice吃啥');
+  });
+
+  it('passes the restaurant id and name from a restaurant page', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', FORM);
+    const user = userEvent.setup();
+    visit('r/bayou-bbq');
+    await user.click(await screen.findByRole('link', { name: '补充点评或照片' }));
+    expect(window.location.pathname + window.location.search).toBe(
+      `${BASE}submit/?restaurant=bayou-bbq`,
+    );
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '为「Bayou BBQ」投稿' }),
+    ).toBeInTheDocument();
+    const direct = new URL(
+      screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href')!,
+    );
+    expect(Object.fromEntries(direct.searchParams)).toEqual({
+      restaurant_id: 'bayou-bbq',
+      restaurant_name: 'Bayou BBQ',
+      source: 'restaurant-page',
+    });
+    expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).toContain(
+      'restaurant_id=bayou-bbq&restaurant_name=Bayou+BBQ&source=restaurant-page',
+    );
+    expect(screen.getByRole('link', { name: '← Bayou BBQ' })).toHaveAttribute(
+      'href',
+      `${BASE}r/bayou-bbq/`,
+    );
+  });
+
+  it('ignores unknown restaurant ids and still offers the general form', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', FORM);
+    visit('submit/?restaurant=r-fake99');
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).not.toContain('r-fake99');
+  });
+
+  it('keeps the form usable when restaurant data cannot load', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', FORM);
+    failIndex = true;
+    visit('submit/?restaurant=bayou-bbq');
+    expect(await screen.findByTitle('Rice吃啥 投稿表单')).toBeInTheDocument();
+  });
+});

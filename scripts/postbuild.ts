@@ -7,7 +7,7 @@
 //   PUBLIC_STATIC_FILES                     hand-made files in public/
 //   generated/index.json and generated/restaurants/<id>.json for published ids
 //   generated/images/<id>/*.webp            renditions referenced by that data
-// Added afterwards: 404.html and r/<id>/index.html (copies of index.html).
+// Added afterwards: 404.html, submit/index.html, and r/<id>/index.html (copies of index.html).
 
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
@@ -19,6 +19,8 @@ import { findSensitiveMetadata, sniffImageFormat } from './content/privacy.ts';
 
 /** Files in public/ that are deployed as-is. Add new static files here deliberately. */
 export const PUBLIC_STATIC_FILES = ['favicon.svg'];
+/** Fixed app routes served as real pages (so GitHub Pages answers 200, not 404). */
+export const APP_PAGES = ['submit'];
 const MANIFEST = path.join('.vite', 'manifest.json');
 /** Operating-system clutter (e.g. Finder's .DS_Store) is removed rather than deployed. */
 const OS_JUNK = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
@@ -184,6 +186,10 @@ export async function postbuild(distDir: string, options: PostbuildOptions): Pro
   await rm(path.join(distDir, '.vite'), { recursive: true });
   const indexHtml = path.join(distDir, 'index.html');
   await copyFile(indexHtml, path.join(distDir, '404.html'));
+  for (const page of APP_PAGES) {
+    await mkdir(path.join(distDir, page), { recursive: true });
+    await copyFile(indexHtml, path.join(distDir, page, 'index.html'));
+  }
   for (const id of indexIds) {
     await mkdir(path.join(distDir, 'r', id), { recursive: true });
     await copyFile(indexHtml, path.join(distDir, 'r', id, 'index.html'));

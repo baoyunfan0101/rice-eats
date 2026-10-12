@@ -10,7 +10,8 @@ import { cuisineLabel } from '../lib/labels';
 import { priceText, RATING_HINT, RATING_LABELS } from '../lib/format';
 import { placeImages } from '../lib/imagePlacement';
 import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
-import { browseHref, canGoBack } from '../lib/router';
+import { browseHref, canGoBack, submitHref } from '../lib/router';
+import { submissionFormId } from '../lib/submission';
 
 export function RestaurantPage({ id }: { id: string }) {
   const [attempt, setAttempt] = useState(0);
@@ -161,6 +162,25 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
             ))}
           </ul>
         </section>
+      )}
+
+      {submissionFormId() && (
+        <aside className="mx-auto mt-12 max-w-3xl px-4" aria-labelledby="contribute">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white p-4">
+            <div>
+              <h2 id="contribute" className="font-bold">
+                吃过这家店？
+              </h2>
+              <p className="text-sm text-muted">欢迎补充你的点评或照片，审核后可能会更新到这里。</p>
+            </div>
+            <Link
+              href={submitHref(r.id)}
+              className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700"
+            >
+              补充点评或照片
+            </Link>
+          </div>
+        </aside>
       )}
 
       <footer className="mx-auto mt-12 max-w-3xl space-y-1 border-t border-line px-4 pt-6 text-sm text-muted">

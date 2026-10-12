@@ -5,6 +5,7 @@ import { Message } from './components/States';
 import { browseHref, parseRoute, useLocationHref } from './lib/router';
 import { BrowsePage } from './views/BrowsePage';
 import { RestaurantPage } from './views/RestaurantPage';
+import { SubmitPage } from './views/SubmitPage';
 
 export function App() {
   const href = useLocationHref();
@@ -21,6 +22,7 @@ export function App() {
     <Layout>
       {route.kind === 'browse' && <BrowsePage params={route.params} />}
       {route.kind === 'restaurant' && <RestaurantPage id={route.id} />}
+      {route.kind === 'submit' && <SubmitPage restaurantId={route.restaurantId} />}
       {route.kind === 'notFound' && (
         <Message
           icon="🧭"

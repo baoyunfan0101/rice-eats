@@ -12,7 +12,9 @@ import {
   toSearchParams,
   type BrowseState,
 } from '../lib/filters';
-import { browseHref, navigate } from '../lib/router';
+import { Link } from '../components/Link';
+import { browseHref, navigate, submitHref } from '../lib/router';
+import { submissionFormId } from '../lib/submission';
 import { GridView } from './GridView';
 import { ListView } from './ListView';
 
@@ -50,7 +52,16 @@ function Browse({ index, params }: { index: ContentIndex; params: URLSearchParam
     <>
       <SourceNotice index={index} />
       {all.length === 0 ? (
-        <Message title="餐厅点评正在准备中">
+        <Message
+          title="餐厅点评正在准备中"
+          action={
+            submissionFormId() && (
+              <Link href={submitHref()} className="font-semibold text-chili-700 underline">
+                推荐一家餐厅或分享照片
+              </Link>
+            )
+          }
+        >
           第一批餐厅点评还在整理，很快就会上线。欢迎之后再来看看！
         </Message>
       ) : (

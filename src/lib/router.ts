@@ -1,5 +1,5 @@
-// Minimal History API router. The site has two kinds of pages (the browsing
-// page and restaurant details), so a routing library would be overkill.
+// Minimal History API router. The site has three kinds of pages (browsing,
+// restaurant details, and the submission page), so a routing library would be overkill.
 
 import { useSyncExternalStore } from 'react';
 
@@ -8,6 +8,7 @@ const BASE = import.meta.env.BASE_URL; // "/rice-eats/" in production
 export type Route =
   | { kind: 'browse'; params: URLSearchParams }
   | { kind: 'restaurant'; id: string }
+  | { kind: 'submit'; restaurantId?: string }
   | { kind: 'notFound' };
 
 export function parseRoute(pathname: string, search: string): Route {
@@ -18,6 +19,10 @@ export function parseRoute(pathname: string, search: string): Route {
   if (parts.length === 0) return { kind: 'browse', params: new URLSearchParams(search) };
   if (parts.length === 2 && parts[0] === 'r') {
     return { kind: 'restaurant', id: decodeURIComponent(parts[1]!) };
+  }
+  if (parts.length === 1 && parts[0] === 'submit') {
+    const restaurantId = new URLSearchParams(search).get('restaurant') ?? undefined;
+    return { kind: 'submit', ...(restaurantId ? { restaurantId } : {}) };
   }
   return { kind: 'notFound' };
 }
@@ -30,6 +35,12 @@ export function browseHref(params?: URLSearchParams): string {
 export function restaurantHref(id: string): string {
   // Trailing slash: GitHub Pages serves r/<id>/index.html there without a redirect.
   return `${BASE}r/${encodeURIComponent(id)}/`;
+}
+
+/** The submission page, optionally about one restaurant (by its stable id). */
+export function submitHref(restaurantId?: string): string {
+  const query = restaurantId ? `?${new URLSearchParams({ restaurant: restaurantId })}` : '';
+  return `${BASE}submit/${query}`;
 }
 
 const listeners = new Set<() => void>();

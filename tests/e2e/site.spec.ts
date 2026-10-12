@@ -7,6 +7,14 @@ const WITH_LOCATION = 10;
 test.beforeEach(async ({ page }) => {
   // Keep tests offline and avoid loading real map tiles.
   await page.route(/tile\.openstreetmap\.org/, (route) => route.abort());
+  // The fixture build points at a fake Tally form (TALLY_FORM in build:e2e);
+  // a stub page stands in for it, so no test depends on a real Tally account.
+  await page.route(/^https:\/\/tally\.so\//, (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: `<!doctype html><title>stub</title><p>Stub Tally form</p><p id="query">${new URL(route.request().url()).search}</p>`,
+    }),
+  );
 });
 
 const listNames = (page: Page) =>
@@ -132,6 +140,7 @@ test('layout fits the viewport without horizontal scrolling', async ({ page }) =
     '/rice-eats/?view=grid',
     '/rice-eats/?view=map',
     '/rice-eats/r/fixture-sichuan-house/',
+    '/rice-eats/submit/',
   ]) {
     await page.goto(url);
     await expect(page.getByRole('main')).not.toBeEmpty();
@@ -155,4 +164,68 @@ test('keyboard users can reach search, views, and restaurants', async ({ page },
   await page.getByRole('link', { name: /河粉花园/ }).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('河粉花园（虚构示例）');
+});
+
+test('visitors can open the submission form from the header and from a restaurant', async ({
+  page,
+}) => {
+  const response = await page.goto('/rice-eats/submit/');
+  expect(response?.status()).toBe(200);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('投稿：分享你的用餐体验');
+  const form = page.frameLocator('iframe[title="Rice吃啥 投稿表单"]');
+  await expect(form.getByText('Stub Tally form')).toBeVisible();
+  await expect(form.locator('#query')).toContainText('source=site');
+  await expect(page.getByRole('link', { name: /在新窗口打开投稿表单/ })).toHaveAttribute(
+    'href',
+    'https://tally.so/r/e2eForm?source=site',
+  );
+
+  await page.goto('/rice-eats/r/fixture-sichuan-house/');
+  await page.getByRole('link', { name: '补充点评或照片' }).click();
+  await expect(page).toHaveURL(/\/rice-eats\/submit\/\?restaurant=fixture-sichuan-house$/);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    '为「蜀味小馆（虚构示例）」投稿',
+  );
+  await expect(form.locator('#query')).toContainText('restaurant_id=fixture-sichuan-house');
+  await expect(form.locator('#query')).toContainText('source=restaurant-page');
+
+  await page.getByRole('link', { name: '投稿', exact: true }).click();
+  await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);
+  await expect(form.locator('#query')).not.toContainText('restaurant_id');
+});
+
+test('the form does not load on other pages', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('tally.so')) requests.push(request.url());
+  });
+  await page.goto('/rice-eats/');
+  await expect(page.getByText(`共 ${PUBLISHED} 家`)).toBeVisible();
+  await page.goto('/rice-eats/r/fixture-dim-sum-hall/');
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  expect(requests).toEqual([]);
+});
+
+test('keyboard users can reach the submission entry and fallback link', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'keyboard navigation is a desktop concern');
+  await page.goto('/rice-eats/');
+  await expect(page.getByText(`共 ${PUBLISHED} 家`)).toBeVisible();
+  const entry = page.getByRole('link', { name: '投稿', exact: true });
+  for (let i = 0; i < 5 && !(await entry.evaluate((el) => el === document.activeElement)); i++) {
+    await page.keyboard.press('Tab');
+  }
+  await expect(entry).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);
+  const fallback = page.getByRole('link', { name: /在新窗口打开投稿表单/ });
+  for (
+    let i = 0;
+    i < 10 && !(await fallback.evaluate((el) => el === document.activeElement));
+    i++
+  ) {
+    await page.keyboard.press('Tab');
+  }
+  await expect(fallback).toBeFocused();
 });
