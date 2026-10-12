@@ -6,10 +6,11 @@ import {
   parseTallyForm,
   ratingFromAnswer,
   TALLY_RATING_OPTIONS,
+  TALLY_VERDICT_OPTIONS,
   tallyUrls,
   verdictFromAnswer,
 } from '../../shared/submission';
-import { RATING_LABELS } from './labels';
+import { RATING_LABELS, VERDICT_LABELS } from './labels';
 
 describe('Tally form setting', () => {
   it.each([
@@ -133,6 +134,8 @@ describe('submission context', () => {
 
 describe('dish verdict answers', () => {
   it.each([
+    ['🔥 推荐', 1],
+    ['💣 避雷', -1],
     ['推荐', 1],
     [' 避雷 ', -1],
     ['不评价', undefined],
@@ -149,9 +152,12 @@ describe('rating answers', () => {
     for (const rating of RATINGS) {
       expect(TALLY_RATING_OPTIONS[RATING_LABELS[rating]]).toBe(rating);
     }
+    expect(Object.keys(TALLY_VERDICT_OPTIONS)).toEqual([VERDICT_LABELS[1], VERDICT_LABELS[-1]]);
   });
 
   it.each([
+    ['🥵 夯', 5],
+    ['🫤 NPC', 2],
     ['夯', 5],
     ['npc', 2],
     [' 拉完了 ', 1],

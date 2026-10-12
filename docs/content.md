@@ -79,13 +79,13 @@ defined only in `src/lib/labels.ts`, so wording can change without touching
 restaurant data. To add a cuisine or tag, add its key to `vocabulary.ts` and
 its label to `labels.ts` (type checking reports a missing label).
 
-| `rating` | Label  |     | `verdict` | Label |
-| -------- | ------ | --- | --------- | ----- |
-| 5        | 夯     |     | 1         | 推荐  |
-| 4        | 顶级   |     | -1        | 避雷  |
-| 3        | 人上人 |     | (absent)  | none  |
-| 2        | NPC    |     |           |       |
-| 1        | 拉完了 |     |           |       |
+| `rating` | Label     |     | `verdict` | Label   |
+| -------- | --------- | --- | --------- | ------- |
+| 5        | 🥵 夯     |     | 1         | 🔥 推荐 |
+| 4        | 😘 顶级   |     | -1        | 💣 避雷 |
+| 3        | 🤤 人上人 |     | (absent)  | none    |
+| 2        | 🫤 NPC    |     |           |         |
+| 1        | 🤮 拉完了 |     |           |         |
 
 Sorting by rating puts 5 first and unrated restaurants last.
 

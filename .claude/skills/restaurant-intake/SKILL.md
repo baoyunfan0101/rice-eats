@@ -123,8 +123,8 @@ one:
   maintainer confirms which restaurant a submission is about, record it with
   `content:submission -- mark <submission id> --status drafted --id <restaurant id>`,
   which links the POI to that restaurant for later submissions;
-- **dishes**: each dish group's name, verdict (推荐 = `1`, 避雷 = `-1`,
-  不评价 or empty = no verdict), comment, and the photo numbers that belong
+- **dishes**: each dish group's name, verdict (🔥 推荐 = `1`, 💣 避雷 = `-1`;
+  the form requires one, anything else = no verdict), comment, and the photo numbers that belong
   to it. Import general photos first, then each dish's photos, and set the
   dish's `image` to its first imported photo; never move a photo to a
   different dish;

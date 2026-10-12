@@ -104,17 +104,27 @@ export const TALLY_DISH_QUESTIONS = {
 export const dishQuestion = (group: number, part: keyof typeof TALLY_DISH_QUESTIONS) =>
   `菜品${group} ${TALLY_DISH_QUESTIONS[part]}`;
 
-/** Options of a dish's "评价" question; 不评价 or no answer means no verdict. */
-export const TALLY_VERDICT_OPTIONS: Record<string, Verdict | undefined> = {
-  推荐: 1,
-  避雷: -1,
-  不评价: undefined,
+/**
+ * Drops emoji (and the variation selectors and joiners that go with them)
+ * so answers match with or without the emoji shown in the form.
+ */
+const withoutEmoji = (text: string) =>
+  text
+    .normalize('NFKC')
+    .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, '')
+    .trim();
+
+/** Options of a dish's required "评价" question (same labels as the website). */
+export const TALLY_VERDICT_OPTIONS: Record<string, Verdict> = {
+  '🔥 推荐': 1,
+  '💣 避雷': -1,
 };
 
 /** Maps a dish verdict answer to the stored verdict; undefined unless clearly 推荐 or 避雷. */
 export function verdictFromAnswer(answer: string | undefined): Verdict | undefined {
-  const text = answer?.normalize('NFKC').trim();
-  return text ? TALLY_VERDICT_OPTIONS[text] : undefined;
+  const text = answer && withoutEmoji(answer);
+  if (!text) return undefined;
+  return Object.entries(TALLY_VERDICT_OPTIONS).find(([label]) => withoutEmoji(label) === text)?.[1];
 }
 
 /** The single option of the required consent question. */
@@ -135,11 +145,11 @@ export const TALLY_MAX_PHOTO_BYTES = 10 * 1024 * 1024;
  * Tally form, mapped to the stored rating. Unanswered means no rating.
  */
 export const TALLY_RATING_OPTIONS: Record<string, Rating> = {
-  夯: 5,
-  顶级: 4,
-  人上人: 3,
-  NPC: 2,
-  拉完了: 1,
+  '🥵 夯': 5,
+  '😘 顶级': 4,
+  '🤤 人上人': 3,
+  '🫤 NPC': 2,
+  '🤮 拉完了': 1,
 };
 
 /**
@@ -149,10 +159,12 @@ export const TALLY_RATING_OPTIONS: Record<string, Rating> = {
  * an unselected rating never becomes a rating.
  */
 export function ratingFromAnswer(answer: string | undefined): Rating | undefined {
-  const text = answer?.normalize('NFKC').trim().toLowerCase();
+  const text = answer && withoutEmoji(answer).toLowerCase();
   if (!text) return undefined;
   const byLabel = (label: string) =>
-    Object.entries(TALLY_RATING_OPTIONS).find(([l]) => l.toLowerCase() === label.trim())?.[1];
+    Object.entries(TALLY_RATING_OPTIONS).find(
+      ([l]) => withoutEmoji(l).toLowerCase() === label.trim(),
+    )?.[1];
   if (/^[1-5]$/.test(text)) return Number(text) as Rating;
   const labelled = /^(.+?)\s*\(([1-5])\)$/.exec(text);
   if (labelled) {

@@ -20,7 +20,8 @@ describe('display labels', () => {
   it('map keys to Chinese labels', () => {
     expect(cuisineLabel('sichuan')).toBe('川菜');
     expect(tagLabel('date')).toBe('适合约会');
-    expect(RATING_LABELS[2]).toBe('NPC');
-    expect(VERDICT_LABELS[-1]).toBe('避雷');
+    expect(RATING_LABELS[2]).toBe('🫤 NPC');
+    expect(VERDICT_LABELS[1]).toBe('🔥 推荐');
+    expect(VERDICT_LABELS[-1]).toBe('💣 避雷');
   });
 });
