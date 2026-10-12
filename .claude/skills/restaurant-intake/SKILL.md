@@ -94,9 +94,10 @@ npm run content:submission -- list          # what was imported before, and its 
 ```
 
 This stores each submission in `private/submissions/tally-<submission id>/`
-(`submission.json` plus `photo-NN.*`), downloads photos only from tally.so
-links within the form's limits, skips ids already in the private log, and
-reports for each one:
+(`submission.json` plus `photo-NN.*`), downloads photos only through checked
+requests to Tally's file hosts (see `docs/submissions.md`), continues ids
+whose photo intake is incomplete, skips completed ones, and reports for each
+one:
 
 - **restaurant**: `existing` (the hidden `restaurant_id` exists and the name
   matches), `CONFLICT` or `UNKNOWN id` (ask the maintainer; never trust the
@@ -107,7 +108,15 @@ reports for each one:
 - **credit and consent**: the display name, whether a contact email exists
   (the email stays private: pass it only to `content:contributor -- add
 --email`), and consent. A `BLOCKED` submission (no consent, or neither text
-  nor photos) gets no draft; report it to the maintainer.
+  nor photos, or photos only and none retrieved) gets no draft; report it to
+  the maintainer.
+- **photos**: `complete` or `incomplete`, with each photo's state. For an
+  incomplete intake, run `npm run content:submission -- retry-photos <id>`;
+  if a link has expired, ask the maintainer to download the photo from the
+  Tally dashboard and add it with `content:submission -- add-photo <id> <n>
+<file>`. Ask whether to wait or proceed without the missing photos; record
+  "proceed" with `waive-photo <id> <n>`. Never drop a missing photo silently.
+  Re-check with `content:submission -- status <id>` before drafting.
 
 Then continue below with `submission.json`'s `review` and the downloaded
 photos as the submission. For an **existing restaurant**, do not create a new

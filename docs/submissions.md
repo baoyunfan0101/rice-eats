@@ -145,27 +145,84 @@ whose id is not in `npm run content:submission -- list`; move its email from
    npm run content:submission -- import private/tally-export.csv
    ```
 
-   For each submission this stores `submission.json` and the downloaded
-   photos in `private/submissions/tally-<submission id>/`, records the id in
-   the private log `private/submissions/tally-log.json` (so it is never
-   processed twice, even after the files are deleted), and reports the
-   restaurant match, rating, credit, consent, and problems. Photos are
-   downloaded only from `https://*.tally.so` links, at most 10 per submission
-   and 10 MB each, and kept only if they are real images. If a link has
-   expired or needs the Tally login, download the photo from the dashboard
-   into the same folder. Submissions without consent or content are marked
-   BLOCKED. The command creates no drafts and changes nothing in `content/`.
+   For each submission this stores `submission.json` and the photos in
+   `private/submissions/tally-<submission id>/`, records the id in the private
+   log `private/submissions/tally-log.json` (so it is never imported twice,
+   even after the files are deleted), and reports the restaurant match,
+   rating, credit, consent, photo state, and problems. It creates no drafts
+   and changes nothing in `content/`. `--skip-photos` records the photos as
+   pending without downloading them.
 
-3. Ask the agent to process the imported submission with the
+3. Check that the photo intake is complete, and recover missing photos (see
+   [Photos](#photos) below).
+4. Ask the agent to process the imported submission with the
    `restaurant-intake` Skill. It prepares a private draft (or proposes changes
    to an existing restaurant's single review), and reports what it did.
-4. Review and approve as usual (`content:promote`, `content:publish`). Then
+5. Review and approve as usual (`content:promote`, `content:publish`). Then
    record the outcome:
 
    ```sh
    npm run content:submission -- mark <submission id> --status processed --id <restaurant id>
    npm run content:submission -- mark <submission id> --status rejected
    ```
+
+### Photos
+
+Each photo link of a submission has a number (its position in the
+submission) and is stored as `photo-<NN>.<ext>`; its state is kept in
+`photos.json` next to `submission.json`, and `content:submission -- list`
+shows each submission's photo intake as `none`, `complete`, or `incomplete`.
+
+| State        | Meaning                                                              |
+| ------------ | -------------------------------------------------------------------- |
+| `pending`    | Not downloaded yet (e.g. imported with `--skip-photos`).             |
+| `failed`     | The last attempt failed; the report shows why (without link tokens). |
+| `downloaded` | Fetched and verified.                                                |
+| `recovered`  | Added by hand and verified.                                          |
+| `waived`     | The maintainer decided to proceed without it.                        |
+| `excluded`   | Beyond the 10-photo limit; never fetched.                            |
+
+`pending` and `failed` photos make the intake incomplete. Stored photos are
+re-verified (present, a real image, unchanged) whenever a submission is
+read; a missing or changed file goes back to `failed`, and a changed file is
+moved aside rather than overwritten.
+
+```sh
+npm run content:submission -- status <submission id>         # re-check; no downloads
+npm run content:submission -- retry-photos <submission id>   # fetch only pending/failed photos
+npm run content:submission -- add-photo <submission id> <photo number> <file>
+npm run content:submission -- waive-photo <submission id> <photo number>
+```
+
+Importing the same export again also continues an incomplete intake;
+a submission whose intake is complete is skipped without any download.
+Retries never fetch verified photos again, never create second copies, and
+can be repeated safely.
+
+If a link has expired or needs the Tally login, open the submission in the
+Tally dashboard, download the photo, and add it with `add-photo` (it must be
+a JPEG, PNG, WebP, or HEIC image of at most 10 MB; the original file is not
+changed). If the maintainer decides to go ahead without it, use
+`waive-photo`. A photo-only submission without any retrieved photo is
+BLOCKED until a photo is recovered or the submission is rejected; a
+submission with text or some photos can be drafted once the maintainer has
+decided about the missing ones.
+
+**Download security.** Photo links come from untrusted submissions, so every
+request, including each redirect, is checked before it is made: https only,
+no credentials in the link, the default port, and an exact host from the
+trusted list in `scripts/content/safe-fetch.ts` (`tally.so`,
+`storage.tally.so`; no wildcards and no IP addresses). The host's DNS
+answers must all be public addresses (no loopback, private, link-local,
+metadata, or other reserved ranges). Redirects are followed by hand, at most
+3, without loops. Each download is limited to 30 seconds and 10 MB however
+the server describes it, and is kept only if its content is an image; file
+names never come from the submission. When Tally serves a file from a host
+that is not on the list, the download fails closed: add the photo by hand,
+and update the list only after confirming the host belongs to Tally. The DNS
+check runs just before each request; it is a defense for a local tool, not a
+guarantee against an attacker who controls DNS between the check and the
+connection.
 
 Contact emails stay in `private/` (`submission.json`, and
 `private/contributors.json` when a contributor is registered); they never
@@ -186,7 +243,9 @@ checked by hand once the form exists:
    recorded `source=site`.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
 7. Export the CSV, run `npm run content:submission -- import`, and confirm the
-   photos were downloaded (or can be downloaded from the dashboard).
+   photos were downloaded (`photos: complete`). If Tally serves them from a
+   host outside the trusted list, note the host, recover the photos with
+   `add-photo`, and review the list.
 8. Ask the agent to prepare a private draft from one test submission and
    check it with `npm run content:check`.
 9. Confirm `git status` shows no changes in `content/` and nothing under

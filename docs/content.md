@@ -35,7 +35,7 @@ content/                          public database (tracked)
     images/01-<name>.jpg          standardized photos; the first is the cover
 private/                          git-ignored, never committed or deployed
   submissions/                    raw submissions while they are processed
-    tally-<submission id>/        a Tally submission: submission.json and photos
+    tally-<submission id>/        a Tally submission: submission.json, photos.json, photo-NN.*
     tally-log.json                imported Tally submission ids and their status
   drafts/<id>/                    drafts, same layout as content/restaurants/<id>/
   contributors.json               new contributors and contact details
@@ -192,22 +192,23 @@ else.
 
 ## Commands
 
-| Command                                                       | What it does                                                             |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `npm run content:new -- --name "<name>"`                      | Create a private draft with a new id.                                    |
-| `npm run content:edit -- <id>`                                | Copy a public restaurant into `private/drafts/` to change it.            |
-| `npm run content:contributor -- find <name or email>`         | Find existing contributors to reuse their ids.                           |
-| `npm run content:contributor -- add --name <n> [--email <e>]` | Register a contributor privately.                                        |
-| `npm run content:add-images -- <id> <files...>`               | Store standardized photo copies.                                         |
-| `npm run content:extract -- <file>`                           | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`. |
-| `npm run content:submission -- import <csv or json>`          | Import Tally submissions privately (see docs/submissions.md).            |
-| `npm run content:submission -- list` / `mark <id> --status …` | Show or update the private log of imported submissions.                  |
-| `npm run content:check [-- <id>...]`                          | Validate drafts and the database; list ids, names, missing information.  |
-| `npm run images [-- <id>...]`                                 | Process photos and print the renditions.                                 |
-| `npm run content:promote -- <id> [--approved]`                | Move an approved draft into the public database.                         |
-| `npm run content:publish -- <id> [--approved]`                | Show a restaurant on the website.                                        |
-| `npm run content:build`                                       | Write site data to `public/generated/` (part of `build`).                |
-| `npm run check:privacy`                                       | Check tracked files for private material and image metadata.             |
+| Command                                                       | What it does                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `npm run content:new -- --name "<name>"`                      | Create a private draft with a new id.                                           |
+| `npm run content:edit -- <id>`                                | Copy a public restaurant into `private/drafts/` to change it.                   |
+| `npm run content:contributor -- find <name or email>`         | Find existing contributors to reuse their ids.                                  |
+| `npm run content:contributor -- add --name <n> [--email <e>]` | Register a contributor privately.                                               |
+| `npm run content:add-images -- <id> <files...>`               | Store standardized photo copies.                                                |
+| `npm run content:extract -- <file>`                           | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`.        |
+| `npm run content:submission -- import <csv or json>`          | Import Tally submissions privately (see docs/submissions.md).                   |
+| `npm run content:submission -- status`/`retry-photos <id>`    | Check a submission; retry its missing photos (also `add-photo`, `waive-photo`). |
+| `npm run content:submission -- list` / `mark <id> --status …` | Show or update the private log of imported submissions.                         |
+| `npm run content:check [-- <id>...]`                          | Validate drafts and the database; list ids, names, missing information.         |
+| `npm run images [-- <id>...]`                                 | Process photos and print the renditions.                                        |
+| `npm run content:promote -- <id> [--approved]`                | Move an approved draft into the public database.                                |
+| `npm run content:publish -- <id> [--approved]`                | Show a restaurant on the website.                                               |
+| `npm run content:build`                                       | Write site data to `public/generated/` (part of `build`).                       |
+| `npm run check:privacy`                                       | Check tracked files for private material and image metadata.                    |
 
 Add `--source fixtures` to `content:check`, `content:build`, or `images` to
 work with the fictional fixtures.
