@@ -252,7 +252,7 @@ describe('reading Tally exports', () => {
       restaurantName: '测试餐厅',
       restaurantLocation: { lat: 29.72, lng: -95.4 },
       selectionMethod: 'existing',
-      ratingAnswer: '顶级',
+      ratingAnswer: '😘 顶级',
       source: 'restaurant-page',
     });
     expect(photo!.restaurantLocation).toBeUndefined();
