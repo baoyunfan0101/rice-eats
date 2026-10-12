@@ -11,7 +11,10 @@ import {
 
 const MB = 1024 * 1024;
 const START = 'https://storage.tally.so/private/a.jpg?accessToken=secret-token';
-const publicDns: Lookup = async () => [{ address: '203.0.113.10' }];
+// Globally routable example addresses (mocked DNS; no request leaves the process).
+const PUBLIC_V4 = '8.8.8.8';
+const PUBLIC_V6 = '2606:4700:4700::1111';
+const publicDns: Lookup = async () => [{ address: PUBLIC_V4 }, { address: PUBLIC_V6 }];
 
 /** A fake server: each path maps to a response factory; requests are recorded. */
 function server(routes: Record<string, () => Response>) {
@@ -103,15 +106,44 @@ describe('safe downloads', () => {
       '10.1.2.3',
       '192.168.0.5',
       '169.254.169.254',
+      '203.0.113.10',
       '::1',
       'fd12::1',
+      'fe80::1',
+      '::ffff:a00:1', // 10.0.0.1, IPv4-mapped in hex
+      '::ffff:7f00:1', // 127.0.0.1
     ]) {
-      const lookup: Lookup = async () => [{ address: '203.0.113.10' }, { address }];
+      // A forbidden answer among public ones still blocks the request.
+      const lookup: Lookup = async () => [
+        { address: PUBLIC_V4 },
+        { address: PUBLIC_V6 },
+        { address },
+      ];
       expect(await failure(safeDownload(START, { maxBytes: MB, fetchImpl, lookup }))).toMatch(
         /private or reserved address/,
       );
     }
     expect(requests).toEqual([]);
+    for (const lookup of [
+      async () => [],
+      async () => Promise.reject(new Error('ENOTFOUND')),
+    ] as Lookup[]) {
+      await failure(safeDownload(START, { maxBytes: MB, fetchImpl, lookup }));
+    }
+    expect(requests).toEqual([]);
+  });
+
+  it('checks DNS for every redirect target before requesting it', async () => {
+    const { fetchImpl, requests } = server({
+      'storage.tally.so/private/a.jpg': redirect('https://tally.so/b'),
+      'tally.so/b': body('ok'),
+    });
+    const lookup: Lookup = async (host) =>
+      host === 'tally.so' ? [{ address: '::ffff:c0a8:101' }] : [{ address: PUBLIC_V4 }];
+    expect(await failure(safeDownload(START, { maxBytes: MB, fetchImpl, lookup }))).toMatch(
+      /tally\.so resolves to a private or reserved address/,
+    );
+    expect(requests).toEqual(['storage.tally.so/private/a.jpg']);
   });
 
   it('rejects malformed, missing, circular, and excessive redirects', async () => {
@@ -174,6 +206,18 @@ describe('safe downloads', () => {
     }
   });
 
+  it('gives up on slow servers', async () => {
+    const hanging = ((_: string, init?: RequestInit) =>
+      new Promise((_, reject) =>
+        init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason)),
+      )) as typeof fetch;
+    expect(
+      await failure(
+        safeDownload(START, { maxBytes: MB, fetchImpl: hanging, lookup: publicDns, timeoutMs: 20 }),
+      ),
+    ).toMatch(/timed out/);
+  });
+
   it('reports HTTP errors and network failures without tokens', async () => {
     const { fetchImpl } = server({
       'storage.tally.so/private/a.jpg': () => new Response('', { status: 403 }),
@@ -197,18 +241,80 @@ describe('safe downloads', () => {
     expect(urlProblem(new URL('https://STORAGE.TALLY.SO./a'))).toBeUndefined();
   });
 
-  it.each([
-    ['127.0.0.1', true],
-    ['0.0.0.0', true],
-    ['100.64.0.1', true],
-    ['172.16.0.1', true],
-    ['224.0.0.1', true],
-    ['::ffff:10.0.0.1', true],
-    ['fe80::1', true],
-    ['not an ip', true],
-    ['203.0.113.10', false],
-    ['2606:4700::1', false],
-  ])('classifies %s as forbidden: %s', (address, forbidden) => {
-    expect(isForbiddenAddress(address)).toBe(forbidden);
+  describe('address classification', () => {
+    // Each group lists equivalent forms of one IPv4 address: dotted, and
+    // IPv4-mapped IPv6 in dotted, hexadecimal, and fully expanded notation.
+    it.each([
+      ['loopback', '127.0.0.1', true],
+      ['private', '10.0.0.1', true],
+      ['private', '192.168.1.1', true],
+      ['link-local metadata', '169.254.169.254', true],
+      ['documentation', '203.0.113.10', true],
+      ['public', '8.8.8.8', false],
+      ['public', '151.101.1.1', false],
+    ])('classifies every form of %s %s the same way', (_, v4, forbidden) => {
+      const [a, b, c, d] = v4.split('.').map(Number) as [number, number, number, number];
+      const hex = `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+      for (const form of [
+        v4,
+        `::ffff:${v4}`,
+        `::FFFF:${v4}`,
+        `::ffff:${hex}`,
+        `0:0:0:0:0:ffff:${hex}`,
+        `0000:0000:0000:0000:0000:ffff:${hex}`,
+      ]) {
+        expect(isForbiddenAddress(form), form).toBe(forbidden);
+      }
+    });
+
+    it.each([
+      ['::ffff:7f00:1', 'IPv4-mapped loopback'],
+      ['::ffff:a00:1', 'IPv4-mapped private'],
+      ['::ffff:c0a8:101', 'IPv4-mapped private'],
+      ['::ffff:a9fe:a9fe', 'IPv4-mapped metadata'],
+      ['64:ff9b::a00:1', 'NAT64 of a private address'],
+      ['0.0.0.0', 'IPv4 "this network"'],
+      ['100.64.0.1', 'carrier-grade NAT'],
+      ['172.16.0.1', 'private'],
+      ['192.0.2.1', 'documentation'],
+      ['198.18.0.1', 'benchmarking'],
+      ['198.51.100.1', 'documentation'],
+      ['224.0.0.1', 'multicast'],
+      ['240.0.0.1', 'reserved'],
+      ['255.255.255.255', 'broadcast'],
+      ['::1', 'IPv6 loopback'],
+      ['::', 'unspecified'],
+      ['::127.0.0.1', 'IPv4-compatible (deprecated)'],
+      ['fc00::1', 'unique-local'],
+      ['fd12:3456::1', 'unique-local'],
+      ['fe80::1', 'link-local'],
+      ['fe80::1%en0', 'link-local with zone'],
+      ['fec0::1', 'site-local (deprecated)'],
+      ['ff02::1', 'multicast'],
+      ['2001:db8::1', 'documentation'],
+      ['3fff::1', 'documentation'],
+      ['2001::1', 'Teredo'],
+      ['2001:2::1', 'benchmarking'],
+      ['2002:a00:1::1', '6to4'],
+      ['100::1', 'discard-only'],
+      ['not an ip', 'invalid'],
+      ['1.2.3', 'invalid'],
+      ['::ffff:1:2:3', 'outside global unicast'],
+      ['', 'empty'],
+    ])('rejects %s (%s)', (address) => {
+      expect(isForbiddenAddress(address)).toBe(true);
+    });
+
+    it.each([
+      '8.8.8.8',
+      '1.1.1.1',
+      '::ffff:808:808',
+      '64:ff9b::808:808',
+      '2606:4700:4700::1111',
+      '2001:4860:4860::8888',
+      '2a00:1450:4001::200e',
+    ])('allows the globally routable address %s', (address) => {
+      expect(isForbiddenAddress(address)).toBe(false);
+    });
   });
 });

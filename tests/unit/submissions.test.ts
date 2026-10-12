@@ -60,7 +60,7 @@ function fakeNetwork() {
     if (url.pathname.includes('not-image')) return new Response('<html>');
     return new Response(img, { headers: { 'content-type': 'image/jpeg' } });
   }) as typeof fetch;
-  const lookup = async () => [{ address: '203.0.113.10' }];
+  const lookup = async () => [{ address: '8.8.8.8' }]; // globally routable; mocked DNS
   return { down, requests, fetchImpl, lookup };
 }
 

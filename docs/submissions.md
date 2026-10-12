@@ -212,9 +212,12 @@ decided about the missing ones.
 request, including each redirect, is checked before it is made: https only,
 no credentials in the link, the default port, and an exact host from the
 trusted list in `scripts/content/safe-fetch.ts` (`tally.so`,
-`storage.tally.so`; no wildcards and no IP addresses). The host's DNS
-answers must all be public addresses (no loopback, private, link-local,
-metadata, or other reserved ranges). Redirects are followed by hand, at most
+`storage.tally.so`; no wildcards and no IP addresses). Every
+address the host's DNS returns must be globally routable unicast: loopback,
+private, link-local, cloud metadata, documentation, multicast, and other
+special-purpose ranges (IANA registries) are rejected for IPv4 and IPv6,
+IPv4-mapped IPv6 addresses (`::ffff:7f00:1`) are judged by the IPv4 address
+they contain, and one bad answer blocks the request. Redirects are followed by hand, at most
 3, without loops. Each download is limited to 30 seconds and 10 MB however
 the server describes it, and is kept only if its content is an image; file
 names never come from the submission. When Tally serves a file from a host

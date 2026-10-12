@@ -38,38 +38,86 @@ export function urlProblem(url: URL, hosts: readonly string[] = TRUSTED_PHOTO_HO
   return undefined;
 }
 
-/** True for addresses a download must never reach (loopback, private, link-local, metadata, ...). */
+// Address policy: only globally routable unicast addresses are allowed.
+// Addresses are parsed into integers and compared with CIDR ranges, so every
+// textual form of an address (e.g. "::ffff:127.0.0.1" and "::ffff:7f00:1")
+// is classified the same way. Ranges follow the IANA IPv4 and IPv6
+// special-purpose address registries.
+
+const IPV4_BLOCKED: [string, number][] = [
+  ['0.0.0.0', 8], // "this network"
+  ['10.0.0.0', 8], // private
+  ['100.64.0.0', 10], // carrier-grade NAT
+  ['127.0.0.0', 8], // loopback
+  ['169.254.0.0', 16], // link-local, cloud metadata (169.254.169.254)
+  ['172.16.0.0', 12], // private
+  ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.0.2.0', 24], // documentation
+  ['192.88.99.0', 24], // 6to4 relay anycast (deprecated)
+  ['192.168.0.0', 16], // private
+  ['198.18.0.0', 15], // benchmarking
+  ['198.51.100.0', 24], // documentation
+  ['203.0.113.0', 24], // documentation
+  ['224.0.0.0', 4], // multicast
+  ['240.0.0.0', 4], // reserved, broadcast
+];
+
+/** Only global unicast (2000::/3) is allowed, minus these special-purpose ranges. */
+const IPV6_GLOBAL_UNICAST: [string, number] = ['2000::', 3];
+const IPV6_BLOCKED: [string, number][] = [
+  ['2001::', 23], // IETF protocol assignments (Teredo, benchmarking, ORCHID, ...)
+  ['2001:db8::', 32], // documentation
+  ['2002::', 16], // 6to4
+  ['3fff::', 20], // documentation
+];
+/** IPv4-mapped (::ffff:0:0/96) and NAT64 (64:ff9b::/96) addresses embed an IPv4 address. */
+const IPV6_EMBEDDING_IPV4: [string, number][] = [
+  ['::ffff:0:0', 96],
+  ['64:ff9b::', 96],
+];
+
+function parseIpv4(address: string): bigint | undefined {
+  if (isIP(address) !== 4) return undefined;
+  return address.split('.').reduce((n, part) => (n << 8n) | BigInt(Number(part)), 0n);
+}
+
+function parseIpv6(address: string): bigint | undefined {
+  if (isIP(address) !== 6 || address.includes('%')) return undefined; // no zone ids
+  let text = address.toLowerCase();
+  // A trailing dotted IPv4 part ("::ffff:127.0.0.1") becomes two hex groups.
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(text)?.[1];
+  if (dotted) {
+    const v4 = parseIpv4(dotted)!;
+    text = `${text.slice(0, -dotted.length)}${(v4 >> 16n).toString(16)}:${(v4 & 0xffffn).toString(16)}`;
+  }
+  const [head, tail] = text.split('::') as [string, string | undefined];
+  const groups = (part: string | undefined) => (part ? part.split(':') : []);
+  const missing = 8 - groups(head).length - groups(tail).length;
+  const all = tail === undefined ? groups(head) : [...groups(head), ...Array(missing).fill('0'), ...groups(tail)];
+  return all.reduce((n, group) => (n << 16n) | BigInt(parseInt(group, 16)), 0n);
+}
+
+const inRange = (value: bigint, bits: number, [base, prefix]: [string, number], parse: (a: string) => bigint | undefined) =>
+  value >> BigInt(bits - prefix) === parse(base)! >> BigInt(bits - prefix);
+
+/**
+ * True for addresses a download must never reach: anything that is not a
+ * globally routable unicast address (loopback, private, link-local, metadata,
+ * documentation, multicast, reserved, ...), and anything that is not a valid
+ * IP address. IPv4-mapped and NAT64 IPv6 addresses are judged by the IPv4
+ * address they contain.
+ */
 export function isForbiddenAddress(address: string): boolean {
-  const version = isIP(address);
-  if (version === 4) {
-    const [a, b] = address.split('.').map(Number) as [number, number];
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
-      (a === 169 && b === 254) || // link-local, cloud metadata (169.254.169.254)
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 192 && b === 0) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      a >= 224 // multicast, reserved, broadcast
-    );
+  const v4 = parseIpv4(address);
+  if (v4 !== undefined) return IPV4_BLOCKED.some((range) => inRange(v4, 32, range, parseIpv4));
+  const v6 = parseIpv6(address);
+  if (v6 === undefined) return true;
+  if (IPV6_EMBEDDING_IPV4.some((range) => inRange(v6, 128, range, parseIpv6))) {
+    const embedded = v6 & 0xffffffffn;
+    return IPV4_BLOCKED.some((range) => inRange(embedded, 32, range, parseIpv4));
   }
-  if (version === 6) {
-    const lower = address.toLowerCase();
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower)?.[1];
-    if (mapped) return isForbiddenAddress(mapped);
-    return (
-      lower === '::' ||
-      lower === '::1' ||
-      /^f[cd]/.test(lower) || // unique local
-      /^fe[89ab]/.test(lower) || // link-local
-      lower.startsWith('ff') || // multicast
-      lower.startsWith('fd00:ec2') // AWS metadata over IPv6
-    );
-  }
-  return true;
+  if (!inRange(v6, 128, IPV6_GLOBAL_UNICAST, parseIpv6)) return true;
+  return IPV6_BLOCKED.some((range) => inRange(v6, 128, range, parseIpv6));
 }
 
 export type Lookup = (host: string) => Promise<{ address: string }[]>;
