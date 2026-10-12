@@ -45,14 +45,18 @@ so everything unapproved lives in the git-ignored `private/` folder:
   - dish `verdict`: `1` when the contributor recommends the dish, `-1` when
     they warn against it, absent when they gave no clear opinion. Mentioning a
     dish is not a recommendation.
-  - `cuisines` and `tags`: keys from `src/content/taxonomy.ts` (e.g. `sichuan`,
+  - `cuisines` and `tags`: keys from `shared/content/vocabulary.ts` (e.g. `sichuan`,
     `date`, `group`). Use a tag only when the contributor said it (e.g. "great
     for dates"). If a needed cuisine or tag does not exist, propose adding it
-    to `taxonomy.ts` in your report instead of picking a near match.
+    to `vocabulary.ts` (and a label to `src/lib/labels.ts`) in your report
+    instead of picking a near match.
 - **Photos:** only connect a photo to a dish when the submission says which
   photo shows it. Image order decides the cover (the first image); import the
   photo the contributor highlights or the clearest overview first, otherwise
-  keep their order. Do not spend effort "choosing" a cover.
+  keep their order. Do not spend effort "choosing" a cover. Place a photo in
+  `review.md` only where the contributor's text refers to it; the website
+  already shows each photo once (review first, then cover, dish cards, and a
+  gallery for the rest), so do not reference photos just to make them appear.
 - **Existing restaurants:** one restaurant has one record and one review.
   Search `content/restaurants/` (and `private/drafts/`) for the restaurant
   first, by name, alternative name, and address. Restaurants can share a name,
@@ -129,7 +133,7 @@ Fix every `error` and `draft` line. Report to the maintainer:
 - facts from the submission vs. from elsewhere (with source), and any derived
   values (e.g. a per-person price from a total);
 - missing, uncertain, or conflicting information (from `content:check` and your reading);
-- photos without a known subject, unprocessed formats, proposed new taxonomy keys;
+- photos without a known subject, unprocessed formats, proposed new vocabulary keys;
 - contributor ids used or created, and the permission/attribution status;
 - that the draft is private and nothing has been committed or published.
 

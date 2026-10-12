@@ -13,6 +13,14 @@ to read this; they send text and/or photos, and a maintainer (usually with the
 - **Website** (`src/`): reads data generated at build time
   (`public/generated/`, not committed) and never changes the database.
 
+Code follows the same split. `shared/content/` is the framework-independent
+data contract: `schema.ts` (canonical formats and validation),
+`vocabulary.ts` (the only list of cuisine, tag, rating, and verdict keys), and
+`model.ts` (the generated data the website reads). Content management
+(`scripts/`) and the website (`src/`) both import `shared/`, never each other,
+and `shared/` imports neither; `tests/unit/architecture.test.ts` checks this.
+Display labels live only in the website (`src/lib/labels.ts`).
+
 ## Layout and privacy
 
 The GitHub repository is public and anything committed stays in its history,
@@ -50,22 +58,23 @@ rejected so typos are caught.
 | `altNames`       | string[]                                       | Other names (e.g. English or Chinese). Searchable.                                                                                        |
 | `address`        | string                                         |                                                                                                                                           |
 | `location`       | `{ "lat": number, "lng": number }`             | Needed for the map. Must be within 100 km of Rice University.                                                                             |
-| `cuisines`       | cuisine keys, e.g. `["sichuan"]`               | Keys from `src/content/taxonomy.ts`. Filterable.                                                                                          |
-| `tags`           | tag keys, e.g. `["date", "group"]`             | Scenario tags from `taxonomy.ts`. Filterable. Only when the contributor said so.                                                          |
+| `cuisines`       | cuisine keys, e.g. `["sichuan"]`               | Keys from `shared/content/vocabulary.ts`. Filterable.                                                                                     |
+| `tags`           | tag keys, e.g. `["date", "group"]`             | Scenario tags from `vocabulary.ts`. Filterable. Only when the contributor said so.                                                        |
 | `rating`         | integer `1`-`5`                                | Personal rating; see below.                                                                                                               |
 | `pricePerPerson` | number (USD)                                   | Drives the price filter.                                                                                                                  |
 | `dishes`         | `{ name, verdict?, comment?, image? }[]`       | `verdict`: `1` recommended, `-1` not recommended, absent = no opinion. `image`: `images/<file>`.                                          |
 | `links`          | `{ googleMaps?, appleMaps?, website? }` (URLs) | Map links are derived from location/address; set them only to override a wrong result.                                                    |
 | `contributorIds` | e.g. `["u-001"]`                               | Who wrote the text and took the photos. Required to promote or publish.                                                                   |
 
-The zod definitions are in `scripts/content/schema.ts`; the generated shapes the
-website reads are in `src/content/model.ts`.
+The zod definitions are in `shared/content/schema.ts`; the generated shapes the
+website reads are in `shared/content/model.ts`.
 
 ### Controlled values and labels
 
-Data stores keys; `src/content/taxonomy.ts` is the only place display labels
-are defined, so wording can change without touching restaurant data. To add a
-cuisine or tag, add one line there.
+Data stores keys from `shared/content/vocabulary.ts`; display labels are
+defined only in `src/lib/labels.ts`, so wording can change without touching
+restaurant data. To add a cuisine or tag, add its key to `vocabulary.ts` and
+its label to `labels.ts` (type checking reports a missing label).
 
 | `rating` | Label  |     | `verdict` | Label |
 | -------- | ------ | --- | --------- | ----- |
@@ -129,9 +138,21 @@ The database accepts nothing else in `images/`: wrong names, oversized images,
 non-JPEG/PNG content, or embedded metadata are blocking errors in
 `content:check`, the build, and `check:privacy`.
 
-The website shows the cover at the top, dish photos with their dishes, review
-photos in the text, and all remaining photos in a 照片 section, so a photo
-appears once and photo-only restaurants still show every photo. The build turns
+On a restaurant page each stored photo appears once. Placement follows these
+rules, in priority order (`src/lib/imagePlacement.ts`):
+
+1. **Review**: photos referenced in `review.md` appear where the author put
+   them, with their captions. Repeating a photo inside the review is kept as
+   intentional.
+2. **Cover**: the first image is shown at the top, unless the review already
+   places it.
+3. **Dish cards**: a dish shows its photo unless the photo already appears
+   above or on an earlier dish; the card keeps its name, verdict, and comment.
+4. **照片 gallery**: all remaining photos, in stored order.
+
+So photo-only restaurants show the cover and then every other photo, and no
+display flags are stored in the data. List, grid, and map previews always use
+the cover. The build turns
 each photo into WebP renditions 480, 960, and 1600 px wide (never upscaled,
 metadata-free), cached in `.cache/images/` by content hash.
 
