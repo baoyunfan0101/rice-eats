@@ -5,14 +5,31 @@ Visitors can send a review, photos, or both through a hosted
 send is published automatically:
 
 ```text
-Rice Eats website -> Tally form -> Gmail notification -> local intake (Agent)
-  -> human review -> content/ (database) -> static website
+Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notification
+  -> local intake (Agent) -> human review -> content/ (database) -> static website
 ```
 
 - **Website** (`src/`): a "投稿" link in the header, a "补充点评或照片" box on
-  each restaurant page, and the submission page `/rice-eats/submit/` with the
-  embedded form and a direct link to the Tally-hosted form. The form loads only
-  on that page. The website never writes to the database.
+  each restaurant page, and the submission page `/rice-eats/submit/`. There
+  the contributor first chooses the restaurant, then confirms it
+  ("确认餐厅" / "重新选择"), and only then sees the embedded form (with a
+  direct link to the Tally-hosted form as a fallback). The form loads only on
+  that page, and the website never writes to the database.
+- **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
+  `src/lib/poi.ts`): "使用当前位置" (the browser asks for location only after
+  that click), tapping the map, or a name search finds nearby places through
+  the [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)
+  (restaurants, fast food, cafes, food courts; 300 m around the point, which
+  the contributor can widen to 1 km and 3 km). The device position is only a
+  search center and is never submitted; the location sent is the chosen
+  place's (or the contributor's map marker). If the place is missing, or
+  search is unavailable, "手动添加餐厅" takes a name, an optional address, and
+  a map marker; a name alone is allowed and is marked for location
+  verification. Arriving from a restaurant page skips the search (with
+  "更换餐厅" to choose another). Results are cached for the session, superseded
+  requests are cancelled, and name searches wait until typing pauses. The page
+  shows Geoapify's attribution and a short note that the search position is
+  sent to Geoapify.
 - **Tally**: collects the text, photos, rating, credit, contact email, and
   consent. Free-plan features only.
 - **Gmail** (`hello.riceeats@gmail.com`): receives a notification per
@@ -22,7 +39,9 @@ Rice Eats website -> Tally form -> Gmail notification -> local intake (Agent)
   a private draft, and waits for the maintainer's approval.
 
 The shared contract (hidden-field names, question titles, rating options, the
-form setting) is defined once in `shared/submission.ts`.
+form setting) is defined once in `shared/submission.ts`. Components only see a
+provider-independent `RestaurantCandidate`; Geoapify is one implementation in
+`src/lib/poi.ts`.
 
 ## Maintainer setup (one time)
 
@@ -37,13 +56,16 @@ access to them. Menu names may differ slightly in Tally's editor.
 
    | Block                 | Title / name           | Settings                                                                                     |
    | --------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
-   | Hidden fields         | `restaurant_id`        | Filled in by the website on restaurant pages.                                                |
-   |                       | `restaurant_name_zh`   | The restaurant's Chinese name, when it has one.                                              |
-   |                       | `restaurant_name_en`   | The restaurant's English name, when it has one.                                              |
+   | Hidden fields         | `restaurant_id`        | Rice Eats id, only for a restaurant already on the site.                                     |
+   |                       | `restaurant_name`      | The confirmed restaurant name.                                                               |
+   |                       | `restaurant_lat`       | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.            |
+   |                       | `restaurant_lng`       | Longitude, as above.                                                                         |
+   |                       | `restaurant_address`   | Address, when known.                                                                         |
+   |                       | `poi_provider`         | `geoapify` for a place from the search.                                                      |
+   |                       | `poi_id`               | The provider's place id (private; never a Rice Eats id).                                     |
+   |                       | `selection_method`     | `existing`, `poi`, or `manual`.                                                              |
    |                       | `source`               | `site` or `restaurant-page`.                                                                 |
-   | Text                  |                        | Intro only: listed or new restaurants; manual review, no guaranteed publication.             |
-   | Short answer          | `餐厅中文名`           | Optional; default answer `@restaurant_name_zh`; placeholder "中文名和英文名至少填一个".      |
-   | Short answer          | `餐厅英文名`           | Optional; default answer `@restaurant_name_en`; placeholder "招牌或地图上的英文名".          |
+   | Text                  |                        | "餐厅：@restaurant_name" (a field reference), then the intro: manual review, no guarantee.   |
    | Text                  |                        | "下面的点评、推荐/避雷的菜、照片至少填一项，其余都是选填。"                                  |
    | Long answer           | `你的点评`             | Optional. Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                          |
    | Text                  |                        | "这里传环境、菜单等不属于某道菜的照片；某道菜的照片请传在下面对应的菜品里。"                 |
@@ -72,22 +94,20 @@ access to them. Menu names may differ slightly in Tally's editor.
    In the form settings, set the language to Chinese (Simplified) so buttons
    and messages are in Chinese.
 
-3. **Hidden fields.** The names must be exactly `restaurant_id`,
-   `restaurant_name_zh`, `restaurant_name_en`, and `source`; the website
-   passes them as URL parameters
-   (`?restaurant_id=r-abc123&restaurant_name_zh=...&restaurant_name_en=...&source=restaurant-page`).
-   The name questions default to them, so visitors from a restaurant page see
-   the names filled in and can correct them. They are context, not proof:
-   intake checks them against the database.
+3. **Hidden fields.** The names must be exactly as in the table; the website
+   passes only the non-empty ones as URL parameters, e.g.
+   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site`.
+   The form has no name question: the restaurant is chosen and confirmed on
+   the website, and the form shows it through the `@restaurant_name` field
+   reference (to change it, contributors use "更换餐厅" on the website). The
+   fields are context, not proof: intake checks them against the database.
 4. **Conditional logic** (Tally's conditional logic blocks):
-   - At least one name: when `餐厅中文名` **and** `餐厅英文名` are empty,
-     require `餐厅中文名`.
    - Something to review: when `你的点评`, `照片`, and `菜品1 名称` are all
      empty, require `你的点评`.
    - Dish groups: show the `菜品2` questions only when `菜品1 名称` is not
      empty (hide them by default), and the same for `菜品3` to `菜品5`.
-     Intake also reports or rejects submissions without a name or content, so a
-     gap here never publishes anything.
+     Intake also reports or rejects submissions without a restaurant or
+     content, so a gap here never publishes anything.
 5. **Photos.** In each file upload block, allow multiple files, limit the
    count (10 general, 3 per dish), set 10 MB per file (the free-plan maximum),
    and accept .jpg, .jpeg, .png, .heic, and .webp. HEIC from iPhones is fine:
@@ -112,7 +132,21 @@ access to them. Menu names may differ slightly in Tally's editor.
     "投稿功能即将开放"; a malformed value fails `npm run build`. The form link
     is public and is not a secret; never put API keys, passwords, or tokens in
     the repository.
-12. **Verify end to end** with the checklist below.
+12. **Restaurant search (Geoapify).** Create a free account at
+    [geoapify.com](https://www.geoapify.com/), create a project, and copy its
+    API key. In the key's settings, restrict it to the site's origin
+    (`https://baoyunfan0101.github.io`, plus `http://localhost:5173` only if
+    you also use it locally) and, if offered, to the Places API, so the key
+    is useless elsewhere. The key ships in the page, so it is a repository
+    **variable**, not a secret: Settings > Secrets and variables > Actions >
+    Variables > `GEOAPIFY_API_KEY`; the deploy workflow passes it to the
+    build as `VITE_GEOAPIFY_API_KEY`. For local development put
+    `VITE_GEOAPIFY_API_KEY=<key>` in `.env.local` (git-ignored). Never commit
+    a key or use an unrestricted one. Without a key the site still builds,
+    hides the search, and offers manual entry. Watch the free quota in the
+    Geoapify dashboard; when it is exhausted the page says search is
+    unavailable and manual entry keeps working.
+13. **Verify end to end** with the checklist below.
 
 ## Handling submissions
 
@@ -143,8 +177,11 @@ whose id is not in `npm run content:submission -- list`; move its email from
      "submittedAt": "2026-10-12 18:00",
      "source": "restaurant-page",
      "restaurantId": "r-abc123",
-     "restaurantNameZh": "示例拉面",
-     "restaurantNameEn": "Example Noodles",
+     "restaurantName": "示例拉面",
+     "restaurantAddress": "6100 Main St, Houston",
+     "restaurantLocation": { "lat": 29.7174, "lng": -95.4018 },
+     "poi": { "provider": "geoapify", "id": "<place id>" },
+     "selectionMethod": "existing",
      "review": "…",
      "ratingAnswer": "顶级",
      "photoUrls": ["https://storage.tally.so/…"],
@@ -177,6 +214,18 @@ whose id is not in `npm run content:submission -- list`; move its email from
    and changes nothing in `content/`. `--skip-photos` records the photos as
    pending without downloading them.
 
+   The restaurant match is a proposal, resolved in this order: the
+   `restaurant_id` (checked against the submitted name and location), then a
+   POI that an earlier reviewed submission linked to a restaurant (`mark
+--status drafted|processed --id <restaurant id>` records that link in the
+   private log), then nearby restaurants (within 150 m) and restaurants with
+   the same name or an alternative name, each with its distance. A name
+   alone never merges two places: chains have branches with the same name,
+   so a far-away same-name restaurant is listed as a possible other branch.
+   Manual entries, names without a location, and invalid coordinates are
+   reported for verification. POI ids stay in `private/` and are never
+   copied into `content/`.
+
 3. Check that the photo intake is complete, and recover missing photos (see
    [Photos](#photos) below).
 4. Ask the agent to process the imported submission with the
@@ -186,6 +235,7 @@ whose id is not in `npm run content:submission -- list`; move its email from
    record the outcome:
 
    ```sh
+   npm run content:submission -- mark <submission id> --status drafted --id <restaurant id>
    npm run content:submission -- mark <submission id> --status processed --id <restaurant id>
    npm run content:submission -- mark <submission id> --status rejected
    ```
@@ -263,12 +313,18 @@ Automated tests use a stub instead of Tally, so the live integration must be
 checked by hand once the form exists:
 
 1. Open https://baoyunfan0101.github.io/rice-eats/ and use the "投稿" link.
-2. Submit a text-only test response.
-3. Submit a photo-only test response.
+   Use "使用当前位置" (allow the permission), pick a nearby restaurant,
+   confirm it, and submit a text-only test response.
+2. Search a restaurant by name, or tap the map, and submit a photo-only test
+   response. Then deny the location permission once and check that the
+   message appears and map search still works.
+3. Add a restaurant by hand (name and marker) and submit a test response.
 4. On a restaurant page, use "补充点评或照片" and submit a test response.
-5. In Tally, confirm the third response recorded `restaurant_id`,
-   `restaurant_name_zh` / `restaurant_name_en`, and `source=restaurant-page`,
-   and that the first two recorded `source=site`. Include a dish with a photo
+5. In Tally, confirm the responses recorded `restaurant_name`,
+   `restaurant_lat` / `restaurant_lng`, `selection_method` (`poi`, `poi`,
+   `manual`, `existing`), `poi_provider` / `poi_id` for the first two,
+   `restaurant_id` and `source=restaurant-page` for the fourth, and
+   `source=site` for the others, and that the form showed the restaurant name. Include a dish with a photo
    in one response and check that the import lists the photo under that dish.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
 7. Export the CSV, run `npm run content:submission -- import`, and confirm the

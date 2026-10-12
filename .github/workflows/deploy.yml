@@ -31,6 +31,11 @@ jobs:
       - run: npm ci
       # Validates content and checks dist/ against the allowlist again.
       - run: npm run build
+        env:
+          # Browser key for nearby restaurant search (a repository variable,
+          # not a secret: it ships in the page and is restricted by domain in
+          # Geoapify). Without it the site builds and offers manual entry only.
+          VITE_GEOAPIFY_API_KEY: ${{ vars.GEOAPIFY_API_KEY }}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist

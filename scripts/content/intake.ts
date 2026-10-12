@@ -37,27 +37,14 @@ export function newRestaurantId(taken: Set<string>): string {
 }
 
 /** Creates a draft folder (info.json and images/) in the private drafts directory. */
-export async function createDraft(
-  draftsDir: string,
-  id: string,
-  names: { nameZh?: string; nameEn?: string },
-) {
+export async function createDraft(draftsDir: string, id: string, name: string) {
   const parsedId = idSchema.safeParse(id);
   if (!parsedId.success) throw new IntakeError(`invalid id "${id}": ${parsedId.error.issues[0]?.message}`);
-  const nameZh = names.nameZh?.trim() || undefined;
-  const nameEn = names.nameEn?.trim() || undefined;
-  if (!nameZh && !nameEn) {
-    throw new IntakeError('a Chinese or English name is required (--name-zh "..." and/or --name-en "...")');
-  }
+  if (!name.trim()) throw new IntakeError('a restaurant name is required (--name "...")');
   const dir = path.join(draftsDir, id);
   if (existsSync(dir)) throw new IntakeError(`${dir} already exists; not overwriting it`);
   await mkdir(path.join(dir, IMAGES_DIR), { recursive: true });
-  const info: RestaurantInfo = {
-    id,
-    status: 'draft',
-    ...(nameZh ? { nameZh } : {}),
-    ...(nameEn ? { nameEn } : {}),
-  };
+  const info: RestaurantInfo = { id, status: 'draft', name: name.trim() };
   await writeFile(path.join(dir, INFO_FILE), `${JSON.stringify(info, null, 2)}\n`);
   return dir;
 }

@@ -48,10 +48,7 @@ export interface MapLinks {
 export interface RestaurantSummary {
   id: string;
   status: PublicationStatus;
-  /** Display name: nameZh when present, otherwise nameEn. */
   name: string;
-  nameZh?: string;
-  nameEn?: string;
   altNames: string[];
   /** Cuisine keys (see vocabulary.ts). */
   cuisines: string[];

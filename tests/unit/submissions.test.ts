@@ -17,6 +17,7 @@ import {
   submissionStatus,
   submissionsFromCsv,
   waivePhoto,
+  type Identity,
   type ImportOptions,
   type Submission,
 } from '../../scripts/content/submissions.ts';
@@ -28,8 +29,6 @@ const COLUMNS = [
   'Submission ID',
   'Respondent ID',
   'Submitted at',
-  '餐厅中文名',
-  '餐厅英文名',
   '你的点评',
   '照片',
   '菜品1 名称',
@@ -45,8 +44,13 @@ const COLUMNS = [
   '联系邮箱',
   '发布授权',
   'restaurant_id',
-  'restaurant_name_zh',
-  'restaurant_name_en',
+  'restaurant_name',
+  'restaurant_lat',
+  'restaurant_lng',
+  'restaurant_address',
+  'poi_provider',
+  'poi_id',
+  'selection_method',
   'source',
 ];
 const PHOTO = 'https://storage.tally.so/private/photo-a.jpg?id=1&accessToken=secret';
@@ -63,7 +67,13 @@ const ROWS = {
   textOnly: row({
     'Submission ID': 'sub1',
     'Submitted at': '2026-10-01 12:00:00',
-    餐厅中文名: '示例面馆',
+    restaurant_name: '示例面馆',
+    restaurant_lat: '29.730000',
+    restaurant_lng: '-95.410000',
+    restaurant_address: '9 Elm St',
+    poi_provider: 'geoapify',
+    poi_id: '51abcdef',
+    selection_method: 'poi',
     你的点评: '汤很浓，面有点软。\n下次还会来',
     署名: '小明',
     联系邮箱: 'ming@example.com',
@@ -72,34 +82,35 @@ const ROWS = {
   }),
   photoOnly: row({
     'Submission ID': 'sub2',
-    餐厅英文名: 'Sample Noodles',
+    restaurant_name: 'Sample Noodles',
+    selection_method: 'manual',
     照片: PHOTO,
     发布授权: CONSENT,
     source: 'site',
   }),
   existing: row({
     'Submission ID': 'sub3',
-    餐厅中文名: '测试餐厅',
-    餐厅英文名: 'Test Place',
     你的点评: '推荐牛肉面',
     照片: PHOTO,
     总体评级: '顶级',
     发布授权: CONSENT,
     restaurant_id: 'r-abc234',
-    restaurant_name_zh: '测试餐厅',
-    restaurant_name_en: 'Test Place',
+    restaurant_name: '测试餐厅',
+    restaurant_lat: '29.72',
+    restaurant_lng: '-95.4',
+    selection_method: 'existing',
     source: 'restaurant-page',
   }),
   noConsent: row({
     'Submission ID': 'sub4',
-    餐厅中文名: '示例面馆',
+    restaurant_name: '示例面馆',
     你的点评: '好吃',
     总体评级: '夯',
     source: 'site',
   }),
   dishes: row({
     'Submission ID': 'sub5',
-    餐厅中文名: '示例面馆',
+    restaurant_name: '示例面馆',
     照片: PHOTO_C,
     '菜品1 名称': '牛肉面',
     '菜品1 评价': '推荐',
@@ -147,10 +158,14 @@ async function setup() {
   await writeRestaurant(
     restaurantsDir,
     'r-abc234',
-    validInfo('r-abc234', { nameZh: '测试餐厅', nameEn: 'Test Place', address: '1 Main St' }),
+    validInfo('r-abc234', { name: '测试餐厅', altNames: ['Test Place'], address: '1 Main St' }),
     { 'review.md': review },
   );
-  await writeRestaurant(restaurantsDir, 'r-def567', validInfo('r-def567', { nameZh: '另一家店' }));
+  await writeRestaurant(
+    restaurantsDir,
+    'r-def567',
+    validInfo('r-def567', { name: '另一家店', location: { lat: 29.7, lng: -95.3 } }),
+  );
   const snapshot = async () => {
     const files = (await readdir(restaurantsDir, { recursive: true })).sort();
     return Promise.all(
@@ -190,7 +205,7 @@ async function setup() {
 
 const sub = (extra: Partial<Submission>): Submission => ({
   submissionId: 's1',
-  restaurantNameZh: '示例面馆',
+  restaurantName: '示例面馆',
   photoUrls: [],
   dishes: [],
   consent: true,
@@ -212,7 +227,11 @@ describe('reading Tally exports', () => {
     );
     expect(text).toMatchObject({
       submissionId: 'sub1',
-      restaurantNameZh: '示例面馆',
+      restaurantName: '示例面馆',
+      restaurantAddress: '9 Elm St',
+      restaurantLocation: { lat: 29.73, lng: -95.41 },
+      poi: { provider: 'geoapify', id: '51abcdef' },
+      selectionMethod: 'poi',
       review: '汤很浓，面有点软。\n下次还会来',
       photoUrls: [],
       displayName: '小明',
@@ -221,21 +240,40 @@ describe('reading Tally exports', () => {
       source: 'site',
     });
     expect(text!.ratingAnswer).toBeUndefined();
-    expect(text!.restaurantNameEn).toBeUndefined();
     expect(photo).toMatchObject({
-      restaurantNameEn: 'Sample Noodles',
+      restaurantName: 'Sample Noodles',
+      selectionMethod: 'manual',
       review: undefined,
       photoUrls: [PHOTO],
       dishes: [],
     });
     expect(existing).toMatchObject({
       restaurantId: 'r-abc234',
-      restaurantNameZh: '测试餐厅',
-      restaurantNameEn: 'Test Place',
+      restaurantName: '测试餐厅',
+      restaurantLocation: { lat: 29.72, lng: -95.4 },
+      selectionMethod: 'existing',
       ratingAnswer: '顶级',
       source: 'restaurant-page',
     });
+    expect(photo!.restaurantLocation).toBeUndefined();
+    expect(photo!.poi).toBeUndefined();
     expect(noConsent!.consent).toBe(false);
+  });
+
+  it('keeps invalid coordinates out of the location', () => {
+    const [s] = submissionsFromCsv(
+      csv(
+        row({
+          'Submission ID': 'bad',
+          restaurant_name: 'X',
+          restaurant_lat: '95',
+          restaurant_lng: 'abc',
+          发布授权: CONSENT,
+        }),
+      ),
+    );
+    expect(s!.restaurantLocation).toBeUndefined();
+    expect(s!.restaurantLocationRaw).toBe('95,abc');
   });
 
   it('reads dish groups with their own photos', () => {
@@ -257,7 +295,7 @@ describe('reading Tally exports', () => {
     const file = path.join(dir, 'email.json');
     await writeFile(
       file,
-      JSON.stringify({ submissionId: 'mail1', restaurantNameEn: 'X', review: 'ok', consent: true }),
+      JSON.stringify({ submissionId: 'mail1', restaurantName: 'X', review: 'ok', consent: true }),
     );
     expect((await readSubmissions(file))[0]).toMatchObject({
       submissionId: 'mail1',
@@ -272,14 +310,30 @@ describe('reading Tally exports', () => {
 });
 
 describe('restaurant identity', () => {
+  const at = (lat: number, lng: number) => ({ lat, lng });
   const known = [
     {
       id: 'r-abc234',
       name: '测试餐厅',
       names: ['测试餐厅', 'Test Place'],
+      location: at(29.72, -95.4),
       where: 'content' as const,
     },
-    { id: 'r-def567', name: '另一家店', names: ['另一家店'], where: 'content' as const },
+    {
+      id: 'r-def567',
+      name: '另一家店',
+      names: ['另一家店'],
+      location: at(29.7205, -95.4005),
+      where: 'content' as const,
+    },
+    // A branch of the same chain far away.
+    {
+      id: 'r-ghi890',
+      name: '测试餐厅',
+      names: ['测试餐厅'],
+      location: at(29.6, -95.6),
+      where: 'content' as const,
+    },
   ];
   const sub = (extra: Partial<Submission>): Submission => ({
     submissionId: 's',
@@ -288,54 +342,73 @@ describe('restaurant identity', () => {
     consent: true,
     ...extra,
   });
+  const ids = (identity: Identity) =>
+    'candidates' in identity ? identity.candidates.map((c) => c.restaurant.id) : undefined;
 
   it('accepts a valid id with a matching (or alternative) name', () => {
     expect(
-      resolveIdentity(sub({ restaurantId: 'r-abc234', restaurantNameEn: 'test place' }), known)
-        .kind,
+      resolveIdentity(sub({ restaurantId: 'r-abc234', restaurantName: 'test place' }), known).kind,
     ).toBe('existing');
+    expect(resolveIdentity(sub({ restaurantId: 'r-abc234' }), known).kind).toBe('existing');
   });
 
-  it('flags an id that conflicts with the submitted name', () => {
-    const identity = resolveIdentity(
-      sub({ restaurantId: 'r-abc234', restaurantNameZh: '另一家店' }),
+  it('flags an id that conflicts with the submitted name or location', () => {
+    const named = resolveIdentity(
+      sub({ restaurantId: 'r-abc234', restaurantName: '另一家店' }),
       known,
     );
-    expect(identity).toMatchObject({ kind: 'conflict', candidates: [{ id: 'r-def567' }] });
+    expect(named.kind).toBe('conflict');
+    expect(ids(named)).toEqual(['r-def567']);
+    const moved = resolveIdentity(
+      sub({
+        restaurantId: 'r-abc234',
+        restaurantName: '测试餐厅',
+        restaurantLocation: at(29.6, -95.6),
+      }),
+      known,
+    );
+    expect(moved).toMatchObject({ kind: 'conflict', reason: expect.stringMatching(/location/) });
   });
 
   it('flags unknown ids instead of trusting them', () => {
-    expect(
-      resolveIdentity(sub({ restaurantId: 'r-zzz999', restaurantNameZh: '测试餐厅' }), known),
-    ).toMatchObject({
-      kind: 'unknown-id',
-      candidates: [{ id: 'r-abc234' }],
-    });
-  });
-
-  it('matches either name, and flags a pair that names two restaurants', () => {
-    expect(resolveIdentity(sub({ restaurantNameEn: 'Test Place' }), known)).toMatchObject({
-      kind: 'candidates',
-      candidates: [{ id: 'r-abc234' }],
-    });
-    expect(
-      resolveIdentity(
-        sub({
-          restaurantId: 'r-abc234',
-          restaurantNameZh: '新名字',
-          restaurantNameEn: 'Test Place',
-        }),
-        known,
-      ).kind,
-    ).toBe('existing');
-  });
-
-  it('suggests existing restaurants by name and recognizes new ones', () => {
-    expect(resolveIdentity(sub({ restaurantNameZh: ' 测试 餐厅 ' }), known).kind).toBe(
-      'candidates',
+    const identity = resolveIdentity(
+      sub({ restaurantId: 'r-zzz999', restaurantName: '测试餐厅' }),
+      known,
     );
+    expect(identity.kind).toBe('unknown-id');
+    expect(ids(identity)).toEqual(expect.arrayContaining(['r-abc234', 'r-ghi890']));
+  });
+
+  it('matches a POI linked by an earlier reviewed submission', () => {
+    const poi = { provider: 'geoapify', id: 'p1' };
+    const index = new Map([['geoapify:p1', 'r-def567']]);
+    expect(resolveIdentity(sub({ restaurantName: 'Renamed', poi }), known, index)).toMatchObject({
+      kind: 'poi-match',
+      restaurant: { id: 'r-def567' },
+    });
+    // An unknown POI falls back to location and names.
+    expect(resolveIdentity(sub({ restaurantName: '新开的店', poi }), known).kind).toBe('new');
+  });
+
+  it('suggests nearby restaurants and same-name branches, never merging on the name alone', () => {
+    const nearby = resolveIdentity(
+      sub({ restaurantName: ' 测试 餐厅 ', restaurantLocation: at(29.7201, -95.4001) }),
+      known,
+    );
+    expect(nearby.kind).toBe('candidates');
+    // Sorted by distance: the same-name restaurant here, a neighbor, then the far branch.
+    expect(ids(nearby)).toEqual(['r-abc234', 'r-def567', 'r-ghi890']);
+    expect(nearby).toMatchObject({
+      candidates: [{ nameMatch: true }, { nameMatch: false }, { nameMatch: true }],
+    });
+    const nameOnly = resolveIdentity(sub({ restaurantName: '测试餐厅' }), known);
+    expect(nameOnly.kind).toBe('candidates');
+    expect(ids(nameOnly)).toEqual(['r-abc234', 'r-ghi890']);
+  });
+
+  it('recognizes new restaurants and missing identities', () => {
     expect(
-      resolveIdentity(sub({ restaurantNameZh: '新开的店', restaurantNameEn: 'Brand New' }), known)
+      resolveIdentity(sub({ restaurantName: '新开的店', restaurantLocation: at(30, -95) }), known)
         .kind,
     ).toBe('new');
     expect(resolveIdentity(sub({}), known).kind).toBe('unidentified');
@@ -451,9 +524,55 @@ describe('importing submissions', () => {
   it('reports conflicting ids without failing', async () => {
     const { run } = await setup();
     const [report] = await run([
-      sub({ restaurantId: 'r-abc234', restaurantNameZh: '另一家店', review: 'x' }),
+      sub({ restaurantId: 'r-abc234', restaurantName: '另一家店', review: 'x' }),
     ]);
     expect(report!.identity.kind).toBe('conflict');
+  });
+
+  it('remembers reviewed POIs privately and matches later submissions of the same place', async () => {
+    const { run, submissionsDir, root } = await setup();
+    const [first] = await run(submissionsFromCsv(csv(ROWS.textOnly)));
+    expect(first!.identity.kind).toBe('new');
+    expect((await readLog(submissionsDir)).sub1!.poi).toBe('geoapify:51abcdef');
+    const text = formatReport(first!, (f) => path.relative(root, f));
+    expect(text).toContain(
+      'method poi; name "示例面馆"; address "9 Elm St"; at 29.730000,-95.410000',
+    );
+    // Only a reviewed link counts: an imported submission does not.
+    const poi = { provider: 'geoapify', id: '51abcdef' };
+    const [early] = await run([
+      sub({ submissionId: 'later1', restaurantName: 'Renamed', poi, review: 'x' }),
+    ]);
+    expect(early!.identity.kind).toBe('new');
+    await markSubmission(submissionsDir, 'sub1', 'drafted', 'r-def567');
+    const [later] = await run([
+      sub({ submissionId: 'later2', restaurantName: 'Renamed', poi, review: 'x' }),
+    ]);
+    expect(later!.identity).toMatchObject({ kind: 'poi-match', restaurant: { id: 'r-def567' } });
+  });
+
+  it('notes restaurants that need their location verified', async () => {
+    const { run } = await setup();
+    const [nameOnly, marked, bad] = await run([
+      sub({ submissionId: 'm1', selectionMethod: 'manual', review: 'x' }),
+      sub({
+        submissionId: 'm2',
+        selectionMethod: 'manual',
+        restaurantLocation: { lat: 29.75, lng: -95.35 },
+        review: 'x',
+      }),
+      sub({
+        submissionId: 'm3',
+        selectionMethod: 'other',
+        restaurantLocationRaw: '95,0',
+        review: 'x',
+      }),
+    ]);
+    expect(nameOnly!.notes.join('\n')).toMatch(/name only, no location/);
+    expect(marked!.notes.join('\n')).toMatch(/added by hand/);
+    expect(bad!.notes.join('\n')).toMatch(/unknown selection method "other"/);
+    expect(bad!.notes.join('\n')).toMatch(/invalid restaurant coordinates "95,0"/);
+    expect([nameOnly, marked, bad].map((r) => r!.blockers)).toEqual([[], [], []]);
   });
 
   it('never changes the public database or creates drafts', async () => {

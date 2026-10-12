@@ -34,12 +34,7 @@ export function metaLine(r: RestaurantSummary): string {
     .join(' · ');
 }
 
-/**
- * Names shown under the main one: the English name when the Chinese name is
- * the main name, then any other names.
- */
-export function secondaryNames(
-  r: Pick<RestaurantSummary, 'nameZh' | 'nameEn' | 'altNames'>,
-): string[] {
-  return [...(r.nameZh && r.nameEn ? [r.nameEn] : []), ...r.altNames];
+/** Other names, shown under the main name. */
+export function secondaryNames(r: Pick<RestaurantSummary, 'altNames'>): string[] {
+  return r.altNames;
 }

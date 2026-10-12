@@ -106,3 +106,6 @@
 .map-pin.is-selected span {
   @apply size-6 bg-ink ring-4 ring-chili-600/40;
 }
+.map-pin.is-manual span {
+  @apply size-6 bg-basil-600 ring-4 ring-basil-600/30;
+}

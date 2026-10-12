@@ -1,8 +1,8 @@
 {
   "id": "fixture-bayou-bbq",
   "status": "published",
-  "nameZh": "河湾烤肉（虚构示例）",
-  "nameEn": "Bayou BBQ (fictional)",
+  "name": "河湾烤肉（虚构示例）",
+  "altNames": ["Bayou BBQ (fictional)"],
   "cuisines": ["bbq"],
   "address": "200 Example Ave, Houston, TX 77006 (fictional)",
   "location": {

@@ -66,23 +66,18 @@ describe('intake helpers', () => {
     const b = newRestaurantId(taken);
     expect(a).toMatch(/^r-[a-z0-9]{6}$/);
     expect(b).not.toBe(a);
-    const dir = await createDraft(drafts, a, { nameZh: '新店' });
+    const dir = await createDraft(drafts, a, '新店');
     expect(JSON.parse(await readFile(path.join(dir, 'info.json'), 'utf8'))).toEqual({
       id: a,
       status: 'draft',
-      nameZh: '新店',
+      name: '新店',
     });
     expect(existsSync(path.join(dir, 'review.md'))).toBe(false); // no empty review
-    await expect(createDraft(drafts, a, { nameEn: 'Again' })).rejects.toThrow(/already exists/);
-    await expect(createDraft(drafts, 'Bad Id', { nameEn: 'x' })).rejects.toThrow(/invalid id/);
-    await expect(createDraft(drafts, 'r-noname', { nameZh: ' ' })).rejects.toThrow(
-      /Chinese or English name is required/,
+    await expect(createDraft(drafts, a, 'Again')).rejects.toThrow(/already exists/);
+    await expect(createDraft(drafts, 'Bad Id', 'x')).rejects.toThrow(/invalid id/);
+    await expect(createDraft(drafts, 'r-noname', ' ')).rejects.toThrow(
+      /a restaurant name is required/,
     );
-    const both = await createDraft(drafts, 'r-both', { nameZh: '双语店', nameEn: 'Bilingual' });
-    expect(JSON.parse(await readFile(path.join(both, 'info.json'), 'utf8'))).toMatchObject({
-      nameZh: '双语店',
-      nameEn: 'Bilingual',
-    });
   });
 
   it('keeps the private area out of Git by default', () => {
@@ -107,7 +102,7 @@ describe('intake helpers', () => {
   });
 
   it('stores photos as numbered, upright, metadata-free copies and never touches originals', async () => {
-    const dir = await createDraft(await tempDir(), 'r-sample', { nameEn: 'Sample' });
+    const dir = await createDraft(await tempDir(), 'r-sample', 'Sample');
     const original = path.join(await tempDir(), 'IMG_0001.JPG');
     await makePhonePhoto(original);
     const before = await sha(original);
@@ -134,7 +129,7 @@ describe('intake helpers', () => {
   });
 
   it.runIf(process.platform === 'darwin')('converts HEIC photos at intake', async () => {
-    const dir = await createDraft(await tempDir(), 'r-heic', { nameEn: 'HEIC' });
+    const dir = await createDraft(await tempDir(), 'r-heic', 'HEIC');
     const [image] = await importImages(dir, [path.join(SAMPLE, 'IMG_0003.HEIC')]);
     expect(path.basename(image!.stored)).toBe('01-img-0003.jpg');
     expect((await sharp(image!.stored).metadata()).format).toBe('jpeg');
@@ -193,7 +188,7 @@ describe('agent content workflow (synthetic submissions)', () => {
       name: '投稿人（虚构）',
       email: 'someone@example.com',
     });
-    const dir = await createDraft(db.drafts, id, { nameZh: '晨光面包坊（虚构）' });
+    const dir = await createDraft(db.drafts, id, '晨光面包坊（虚构）');
     const [croissant, shelf] = (
       await importImages(dir, [
         path.join(submission, 'IMG_0001.JPG'),
@@ -203,7 +198,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     const info = {
       id,
       status: 'draft',
-      nameZh: '晨光面包坊（虚构）',
+      name: '晨光面包坊（虚构）',
       cuisines: ['bakery'],
       rating: 3, // the contributor wrote "人上人"
       pricePerPerson: 15,
@@ -251,7 +246,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     const { db, files, check } = await makeDatabase();
     const contributor = await addContributor(files, { name: 'Photographer' });
     await publishContributors(files, [contributor]);
-    const dir = await createDraft(db.drafts, 'r-photos', { nameEn: 'Photo Spot' });
+    const dir = await createDraft(db.drafts, 'r-photos', 'Photo Spot');
     const photo = path.join(await tempDir(), 'photo.jpg');
     await makeImage(photo);
     await importImages(dir, [photo, photo]);
@@ -272,7 +267,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     const { db, files, check } = await makeDatabase();
     const contributor = await addContributor(files, { name: 'Author' });
     await publishContributors(files, [contributor]);
-    const dir = await createDraft(db.drafts, 'r-update', { nameEn: 'Original Name' });
+    const dir = await createDraft(db.drafts, 'r-update', 'Original Name');
     const info = JSON.parse(await readFile(path.join(dir, 'info.json'), 'utf8'));
     await writeFile(
       path.join(dir, 'info.json'),
@@ -289,10 +284,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     );
     await writeFile(path.join(draft, 'review.md'), 'First visit.\n\nSecond visit: still good.\n');
     const edited = JSON.parse(await readFile(path.join(draft, 'info.json'), 'utf8'));
-    await writeFile(
-      path.join(draft, 'info.json'),
-      JSON.stringify({ ...edited, nameEn: 'Renamed' }),
-    );
+    await writeFile(path.join(draft, 'info.json'), JSON.stringify({ ...edited, name: 'Renamed' }));
 
     const changes = await folderChanges(draft, path.join(db.restaurants, 'r-update'));
     expect(changes).toEqual({ added: [], changed: ['info.json', 'review.md'], removed: [] });

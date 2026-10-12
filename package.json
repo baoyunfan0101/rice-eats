@@ -28,7 +28,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build:e2e && playwright test",
-    "build:e2e": "RICE_EATS_SOURCE=fixtures tsx scripts/content/cli.ts build && TALLY_FORM=https://tally.so/r/e2eForm vite build --outDir dist-e2e && tsx scripts/postbuild.ts --e2e",
+    "build:e2e": "RICE_EATS_SOURCE=fixtures tsx scripts/content/cli.ts build && TALLY_FORM=https://tally.so/r/e2eForm VITE_GEOAPIFY_API_KEY=e2e-test-key vite build --outDir dist-e2e && tsx scripts/postbuild.ts --e2e",
     "check:privacy": "tsx scripts/check-privacy.ts"
   },
   "dependencies": {

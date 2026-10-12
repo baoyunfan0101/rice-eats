@@ -1,7 +1,7 @@
 // Command-line entry point for content tasks (the local content-management
 // backend). Run through npm scripts, e.g.
 //   npm run content:check
-//   npm run content:new -- --name-zh "我的餐厅" --name-en "My Restaurant"
+//   npm run content:new -- --name "My Restaurant"
 
 import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
@@ -66,9 +66,9 @@ contributors.json. Drafts, raw submissions, and contributor contact details
 live in private/ (git-ignored). Only published restaurants are built.
 
 Commands:
-  new [--name-zh <Chinese name>] [--name-en <English name>] [--id <id>]
+  new --name <name> [--id <id>]
       Create a private draft in private/drafts/<id>/ with a new stable id.
-      At least one of the two names is required.
+      Use the name the restaurant is best known by; add other names as altNames.
   edit <id>
       Copy a public restaurant into private/drafts/<id>/ to change it.
   contributor find <name|email>
@@ -125,8 +125,6 @@ async function main() {
       drafts: { type: 'boolean', default: false },
       approved: { type: 'boolean', default: false },
       name: { type: 'string' },
-      'name-zh': { type: 'string' },
-      'name-en': { type: 'string' },
       id: { type: 'string' },
       email: { type: 'string' },
       contact: { type: 'string' },
@@ -258,10 +256,7 @@ async function main() {
       }
       const id = values.id ?? newRestaurantId(taken);
       if (taken.has(id)) throw new IntakeError(`id "${id}" is already used`);
-      const dir = await createDraft(DRAFTS_DIR, id, {
-        nameZh: values['name-zh'],
-        nameEn: values['name-en'],
-      });
+      const dir = await createDraft(DRAFTS_DIR, id, values.name ?? '');
       console.log(`Created private draft ${rel(dir)}/ with id ${id}.`);
       console.log('private/ is git-ignored: nothing here is committed until it is promoted.');
       return 0;
@@ -514,7 +509,7 @@ function printMissing(result: PipelineResult, wanted: Set<string>) {
     if (wanted.size > 0 && !wanted.has(restaurant.info.id)) continue;
     const missing = missingInfo(restaurant);
     const where = restaurant.visibility === 'private' ? 'private draft' : restaurant.info.status;
-    const label = `${restaurant.info.id} "${[restaurant.info.nameZh, restaurant.info.nameEn].filter(Boolean).join(' / ')}" [${where}]`;
+    const label = `${restaurant.info.id} "${restaurant.info.name}" [${where}]`;
     console.log(missing.length ? `missing ${label}: ${missing.join('; ')}` : `ok      ${label}`);
   }
 }
