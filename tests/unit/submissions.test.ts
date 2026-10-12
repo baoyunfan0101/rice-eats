@@ -92,7 +92,7 @@ const ROWS = {
     'Submission ID': 'sub3',
     你的点评: '推荐牛肉面',
     照片: PHOTO,
-    总体评级: '顶级',
+    总体评级: '😘 顶级',
     发布授权: CONSENT,
     restaurant_id: 'r-abc234',
     restaurant_name: '测试餐厅',
@@ -113,7 +113,7 @@ const ROWS = {
     restaurant_name: '示例面馆',
     照片: PHOTO_C,
     '菜品1 名称': '牛肉面',
-    '菜品1 评价': '推荐',
+    '菜品1 评价': '🔥 推荐',
     '菜品1 照片': `${PHOTO}, ${PHOTO_B}`,
     '菜品1 点评': '汤头浓',
     '菜品2 名称': '煎饺',
@@ -280,7 +280,7 @@ describe('reading Tally exports', () => {
     const [s] = submissionsFromCsv(csv(ROWS.dishes));
     expect(s!.photoUrls).toEqual([PHOTO_C]);
     expect(s!.dishes).toEqual([
-      { name: '牛肉面', verdictAnswer: '推荐', comment: '汤头浓', photoUrls: [PHOTO, PHOTO_B] },
+      { name: '牛肉面', verdictAnswer: '🔥 推荐', comment: '汤头浓', photoUrls: [PHOTO, PHOTO_B] },
       { name: '煎饺', verdictAnswer: '避雷', photoUrls: [] },
     ]);
   });

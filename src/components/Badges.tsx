@@ -26,7 +26,6 @@ export function VerdictBadge({ verdict }: { verdict?: Verdict }) {
         good ? 'bg-basil-50 text-basil-600' : 'bg-stone-200 text-stone-600'
       }`}
     >
-      {good ? '👍 ' : '⚠️ '}
       {VERDICT_LABELS[verdict]}
     </span>
   );

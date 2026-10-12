@@ -6,7 +6,7 @@ import { RestaurantImage } from '../components/RestaurantImage';
 import { ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex, useRestaurantDetail } from '../lib/content';
 import { toSearchParams, DEFAULT_STATE } from '../lib/filters';
-import { cuisineLabel } from '../lib/labels';
+import { cuisineLabel, VERDICT_LABELS } from '../lib/labels';
 import { priceText, RATING_HINT, RATING_LABELS, secondaryNames } from '../lib/format';
 import { placeImages } from '../lib/imagePlacement';
 import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
@@ -133,7 +133,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           <DishList dishes={unrated} />
           {avoided.length > 0 && (
             <>
-              <h3 className="mt-6 text-base font-semibold text-muted">避雷</h3>
+              <h3 className="mt-6 text-base font-semibold text-muted">{VERDICT_LABELS[-1]}</h3>
               <DishList dishes={avoided} />
             </>
           )}

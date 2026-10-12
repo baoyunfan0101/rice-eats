@@ -688,9 +688,14 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
     if (!dish.name?.trim()) {
       notes.push(`dish ${i + 1} has no name: its verdict, comment, and photos cannot be attached to a dish`);
     }
-    if (dish.verdictAnswer && !['推荐', '避雷', '不评价'].includes(dish.verdictAnswer.trim())) {
-      notes.push(`dish ${i + 1} verdict "${dish.verdictAnswer}" is not 推荐, 避雷, or 不评价; leave it out`);
+    if (!dish.verdictAnswer?.trim()) {
+      notes.push(`dish ${i + 1} has no verdict (the form requires one): leave the verdict out`);
+    } else if (verdictFromAnswer(dish.verdictAnswer) === undefined) {
+      notes.push(`dish ${i + 1} verdict "${dish.verdictAnswer}" is not 推荐 or 避雷; leave it out`);
     }
+  }
+  if (!submission.review?.trim()) {
+    notes.push('no review text (the form requires it): check with the maintainer whether to proceed');
   }
   if (!hasText && links === 0) blockers.push('neither review text, dishes, nor photos were submitted');
   if (!hasText && links > 0 && usable === 0) {

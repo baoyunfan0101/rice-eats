@@ -54,35 +54,35 @@ access to them. Menu names may differ slightly in Tally's editor.
    Keep the question titles exactly as written (intake finds answers in the CSV
    export by these titles, defined in `shared/submission.ts`):
 
-   | Block                 | Title / name           | Settings                                                                                     |
-   | --------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
-   | Hidden fields         | `restaurant_id`        | Rice Eats id, only for a restaurant already on the site.                                     |
-   |                       | `restaurant_name`      | The confirmed restaurant name.                                                               |
-   |                       | `restaurant_lat`       | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.            |
-   |                       | `restaurant_lng`       | Longitude, as above.                                                                         |
-   |                       | `restaurant_address`   | Address, when known.                                                                         |
-   |                       | `poi_provider`         | `geoapify` for a place from the search.                                                      |
-   |                       | `poi_id`               | The provider's place id (private; never a Rice Eats id).                                     |
-   |                       | `selection_method`     | `existing`, `poi`, or `manual`.                                                              |
-   |                       | `source`               | `site` or `restaurant-page`.                                                                 |
-   | Text                  |                        | "餐厅：@restaurant_name" (a field reference), then the intro: manual review, no guarantee.   |
-   | Text                  |                        | "下面的点评、推荐/避雷的菜、照片至少填一项，其余都是选填。"                                  |
-   | Long answer           | `你的点评`             | Optional. Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                          |
-   | Text                  |                        | "这里传环境、菜单等不属于某道菜的照片；某道菜的照片请传在下面对应的菜品里。"                 |
-   | File upload           | `照片`                 | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images. |
-   | Text                  |                        | "推荐或避雷的菜（选填，最多 5 道）：每道菜的照片请传在这道菜下面；填好菜名后会出现下一道。"  |
-   | Short answer          | `菜品1 名称`           | Optional.                                                                                    |
-   | Multiple choice       | `菜品1 评价`           | Optional, nothing preselected. Options exactly: `推荐`, `避雷`, `不评价`.                    |
-   | File upload           | `菜品1 照片`           | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                          |
-   | Short answer          | `菜品1 点评`           | Optional; one sentence about the dish.                                                       |
-   | (same four questions) | `菜品2 …` to `菜品5 …` | Same settings; each group is shown only when the previous dish has a name (step 4).          |
-   | Multiple choice       | `总体评级`             | Optional, nothing preselected. Options exactly: `夯`, `顶级`, `人上人`, `NPC`, `拉完了`.     |
-   | Short answer          | `署名`                 | Optional. Placeholder: "采用后会显示在网站上；可写「匿名」"                                  |
-   | Email                 | `联系邮箱`             | Optional. Placeholder: "只用于和你沟通，不会公开"                                            |
-   | Checkboxes            | `发布授权`             | Required, one unchecked option whose text starts with `我同意` (consent text below).         |
-   | Conditional logic     |                        | See step 4.                                                                                  |
-   | reCAPTCHA             |                        | Native spam protection.                                                                      |
-   | 'Thank you' page      |                        | Confirmation text (step 9).                                                                  |
+   | Block              | Title / name           | Settings                                                                                                |
+   | ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------- |
+   | Hidden fields      | `restaurant_id`        | Rice Eats id, only for a restaurant already on the site.                                                |
+   |                    | `restaurant_name`      | The confirmed restaurant name.                                                                          |
+   |                    | `restaurant_lat`       | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                       |
+   |                    | `restaurant_lng`       | Longitude, as above.                                                                                    |
+   |                    | `restaurant_address`   | Address, when known.                                                                                    |
+   |                    | `poi_provider`         | `geoapify` for a place from the search.                                                                 |
+   |                    | `poi_id`               | The provider's place id (private; never a Rice Eats id).                                                |
+   |                    | `selection_method`     | `existing`, `poi`, or `manual`.                                                                         |
+   |                    | `source`               | `site` or `restaurant-page`.                                                                            |
+   | Text               |                        | "餐厅：@restaurant_name" (a field reference), then the intro: manual review, no guarantee.              |
+   | Long answer        | `你的点评`             | **Required.** Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                                 |
+   | Text               |                        | "这里传环境、菜单等不属于某道菜的照片；某道菜的照片请传在下面对应的菜品里。"                            |
+   | File upload        | `照片`                 | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.            |
+   | Text               |                        | "推荐或避雷的菜（选填，最多 5 道），一道一道添加。"                                                     |
+   | Checkboxes         | `菜品1 添加`           | Optional, one unchecked option `＋ 添加一道菜`.                                                         |
+   | Short answer       | `菜品1 名称`           | **Required** (only while shown).                                                                        |
+   | Multiple choice    | `菜品1 评价`           | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.            |
+   | File upload        | `菜品1 照片`           | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                     |
+   | Short answer       | `菜品1 点评`           | Optional; one sentence about the dish.                                                                  |
+   | (same five blocks) | `菜品2 …` to `菜品5 …` | Same settings, with the option `＋ 再添加一道菜` (step 4).                                              |
+   | Multiple choice    | `总体评级`             | Optional, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
+   | Short answer       | `署名`                 | Optional. Placeholder: "采用后会显示在网站上；可写「匿名」"                                             |
+   | Email              | `联系邮箱`             | Optional. Placeholder: "只用于和你沟通，不会公开"                                                       |
+   | Checkboxes         | `发布授权`             | Required, one unchecked option whose text starts with `我同意` (consent text below).                    |
+   | Conditional logic  |                        | See step 4.                                                                                             |
+   | reCAPTCHA          |                        | Native spam protection.                                                                                 |
+   | 'Thank you' page   |                        | Confirmation text (step 9).                                                                             |
 
    Consent option text (`发布授权`); intake treats an answer starting with
    `我同意` as consent:
@@ -102,12 +102,17 @@ access to them. Menu names may differ slightly in Tally's editor.
    reference (to change it, contributors use "更换餐厅" on the website). The
    fields are context, not proof: intake checks them against the database.
 4. **Conditional logic** (Tally's conditional logic blocks):
-   - Something to review: when `你的点评`, `照片`, and `菜品1 名称` are all
-     empty, require `你的点评`.
-   - Dish groups: show the `菜品2` questions only when `菜品1 名称` is not
-     empty (hide them by default), and the same for `菜品3` to `菜品5`.
-     Intake also reports or rejects submissions without a restaurant or
-     content, so a gap here never publishes anything.
+   - Dishes are added one at a time, like entries on a résumé. The
+     `菜品1 名称`, `评价`, `照片`, and `点评` questions are hidden by default
+     and shown when `菜品1 添加` is checked. `菜品2 添加` is shown only when
+     `菜品1 添加` is checked, and shows the `菜品2` questions; the same for
+     `菜品3` to `菜品5`. Tally does not enforce required questions while they
+     are hidden, so a dish's name and verdict are required only once the
+     contributor adds that dish. Intake also reports dishes without a name or
+     verdict and submissions without a review, so a gap here never publishes
+     anything.
+   - Option labels carry the same emoji as the website (`src/lib/labels.ts`);
+     intake accepts the answers with or without the emoji.
 5. **Photos.** In each file upload block, allow multiple files, limit the
    count (10 general, 3 per dish), set 10 MB per file (the free-plan maximum),
    and accept .jpg, .jpeg, .png, .heic, and .webp. HEIC from iPhones is fine:
