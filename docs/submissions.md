@@ -35,29 +35,32 @@ access to them. Menu names may differ slightly in Tally's editor.
    Keep the question titles exactly as written (intake finds answers in the CSV
    export by these titles, defined in `shared/submission.ts`):
 
-   | Block                 | Title / name           | Settings                                                                                      |
-   | --------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
-   | Hidden fields         | `restaurant_id`        | Filled in by the website on restaurant pages.                                                 |
-   |                       | `restaurant_name_zh`   | The restaurant's Chinese name, when it has one.                                               |
-   |                       | `restaurant_name_en`   | The restaurant's English name, when it has one.                                               |
-   |                       | `source`               | `site` or `restaurant-page`.                                                                  |
-   | Text                  |                        | Short intro: listed or new restaurants; review, dishes, photos (at least one); manual review. |
-   | Short answer          | `餐厅中文名`           | Optional; default answer `@restaurant_name_zh`.                                               |
-   | Short answer          | `餐厅英文名`           | Optional; default answer `@restaurant_name_en`.                                               |
-   | Long answer           | `你的点评`             | Optional. Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                           |
-   | File upload           | `照片`                 | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.  |
-   | Short answer          | `菜品1 名称`           | Optional.                                                                                     |
-   | Multiple choice       | `菜品1 评价`           | Optional, nothing preselected. Options exactly: `推荐`, `避雷`, `不评价`.                     |
-   | File upload           | `菜品1 照片`           | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                           |
-   | Short answer          | `菜品1 点评`           | Optional; one sentence about the dish.                                                        |
-   | (same four questions) | `菜品2 …` to `菜品5 …` | Same settings; each group is shown only when the previous dish has a name (step 4).           |
-   | Multiple choice       | `总体评级`             | Optional, nothing preselected. Options exactly: `夯`, `顶级`, `人上人`, `NPC`, `拉完了`.      |
-   | Short answer          | `署名`                 | Optional. Placeholder: "采用后会显示在网站上；可写「匿名」"                                   |
-   | Email                 | `联系邮箱`             | Optional. Placeholder: "只用于和你沟通，不会公开"                                             |
-   | Checkboxes            | `发布授权`             | Required, one unchecked option whose text starts with `我同意` (consent text below).          |
-   | Conditional logic     |                        | See step 4.                                                                                   |
-   | reCAPTCHA             |                        | Native spam protection.                                                                       |
-   | 'Thank you' page      |                        | Confirmation text (step 9).                                                                   |
+   | Block                 | Title / name           | Settings                                                                                     |
+   | --------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
+   | Hidden fields         | `restaurant_id`        | Filled in by the website on restaurant pages.                                                |
+   |                       | `restaurant_name_zh`   | The restaurant's Chinese name, when it has one.                                              |
+   |                       | `restaurant_name_en`   | The restaurant's English name, when it has one.                                              |
+   |                       | `source`               | `site` or `restaurant-page`.                                                                 |
+   | Text                  |                        | Intro only: listed or new restaurants; manual review, no guaranteed publication.             |
+   | Short answer          | `餐厅中文名`           | Optional; default answer `@restaurant_name_zh`; placeholder "中文名和英文名至少填一个".      |
+   | Short answer          | `餐厅英文名`           | Optional; default answer `@restaurant_name_en`; placeholder "招牌或地图上的英文名".          |
+   | Text                  |                        | "下面的点评、推荐/避雷的菜、照片至少填一项，其余都是选填。"                                  |
+   | Long answer           | `你的点评`             | Optional. Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                          |
+   | Text                  |                        | "这里传环境、菜单等不属于某道菜的照片；某道菜的照片请传在下面对应的菜品里。"                 |
+   | File upload           | `照片`                 | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images. |
+   | Text                  |                        | "推荐或避雷的菜（选填，最多 5 道）：每道菜的照片请传在这道菜下面；填好菜名后会出现下一道。"  |
+   | Short answer          | `菜品1 名称`           | Optional.                                                                                    |
+   | Multiple choice       | `菜品1 评价`           | Optional, nothing preselected. Options exactly: `推荐`, `避雷`, `不评价`.                    |
+   | File upload           | `菜品1 照片`           | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                          |
+   | Short answer          | `菜品1 点评`           | Optional; one sentence about the dish.                                                       |
+   | (same four questions) | `菜品2 …` to `菜品5 …` | Same settings; each group is shown only when the previous dish has a name (step 4).          |
+   | Multiple choice       | `总体评级`             | Optional, nothing preselected. Options exactly: `夯`, `顶级`, `人上人`, `NPC`, `拉完了`.     |
+   | Short answer          | `署名`                 | Optional. Placeholder: "采用后会显示在网站上；可写「匿名」"                                  |
+   | Email                 | `联系邮箱`             | Optional. Placeholder: "只用于和你沟通，不会公开"                                            |
+   | Checkboxes            | `发布授权`             | Required, one unchecked option whose text starts with `我同意` (consent text below).         |
+   | Conditional logic     |                        | See step 4.                                                                                  |
+   | reCAPTCHA             |                        | Native spam protection.                                                                      |
+   | 'Thank you' page      |                        | Confirmation text (step 9).                                                                  |
 
    Consent option text (`发布授权`); intake treats an answer starting with
    `我同意` as consent:
