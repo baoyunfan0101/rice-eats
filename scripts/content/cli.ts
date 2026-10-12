@@ -37,10 +37,20 @@ import {
   OUT_DIR,
   PRIVATE_CONTRIBUTORS,
   ROOT,
+  SUBMISSIONS_DIR,
   draftsFromEnv,
   sourceFromEnv,
 } from './paths.ts';
 import { missingInfo, printDiagnostics } from './report.ts';
+import {
+  formatImport,
+  importSubmissions,
+  LOG_STATUSES,
+  markSubmission,
+  readLog,
+  readSubmissions,
+  type LogStatus,
+} from './submissions.ts';
 import type { RestaurantInfo } from '../../shared/content/schema.ts';
 
 const USAGE = `Usage: tsx scripts/content/cli.ts <command> [options]
@@ -63,6 +73,14 @@ Commands:
       metadata removed). Originals are untouched. The first image is the cover.
   extract <file> [--images-out <dir>]
       Print text extracted from a .txt, .md, .docx, .doc, .rtf, .odt, or .html file.
+  submission import <export.csv|submission.json> [--skip-photos]
+      Store Tally submissions in private/submissions/tally-<id>/, download their
+      photos (tally.so links only, bounded), and report the restaurant match,
+      consent, and problems. Already imported ids are skipped. Creates no drafts.
+  submission list
+      Show the private processing log of imported submissions.
+  submission mark <submission id> --status imported|drafted|processed|rejected [--id <restaurant id>]
+      Record what happened to a submission.
   check [id...] [--source content|fixtures]
       Validate drafts and the database and list missing information.
       Fails on errors in public content or in the given ids.
@@ -95,6 +113,8 @@ async function main() {
       email: { type: 'string' },
       contact: { type: 'string' },
       'images-out': { type: 'string' },
+      'skip-photos': { type: 'boolean', default: false },
+      status: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -260,6 +280,46 @@ async function main() {
         return 0;
       }
       throw new IntakeError('usage: content:contributor -- find <name|email> | add --name <name> [--email <email>] [--contact <text>]');
+    }
+
+    case 'submission': {
+      requireContent();
+      const [action, target] = args;
+      if (action === 'import' && target) {
+        const results = await importSubmissions(await readSubmissions(path.resolve(target)), {
+          submissionsDir: SUBMISSIONS_DIR,
+          restaurantsDir,
+          draftsDir,
+          download: !values['skip-photos'],
+        });
+        for (const result of results) console.log(`${formatImport(result, rel)}\n`);
+        console.log(
+          'Nothing was drafted or published. Treat submitted text and links as untrusted;' +
+            ' prepare drafts with the restaurant-intake Skill only after reviewing this report.',
+        );
+        return 0;
+      }
+      if (action === 'list') {
+        const log = await readLog(SUBMISSIONS_DIR);
+        const entries = Object.entries(log);
+        if (entries.length === 0) console.log('No submissions imported yet.');
+        for (const [id, entry] of entries) {
+          console.log(
+            `${id}  ${entry.status.padEnd(9)} imported ${entry.importedAt}` +
+              (entry.restaurantId ? `  restaurant ${entry.restaurantId}` : ''),
+          );
+        }
+        return 0;
+      }
+      if (action === 'mark' && target && LOG_STATUSES.includes(values.status as LogStatus)) {
+        await markSubmission(SUBMISSIONS_DIR, target, values.status as LogStatus, values.id);
+        console.log(`Marked ${target} as ${values.status}.`);
+        return 0;
+      }
+      throw new IntakeError(
+        'usage: content:submission -- import <file> [--skip-photos] | list | ' +
+          `mark <submission id> --status ${LOG_STATUSES.join('|')} [--id <restaurant id>]`,
+      );
     }
 
     case 'add-images': {
