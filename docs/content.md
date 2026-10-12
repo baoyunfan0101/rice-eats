@@ -35,6 +35,8 @@ content/                          public database (tracked)
     images/01-<name>.jpg          standardized photos; the first is the cover
 private/                          git-ignored, never committed or deployed
   submissions/                    raw submissions while they are processed
+    tally-<submission id>/        a Tally submission: submission.json and photos
+    tally-log.json                imported Tally submission ids and their status
   drafts/<id>/                    drafts, same layout as content/restaurants/<id>/
   contributors.json               new contributors and contact details
 fixtures/                         fictional development data (never deployed)
@@ -158,6 +160,13 @@ metadata-free), cached in `.cache/images/` by content hash.
 
 ## From submission to website
 
+Contributors send material to a maintainer directly or through the public
+Tally form on the website; [docs/submissions.md](submissions.md) describes the
+form, the Gmail notifications, and `npm run content:submission`, which brings
+Tally submissions into `private/submissions/` before the steps below. A
+submission about a restaurant that already has a review is proposed to the
+maintainer; it never becomes a second review or replaces the existing one.
+
 1. **Prepare** a private draft: `content:new` or `content:edit`,
    `content:contributor`, `content:add-images`, edit `info.json` (and
    `review.md`), then `content:check -- <id>`. Preview with
@@ -191,6 +200,8 @@ else.
 | `npm run content:contributor -- add --name <n> [--email <e>]` | Register a contributor privately.                                        |
 | `npm run content:add-images -- <id> <files...>`               | Store standardized photo copies.                                         |
 | `npm run content:extract -- <file>`                           | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`. |
+| `npm run content:submission -- import <csv or json>`          | Import Tally submissions privately (see docs/submissions.md).            |
+| `npm run content:submission -- list` / `mark <id> --status …` | Show or update the private log of imported submissions.                  |
 | `npm run content:check [-- <id>...]`                          | Validate drafts and the database; list ids, names, missing information.  |
 | `npm run images [-- <id>...]`                                 | Process photos and print the renditions.                                 |
 | `npm run content:promote -- <id> [--approved]`                | Move an approved draft into the public database.                         |

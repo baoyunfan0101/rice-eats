@@ -15,6 +15,7 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 - **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
 - **Static**: no backend, database, accounts, or paid services. Hosted on GitHub Pages.
+- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page, which passes the restaurant's id and name along.
 - **Content workflow**: contributors send ordinary text and photos; an Agent Skill turns them into validated drafts, and nothing is published without maintainer review.
 
 ## Technology
@@ -32,8 +33,9 @@ Notable decisions:
 
 - **Build-time content pipeline.** Content is validated and converted once at build time into small JSON files and WebP images, so the browser never parses Markdown or downloads original photos, and broken content fails the build instead of rendering inconsistently.
 - **Review HTML is sanitized at build time.** Raw HTML and unsafe links in Markdown are dropped, so editorial content cannot run scripts.
-- **No router library.** The site has two kinds of pages; a small History API router (`src/lib/router.ts`) keeps the bundle smaller.
-- **GitHub Pages deep links.** The build writes `r/<id>/index.html` for each restaurant (served with HTTP 200) and a `404.html` fallback, so direct links and reloads work on static hosting.
+- **Submissions through Tally, not a backend.** The site links to and embeds a hosted Tally form (`/rice-eats/submit/`); Tally stores uploads and emails the maintainers, and local commands turn submissions into private drafts. The form is configured in one place (`TALLY_FORM` in `site.config.ts`); while it is empty, submission links are hidden.
+- **No router library.** The site has three kinds of pages; a small History API router (`src/lib/router.ts`) keeps the bundle smaller.
+- **GitHub Pages deep links.** The build writes `r/<id>/index.html` for each restaurant and `submit/index.html` (served with HTTP 200) and a `404.html` fallback, so direct links and reloads work on static hosting.
 - **The map loads on demand.** Leaflet is downloaded only when the map view is opened.
 
 ## Development
@@ -74,13 +76,17 @@ Because this repository is public, raw submissions and drafts stay in the git-ig
 ### Contributing a restaurant
 
 1. Write about the restaurant however you like (a few sentences, a Word document, notes), take photos, or both. Photos alone are fine.
-2. Send them to a maintainer, or give them to a coding agent working in this repository.
+2. Submit them with the "投稿" form on the website, send them to a maintainer, or give them to a coding agent working in this repository.
 3. Review the private draft the maintainer or agent prepares, and confirm how you want to be credited.
 4. Approve it. Only then is it added to the public repository and shown on the site, credited to you.
 
 ### Agent-assisted preparation
 
 Coding agents follow the `restaurant-intake` Agent Skill ([.claude/skills/restaurant-intake/SKILL.md](.claude/skills/restaurant-intake/SKILL.md)), referenced from [AGENTS.md](AGENTS.md). It handles text-only, photo-only, and mixed submissions, updates existing restaurants instead of duplicating them, reuses contributor ids, imports photos (including HEIC on macOS), writes the record without inventing facts or rewriting opinions, runs `npm run content:check`, and reports what is missing. It never commits, promotes, or publishes without the maintainer's explicit approval.
+
+### Public submissions
+
+The website's submission form is hosted by Tally and notifies `hello.riceeats@gmail.com`. Maintainers import submissions with `npm run content:submission -- import <export.csv>`, which stores them in `private/submissions/`, downloads their photos, skips duplicates, and reports the restaurant match and consent before the Agent Skill prepares a draft. Form setup, the Gmail workflow, and the end-to-end checklist are in [docs/submissions.md](docs/submissions.md). **Status:** the form has not been created yet, so `TALLY_FORM` is empty and the site hides its submission links until a maintainer completes that setup.
 
 ## Deployment
 
