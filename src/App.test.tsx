@@ -3,7 +3,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import type { ContentIndex, RestaurantDetail, RestaurantSummary } from './content/model';
+import type { ContentIndex, RestaurantDetail, RestaurantSummary } from '../shared/content/model';
 import { clearContentCache } from './lib/content';
 
 const BASE = import.meta.env.BASE_URL;
@@ -46,23 +46,28 @@ const restaurants = [
   summary('food-truck', { name: 'Food Truck', cuisines: ['fast-food'] }),
 ];
 
+// Photos: 0 cover, 1 dish photo, 2 placed in the review, 3 only in the gallery,
+// 4 used by a dish and the review (the review wins).
 const detail: RestaurantDetail = {
   ...restaurants[0]!,
   address: '1 Example St',
   cover: img('cover', 'Bayou BBQ'),
   images: [
     img('cover', 'Bayou BBQ'),
-    img('brisket', '牛胸'),
+    img('brisket', 'Bayou BBQ (2)'),
     img('a', '图片说明'),
     img('extra', 'Bayou BBQ (4)'),
+    img('ribs', '排骨'),
   ],
   dishes: [
-    { name: '牛胸', verdict: 1, comment: '好吃', image: img('brisket', '牛胸') },
+    { name: '牛胸', verdict: 1, comment: '好吃', imageIndex: 1 },
     { name: '冰茶' },
     { name: '豆子', verdict: -1 },
+    { name: '排骨', verdict: 1, imageIndex: 4 },
   ],
   reviewHtml:
-    '<h2>标题</h2><figure><img src="/a.webp" alt="图片说明"><figcaption>图注</figcaption></figure><p>正文</p>',
+    '<h2>标题</h2><figure><img src="/a.webp" alt="图片说明"><figcaption>图注</figcaption></figure><p>正文</p><p><img src="/ribs.webp" alt="排骨"></p>',
+  reviewImageIndexes: [2, 4],
   contributors: [{ id: 'u-001', name: '作者甲' }],
 };
 
@@ -181,21 +186,26 @@ describe('restaurant details', () => {
     expect(screen.getByRole('img', { name: '图片说明' })).toBeInTheDocument();
     expect(screen.getByText('图注')).toBeInTheDocument();
     // Dishes: only explicit verdicts get labels; no verdict is not a recommendation.
-    expect(screen.getByText(/推荐$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/推荐$/)).toHaveLength(2);
     expect(screen.getAllByText(/避雷/)).toHaveLength(2); // section heading + badge
     expect(screen.getByRole('heading', { name: '冰茶' }).closest('li')).not.toHaveTextContent(
       '推荐',
     );
-    // Gallery shows only photos not already on the page.
+    // Each photo appears once (see src/lib/imagePlacement.ts).
     const gallery = screen.getByRole('region', { name: '照片' });
     expect(
       within(gallery)
         .getAllByRole('img')
         .map((i) => i.getAttribute('src')),
     ).toEqual(['/extra.webp']);
-    expect(
-      screen.getAllByRole('img').filter((i) => i.getAttribute('src') === '/brisket.webp'),
-    ).toHaveLength(1);
+    for (const name of ['cover', 'brisket', 'a', 'extra', 'ribs']) {
+      const count = screen
+        .getAllByRole('img')
+        .filter((i) => i.getAttribute('src') === `/${name}.webp`).length;
+      expect(count, name).toBe(1);
+    }
+    // The dish whose photo the review shows keeps its card.
+    expect(screen.getByRole('heading', { name: '排骨' }).closest('li')).toHaveTextContent('推荐');
     // Map apps.
     expect(screen.getByRole('link', { name: /Google 地图导航/ }).getAttribute('href')).toContain(
       'https://www.google.com/maps/search/?api=1&query=Bayou%20BBQ%2C%201%20Example%20St',

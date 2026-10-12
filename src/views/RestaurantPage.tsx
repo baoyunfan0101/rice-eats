@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { Dish, RestaurantDetail } from '../content/model';
+import type { Dish, ImageAsset, RestaurantDetail } from '../../shared/content/model';
 import { DraftBadge, Tags, RatingBadge, VerdictBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex, useRestaurantDetail } from '../lib/content';
 import { toSearchParams, DEFAULT_STATE } from '../lib/filters';
-import { cuisineLabel } from '../content/taxonomy';
+import { cuisineLabel } from '../lib/labels';
 import { priceText, RATING_HINT, RATING_LABELS } from '../lib/format';
+import { placeImages } from '../lib/imagePlacement';
 import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
 import { browseHref, canGoBack } from '../lib/router';
 
@@ -44,14 +45,14 @@ export function RestaurantPage({ id }: { id: string }) {
 }
 
 function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
+  // Each photo appears once: see src/lib/imagePlacement.ts for the rules.
+  const { hero, dishImages, gallery } = placeImages(r);
   // Dishes keep their stored order within each group. No verdict means no
   // opinion, so those dishes are not listed as recommendations.
-  const recommended = r.dishes.filter((d) => d.verdict === 1);
-  const unrated = r.dishes.filter((d) => d.verdict === undefined);
-  const avoided = r.dishes.filter((d) => d.verdict === -1);
-  // Photos not already shown as the cover, with a dish, or inside the review.
-  const shown = new Set([r.cover?.src, ...r.dishes.map((d) => d.image?.src)]);
-  const gallery = r.images.filter((img) => !shown.has(img.src) && !r.reviewHtml.includes(img.src));
+  const withImages = r.dishes.map((dish, i) => ({ dish, image: dishImages[i] }));
+  const recommended = withImages.filter((d) => d.dish.verdict === 1);
+  const unrated = withImages.filter((d) => d.dish.verdict === undefined);
+  const avoided = withImages.filter((d) => d.dish.verdict === -1);
   const google = googleMapsUrl(r);
   const apple = appleMapsUrl(r);
   const onMap = r.location
@@ -63,10 +64,10 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
       <div className="mx-auto max-w-3xl px-4 pt-4">
         <BackLink />
       </div>
-      {r.cover && (
+      {hero && (
         <div className="mx-auto mt-3 max-w-5xl sm:px-4">
           <RestaurantImage
-            image={r.cover}
+            image={hero}
             sizes="(min-width: 1024px) 1024px, 100vw"
             eager
             className="aspect-[16/9] max-h-[60vh] w-full sm:rounded-2xl"
@@ -225,18 +226,18 @@ function ActionLink({
   );
 }
 
-function DishList({ dishes }: { dishes: Dish[] }) {
+function DishList({ dishes }: { dishes: { dish: Dish; image?: ImageAsset }[] }) {
   if (dishes.length === 0) return null;
   return (
     <ul className="mt-4 grid gap-4 sm:grid-cols-2">
-      {dishes.map((dish) => (
+      {dishes.map(({ dish, image }, i) => (
         <li
-          key={`${dish.name}-${dish.image?.src ?? ''}`}
+          key={`${dish.name}-${i}`}
           className="overflow-hidden rounded-2xl border border-line bg-white"
         >
-          {dish.image && (
+          {image && (
             <RestaurantImage
-              image={dish.image}
+              image={image}
               sizes="(min-width: 640px) 360px, 100vw"
               className="aspect-[4/3] w-full"
             />

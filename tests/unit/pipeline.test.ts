@@ -42,6 +42,8 @@ describe('content pipeline', () => {
     );
     expect(detail.reviewHtml).toContain('<figcaption>Caption here</figcaption>');
     expect(detail.contributors).toEqual([{ id: 'u-001', name: 'Tester' }]);
+    // Placement is structured data (indexes into images), not inferred from HTML.
+    expect(detail.reviewImageIndexes).toEqual([1]);
 
     const index = JSON.parse(await readFile(path.join(outDir, 'index.json'), 'utf8'));
     expect(index.restaurants).toHaveLength(1);
@@ -153,7 +155,7 @@ describe('content pipeline', () => {
     expect(messages).toMatch(/name: must not be empty/);
     expect(messages).toMatch(/Unrecognized key: "summary"/);
     expect(messages).toMatch(/cuisines.0: unknown cuisine; use one of .*vietnamese/);
-    expect(messages).toMatch(/tags.0: unknown tag; .* or add it to src\/content\/taxonomy.ts/);
+    expect(messages).toMatch(/tags.0: unknown tag; .* or add it to shared\/content\/vocabulary.ts/);
     expect(existsSync(outDir)).toBe(false);
   });
 
@@ -278,6 +280,31 @@ describe('content pipeline', () => {
         /dishes.0.verdict: must be 1 \(recommended\) or -1/,
       );
     }
+  });
+
+  it('records dish photos and review photos as indexes, keeping review order and captions', async () => {
+    const root = await tempDir();
+    const dir = await writeRestaurant(
+      root,
+      'r',
+      validInfo('r', {
+        dishes: [{ name: 'Ribs', verdict: 1, image: 'images/03-ribs.jpg' }, { name: 'Tea' }],
+      }),
+      {
+        'review.md':
+          'First.\n\n![Ribs](images/03-ribs.jpg "Ribs caption")\n\nMiddle.\n\n![Front](images/01-front.jpg)\n\nAgain:\n\n![Ribs](images/03-ribs.jpg)\n',
+      },
+    );
+    for (const name of ['01-front.jpg', '02-room.jpg', '03-ribs.jpg'])
+      await makeImage(path.join(dir, 'images', name));
+    const detail = (await pipeline(root)).details[0]!;
+    expect(detail.dishes.map((d) => d.imageIndex)).toEqual([2, undefined]);
+    expect(detail.reviewImageIndexes).toEqual([2, 0]); // review order, each photo once
+    const html = detail.reviewHtml;
+    expect(html.indexOf('03-ribs')).toBeLessThan(html.indexOf('Middle.'));
+    expect(html.indexOf('Middle.')).toBeLessThan(html.indexOf('01-front'));
+    expect(html).toContain('<figcaption>Ribs caption</figcaption>');
+    expect(html.match(/03-ribs-[0-9a-f]{8}-\d+\.webp"/g)?.length).toBeGreaterThanOrEqual(2); // explicit repeat kept
   });
 
   it('stores only language-independent keys in generated data', async () => {
