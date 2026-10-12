@@ -45,10 +45,9 @@ export const restaurantInfoSchema = z
   .strictObject({
   id: idSchema,
   status: z.enum(['draft', 'published'], { message: 'must be "draft" or "published"' }),
-  /** Chinese and English names; at least one is required (see displayName). */
-  nameZh: text.optional(),
-  nameEn: text.optional(),
-  /** Other names (abbreviations, former names); searchable. */
+  /** The display name, in whatever language the restaurant is best known by. */
+  name: text,
+  /** Other names in any language (translations, abbreviations, former names); searchable. */
   altNames: z.array(text).optional(),
   address: text.optional(),
   location: z
@@ -95,18 +94,9 @@ export const restaurantInfoSchema = z
     })
     .optional(),
   contributorIds: z.array(contributorIdSchema).refine(unique, 'must not repeat').optional(),
-})
-  .refine((info) => info.nameZh !== undefined || info.nameEn !== undefined, {
-    message: 'give "nameZh" (Chinese name), "nameEn" (English name), or both',
-    path: ['nameZh'],
-  });
+});
 
 export type RestaurantInfo = z.infer<typeof restaurantInfoSchema>;
-
-/** The name shown first: the Chinese name when there is one, otherwise the English name. */
-export function displayName(names: { nameZh?: string; nameEn?: string }): string {
-  return names.nameZh ?? names.nameEn ?? '';
-}
 
 const notAnEmail = text.refine((value) => !value.includes('@'), {
   message: 'display names are public; keep email addresses in private/contributors.json',

@@ -14,7 +14,7 @@ async function setup() {
   const drafts = await tempDir();
   await writeRestaurant(content, 'a', validInfo('a'));
   await writeRestaurant(content, 'hidden', validInfo('hidden', { status: 'draft' }));
-  await writeRestaurant(drafts, 'secret', { id: 'secret', status: 'draft', nameEn: 'Secret' });
+  await writeRestaurant(drafts, 'secret', { id: 'secret', status: 'draft', name: 'Secret' });
 
   const dist = await tempDir();
   const write = async (file: string, data: string | object) => {
@@ -31,7 +31,7 @@ async function setup() {
   const summary = {
     id: 'a',
     status: 'published',
-    nameEn: 'A',
+    name: 'A',
     altNames: [],
     cuisines: [],
     tags: [],
@@ -145,7 +145,7 @@ describe('postbuild allowlist', () => {
     const summary = {
       id: 'a',
       status: 'published',
-      nameEn: 'A',
+      name: 'A',
       altNames: [],
       cuisines: [],
       tags: [],

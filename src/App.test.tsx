@@ -5,6 +5,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { ContentIndex, RestaurantDetail, RestaurantSummary } from '../shared/content/model';
 import { clearContentCache } from './lib/content';
+import { clearPoiCache } from './lib/poi';
+
+// Leaflet does not run in jsdom: the picker map is a stub whose button is a
+// tap on the map at a fixed point, and whose markers are plain buttons.
+vi.mock('./views/PickerMap', () => ({
+  default: (props: { label: string; onMapClick?: (p: { lat: number; lng: number }) => void }) => (
+    <div aria-label={props.label}>
+      {props.onMapClick && (
+        <button type="button" onClick={() => props.onMapClick!({ lat: 29.7, lng: -95.4 })}>
+          在地图上点一下
+        </button>
+      )}
+    </div>
+  ),
+}));
+
+/** Hidden fields passed to the form (from the direct link). */
+const formParams = () =>
+  Object.fromEntries(
+    new URL(screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href')!)
+      .searchParams,
+  );
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -30,7 +52,6 @@ const img = (name: string, alt: string) => ({
 const restaurants = [
   summary('bayou-bbq', {
     name: 'Bayou BBQ',
-    nameEn: 'Bayou BBQ',
     cuisines: ['bbq'],
     tags: ['group'],
     rating: 5,
@@ -39,9 +60,7 @@ const restaurants = [
   }),
   summary('pho-garden', {
     name: '河粉花园',
-    nameZh: '河粉花园',
-    nameEn: 'Pho Garden',
-    altNames: ['PG'],
+    altNames: ['Pho Garden', 'PG'],
     cuisines: ['vietnamese'],
     tags: ['budget'],
     rating: 3,
@@ -218,7 +237,7 @@ describe('restaurant details', () => {
     expect(screen.getByRole('heading', { name: '排骨' }).closest('li')).toHaveTextContent('推荐');
     // Map apps.
     expect(screen.getByRole('link', { name: /Google 地图导航/ }).getAttribute('href')).toContain(
-      'https://www.google.com/maps/search/?api=1&query=Bayou%20BBQ%2C%201%20Example%20St',
+      'https://www.google.com/maps/search/?api=1&query=29.74%2C-95.39',
     );
     expect(screen.getByRole('link', { name: /Apple 地图导航/ }).getAttribute('href')).toBe(
       'https://maps.apple.com/?q=Bayou+BBQ&ll=29.74%2C-95.39',
@@ -284,18 +303,192 @@ describe('submissions', () => {
       screen.getByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
     expect(screen.getByText(/不会立即出现在网站上，也不保证一定发布/)).toBeInTheDocument();
-    expect(screen.getByTitle('Rice吃啥 投稿表单')).toHaveAttribute(
-      'src',
-      'https://tally.so/embed/wMq8xY?alignLeft=1&hideTitle=1&transparentBackground=1&source=site',
-    );
-    expect(screen.getByRole('link', { name: /在新窗口打开投稿表单/ })).toHaveAttribute(
-      'href',
-      'https://tally.so/r/wMq8xY?source=site',
-    );
+    expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    // The form loads only after a restaurant is confirmed.
+    expect(document.querySelector('iframe')).toBeNull();
     expect(document.title).toBe('投稿 · Rice吃啥');
   });
 
-  it('passes the restaurant id and name from a restaurant page', async () => {
+  it('keeps manual entry working without a POI key', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', FORM);
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
+    const user = userEvent.setup();
+    visit('submit/');
+    expect(await screen.findByText(/附近餐厅搜索暂不可用/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '使用当前位置' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
+    const next = screen.getByRole('button', { name: '下一步' });
+    expect(next).toBeDisabled();
+    await user.type(screen.getByLabelText('餐厅名字'), ' 小面馆 ');
+    expect(next).toBeDisabled(); // needs a marker or "not sure"
+    await user.click(await screen.findByRole('button', { name: '在地图上点一下' }));
+    expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
+    await user.click(screen.getByLabelText(/我不确定具体位置/));
+    await user.type(screen.getByLabelText('地址（选填）'), '5 Oak St');
+    await user.click(next);
+    expect(screen.getByRole('heading', { name: '确认餐厅' })).toBeInTheDocument();
+    expect(screen.getByText('小面馆')).toBeInTheDocument();
+    expect(screen.getByText(/没有位置信息，审核时会再核实/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+    expect(screen.getByRole('heading', { level: 1, name: '为「小面馆」投稿' })).toHaveFocus();
+    const direct = screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href');
+    expect(direct).toBe(
+      'https://tally.so/r/wMq8xY?restaurant_name=%E5%B0%8F%E9%9D%A2%E9%A6%86' +
+        '&restaurant_address=5+Oak+St&selection_method=manual&source=site',
+    );
+    expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).toContain(
+      'selection_method=manual&source=site',
+    );
+  });
+
+  it('passes a manual marker as the restaurant location', async () => {
+    vi.stubEnv('VITE_TALLY_FORM', FORM);
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
+    const user = userEvent.setup();
+    visit('submit/');
+    await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
+    await user.type(screen.getByLabelText('餐厅名字'), 'Corner Cafe');
+    await user.click(await screen.findByRole('button', { name: '在地图上点一下' }));
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+    const params = formParams();
+    expect(params).toMatchObject({
+      restaurant_name: 'Corner Cafe',
+      restaurant_lat: '29.700000',
+      restaurant_lng: '-95.400000',
+      selection_method: 'manual',
+    });
+    expect(params.poi_id).toBeUndefined();
+  });
+
+  describe('with POI search', () => {
+    const DEVICE = { latitude: 29.7111, longitude: -95.3999 };
+    let geolocation: { getCurrentPosition: ReturnType<typeof vi.fn> };
+    let places: string[];
+    let placesStatus = 200;
+
+    beforeEach(() => {
+      vi.stubEnv('VITE_TALLY_FORM', FORM);
+      vi.stubEnv('VITE_GEOAPIFY_API_KEY', 'test-key');
+      clearPoiCache();
+      places = [];
+      placesStatus = 200;
+      const indexFetch = vi.mocked(fetch);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (!url.startsWith('https://api.geoapify.com/')) return indexFetch(url, init);
+          places.push(url);
+          if (placesStatus !== 200) return new Response('', { status: placesStatus });
+          const name = new URL(url).searchParams.get('name');
+          return Response.json({
+            features: [
+              {
+                properties: {
+                  place_id: 'p-noodle',
+                  name: name ? `${name} Noodles` : 'Noodle Corner',
+                  address_line2: '7 Pine St',
+                  lat: 29.7123,
+                  lon: -95.4012,
+                  distance: 140,
+                },
+              },
+            ],
+          });
+        }),
+      );
+      geolocation = {
+        getCurrentPosition: vi.fn((ok: PositionCallback) =>
+          ok({ coords: DEVICE } as GeolocationPosition),
+        ),
+      };
+      vi.stubGlobal('navigator', { ...navigator, geolocation });
+    });
+
+    it('searches near the current location only after a click and never submits the device position', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('heading', { name: '第一步：选择餐厅' });
+      expect(geolocation.getCurrentPosition).not.toHaveBeenCalled();
+      expect(places).toEqual([]);
+      await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+      const list = await screen.findByRole('list', { name: '附近的餐厅' });
+      expect(new URL(places[0]!).searchParams.get('filter')).toBe(
+        'circle:-95.399900,29.711100,300',
+      );
+      expect(within(list).getByText('140 米')).toBeInTheDocument();
+      expect(screen.getByText(/Powered by Geoapify/)).toBeInTheDocument();
+      await user.click(within(list).getByRole('button', { name: /Noodle Corner/ }));
+      expect(screen.getByText('7 Pine St')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+      expect(formParams()).toEqual({
+        restaurant_name: 'Noodle Corner',
+        restaurant_lat: '29.712300',
+        restaurant_lng: '-95.401200',
+        restaurant_address: '7 Pine St',
+        poi_provider: 'geoapify',
+        poi_id: 'p-noodle',
+        selection_method: 'poi',
+        source: 'site',
+      });
+      expect(
+        screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href'),
+      ).not.toContain('29.7111');
+    });
+
+    it('explains a denied location permission and still allows other searches', async () => {
+      geolocation.getCurrentPosition.mockImplementation(
+        (_ok: PositionCallback, fail: PositionErrorCallback) =>
+          fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+      );
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '使用当前位置' }));
+      expect(screen.getByText(/没有获得定位权限/)).toBeInTheDocument();
+      await user.click(await screen.findByRole('button', { name: '在地图上点一下' }));
+      expect(await screen.findByRole('list', { name: '附近的餐厅' })).toBeInTheDocument();
+      expect(new URL(places[0]!).searchParams.get('filter')).toBe(
+        'circle:-95.400000,29.700000,300',
+      );
+    });
+
+    it('expands the search radius and searches by name', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '搜索地图中心附近' }));
+      await user.click(await screen.findByRole('button', { name: '扩大搜索范围到 1.0 公里' }));
+      await screen.findByRole('list', { name: '附近的餐厅' });
+      expect(places.map((u) => new URL(u).searchParams.get('filter')?.split(',')[2])).toEqual([
+        '300',
+        '1000',
+      ]);
+      await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
+      expect(await screen.findByRole('button', { name: /Pho Noodles/ })).toBeInTheDocument();
+      // Debounced: one request for the whole query.
+      expect(places.filter((u) => new URL(u).searchParams.has('name'))).toHaveLength(1);
+    });
+
+    it('shows search errors with the manual fallback', async () => {
+      placesStatus = 429;
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '搜索地图中心附近' }));
+      expect(await screen.findByText(/餐厅搜索暂时不可用/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
+    });
+
+    it('lets the contributor go back from the confirmation', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '搜索地图中心附近' }));
+      await user.click(await screen.findByRole('button', { name: /Noodle Corner/ }));
+      await user.click(screen.getByRole('button', { name: '重新选择' }));
+      expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+      expect(document.querySelector('iframe')).toBeNull();
+    });
+  });
+
+  it('passes the restaurant from a restaurant page and allows changing it', async () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     const user = userEvent.setup();
     visit('r/bayou-bbq');
@@ -306,36 +499,41 @@ describe('submissions', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: '为「Bayou BBQ」投稿' }),
     ).toBeInTheDocument();
-    const direct = new URL(
-      screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href')!,
-    );
-    expect(Object.fromEntries(direct.searchParams)).toEqual({
+    expect(formParams()).toEqual({
       restaurant_id: 'bayou-bbq',
-      restaurant_name_en: 'Bayou BBQ',
+      restaurant_name: 'Bayou BBQ',
+      restaurant_lat: '29.740000',
+      restaurant_lng: '-95.390000',
+      selection_method: 'existing',
       source: 'restaurant-page',
     });
     expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).toContain(
-      'restaurant_id=bayou-bbq&restaurant_name_en=Bayou+BBQ&source=restaurant-page',
+      'restaurant_id=bayou-bbq&restaurant_name=Bayou+BBQ',
     );
     expect(screen.getByRole('link', { name: '← Bayou BBQ' })).toHaveAttribute(
       'href',
       `${BASE}r/bayou-bbq/`,
     );
+    await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+    expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    expect(document.querySelector('iframe')).toBeNull();
   });
 
-  it('ignores unknown restaurant ids and still offers the general form', async () => {
+  it('ignores unknown restaurant ids and lets the contributor choose', async () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     visit('submit/?restaurant=r-fake99');
     expect(
       await screen.findByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
-    expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).not.toContain('r-fake99');
+    expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain('r-fake99');
   });
 
-  it('keeps the form usable when restaurant data cannot load', async () => {
+  it('keeps submissions possible when restaurant data cannot load', async () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     failIndex = true;
     visit('submit/?restaurant=bayou-bbq');
-    expect(await screen.findByTitle('Rice吃啥 投稿表单')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
   });
 });

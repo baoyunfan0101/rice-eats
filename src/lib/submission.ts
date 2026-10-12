@@ -10,4 +10,4 @@ export function submissionFormId(): string | undefined {
   return setting.status === 'ok' ? setting.formId : undefined;
 }
 
-export { tallyUrls, type SubmissionContext } from '../../shared/submission';
+export { contextProblem, tallyUrls, type SubmissionContext } from '../../shared/submission';

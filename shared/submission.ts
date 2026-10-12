@@ -5,11 +5,20 @@
 
 import type { Rating, Verdict } from './content/vocabulary';
 
-/** Hidden fields configured in the Tally form, filled in from the URL. */
+/**
+ * Hidden fields configured in the Tally form, filled in from the URL by the
+ * website after a restaurant has been selected and confirmed. All of them are
+ * untrusted at intake: they come from a URL anyone can edit.
+ */
 export const HIDDEN_FIELDS = {
   restaurantId: 'restaurant_id',
-  restaurantNameZh: 'restaurant_name_zh',
-  restaurantNameEn: 'restaurant_name_en',
+  restaurantName: 'restaurant_name',
+  lat: 'restaurant_lat',
+  lng: 'restaurant_lng',
+  address: 'restaurant_address',
+  poiProvider: 'poi_provider',
+  poiId: 'poi_id',
+  selectionMethod: 'selection_method',
   source: 'source',
 } as const;
 
@@ -17,11 +26,54 @@ export const HIDDEN_FIELDS = {
 export const SUBMISSION_SOURCES = ['site', 'restaurant-page'] as const;
 export type SubmissionSource = (typeof SUBMISSION_SOURCES)[number];
 
+/**
+ * How the restaurant was chosen: an existing Rice Eats restaurant, a place
+ * found through the POI service, or a manual entry (name, and a map marker
+ * when the contributor placed one).
+ */
+export const SELECTION_METHODS = ['existing', 'poi', 'manual'] as const;
+export type SelectionMethod = (typeof SELECTION_METHODS)[number];
+
+export interface LatLngValue {
+  lat: number;
+  lng: number;
+}
+
+/** The confirmed restaurant passed to the form. Only an explicitly selected location is included. */
 export interface SubmissionContext {
   source: SubmissionSource;
+  selectionMethod: SelectionMethod;
   restaurantId?: string;
-  restaurantNameZh?: string;
-  restaurantNameEn?: string;
+  restaurantName?: string;
+  location?: LatLngValue;
+  address?: string;
+  poiProvider?: string;
+  poiId?: string;
+}
+
+/** True for coordinates that are finite and in range. */
+export function isValidLatLng(value: Partial<LatLngValue> | undefined): value is LatLngValue {
+  return (
+    !!value &&
+    typeof value.lat === 'number' &&
+    typeof value.lng === 'number' &&
+    Number.isFinite(value.lat) &&
+    Number.isFinite(value.lng) &&
+    Math.abs(value.lat) <= 90 &&
+    Math.abs(value.lng) <= 180
+  );
+}
+
+/** Why a context cannot be sent to the form, or undefined when it is complete. */
+export function contextProblem(context: SubmissionContext): string | undefined {
+  if (context.selectionMethod === 'existing' && !context.restaurantId) {
+    return 'an existing restaurant needs its restaurant id';
+  }
+  if (context.selectionMethod !== 'existing' && !context.restaurantName?.trim()) {
+    return 'a restaurant name is required';
+  }
+  if (context.location && !isValidLatLng(context.location)) return 'invalid coordinates';
+  return undefined;
 }
 
 /**
@@ -30,8 +82,6 @@ export interface SubmissionContext {
  * with the title or one of its English aliases), so keep them when editing the form.
  */
 export const TALLY_QUESTIONS = {
-  restaurantNameZh: ['餐厅中文名', 'chinese name'],
-  restaurantNameEn: ['餐厅英文名', 'english name'],
   review: ['你的点评', 'review'],
   photos: ['照片', 'photos'],
   rating: ['总体评级', 'overall rating'],
@@ -159,12 +209,21 @@ export interface TallyUrls {
 /** Builds form links with the submission context as (URL-encoded) hidden-field values. */
 export function tallyUrls(formId: string, context: SubmissionContext): TallyUrls {
   const params = new URLSearchParams();
-  if (context.restaurantId) params.set(HIDDEN_FIELDS.restaurantId, context.restaurantId);
-  if (context.restaurantNameZh)
-    params.set(HIDDEN_FIELDS.restaurantNameZh, context.restaurantNameZh);
-  if (context.restaurantNameEn)
-    params.set(HIDDEN_FIELDS.restaurantNameEn, context.restaurantNameEn);
-  params.set(HIDDEN_FIELDS.source, context.source);
+  const set = (key: string, value: string | undefined) => {
+    if (value?.trim()) params.set(key, value.trim());
+  };
+  set(HIDDEN_FIELDS.restaurantId, context.restaurantId);
+  set(HIDDEN_FIELDS.restaurantName, context.restaurantName);
+  if (context.location && isValidLatLng(context.location)) {
+    // About 10 cm of precision is plenty for a restaurant.
+    set(HIDDEN_FIELDS.lat, context.location.lat.toFixed(6));
+    set(HIDDEN_FIELDS.lng, context.location.lng.toFixed(6));
+  }
+  set(HIDDEN_FIELDS.address, context.address);
+  set(HIDDEN_FIELDS.poiProvider, context.poiProvider);
+  set(HIDDEN_FIELDS.poiId, context.poiId);
+  set(HIDDEN_FIELDS.selectionMethod, context.selectionMethod);
+  set(HIDDEN_FIELDS.source, context.source);
   const id = encodeURIComponent(formId);
   const embedParams = new URLSearchParams({
     alignLeft: '1',

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { RATINGS } from '../../shared/content/vocabulary';
 import {
+  contextProblem,
+  isValidLatLng,
   parseTallyForm,
   ratingFromAnswer,
   TALLY_RATING_OPTIONS,
@@ -35,20 +37,25 @@ describe('Tally form setting', () => {
 });
 
 describe('Tally links', () => {
-  it('passes restaurant context as encoded hidden fields', () => {
+  it('passes an existing restaurant as encoded hidden fields', () => {
     const urls = tallyUrls('wMq8xY', {
       source: 'restaurant-page',
+      selectionMethod: 'existing',
       restaurantId: 'r-abc234',
-      restaurantNameZh: '河粉 & 越南粉 #1',
-      restaurantNameEn: 'Pho & Co #1',
+      restaurantName: 'Pho & Co #1',
+      location: { lat: 29.7174, lng: -95.4018 },
+      address: '2400 Times Blvd, Houston',
     });
     const direct = new URL(urls.direct);
     expect(direct.origin + direct.pathname).toBe('https://tally.so/r/wMq8xY');
-    expect(urls.direct).toContain('restaurant_name_en=Pho+%26+Co+%231');
+    expect(urls.direct).toContain('restaurant_name=Pho+%26+Co+%231');
     expect(Object.fromEntries(direct.searchParams)).toEqual({
       restaurant_id: 'r-abc234',
-      restaurant_name_zh: '河粉 & 越南粉 #1',
-      restaurant_name_en: 'Pho & Co #1',
+      restaurant_name: 'Pho & Co #1',
+      restaurant_lat: '29.717400',
+      restaurant_lng: '-95.401800',
+      restaurant_address: '2400 Times Blvd, Houston',
+      selection_method: 'existing',
       source: 'restaurant-page',
     });
     const embed = new URL(urls.embed);
@@ -57,10 +64,70 @@ describe('Tally links', () => {
     expect(embed.searchParams.get('hideTitle')).toBe('1');
   });
 
-  it('sends only the source for general submissions', () => {
-    expect(tallyUrls('wMq8xY', { source: 'site' }).direct).toBe(
-      'https://tally.so/r/wMq8xY?source=site',
-    );
+  it('passes a POI selection with its provider and id', () => {
+    const params = new URL(
+      tallyUrls('wMq8xY', {
+        source: 'site',
+        selectionMethod: 'poi',
+        restaurantName: '河粉小馆',
+        location: { lat: 29.72, lng: -95.4 },
+        poiProvider: 'geoapify',
+        poiId: '51abc',
+      }).direct,
+    ).searchParams;
+    expect(params.get('restaurant_id')).toBeNull();
+    expect(params.get('poi_provider')).toBe('geoapify');
+    expect(params.get('poi_id')).toBe('51abc');
+    expect(params.get('selection_method')).toBe('poi');
+  });
+
+  it('sends only what is known for a name-only manual entry', () => {
+    expect(
+      tallyUrls('wMq8xY', { source: 'site', selectionMethod: 'manual', restaurantName: 'Bayou' })
+        .direct,
+    ).toBe('https://tally.so/r/wMq8xY?restaurant_name=Bayou&selection_method=manual&source=site');
+  });
+});
+
+describe('submission context', () => {
+  it('accepts complete contexts', () => {
+    expect(
+      contextProblem({ source: 'site', selectionMethod: 'manual', restaurantName: 'Bayou' }),
+    ).toBeUndefined();
+    expect(
+      contextProblem({
+        source: 'restaurant-page',
+        selectionMethod: 'existing',
+        restaurantId: 'r-1',
+      }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [{ source: 'site', selectionMethod: 'existing' }, 'restaurant id'],
+    [{ source: 'site', selectionMethod: 'poi', restaurantName: ' ' }, 'name is required'],
+    [
+      {
+        source: 'site',
+        selectionMethod: 'manual',
+        restaurantName: 'X',
+        location: { lat: 95, lng: 0 },
+      },
+      'invalid coordinates',
+    ],
+  ] as const)('reports %j', (context, problem) => {
+    expect(contextProblem(context)).toContain(problem);
+  });
+
+  it.each([
+    [{ lat: 29.7, lng: -95.4 }, true],
+    [{ lat: -90, lng: 180 }, true],
+    [{ lat: 91, lng: 0 }, false],
+    [{ lat: 0, lng: -181 }, false],
+    [{ lat: NaN, lng: 0 }, false],
+    [undefined, false],
+  ])('validates coordinates %j', (value, valid) => {
+    expect(isValidLatLng(value)).toBe(valid);
   });
 });
 

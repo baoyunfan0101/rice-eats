@@ -17,6 +17,10 @@ import { z } from 'zod';
 import {
   dishQuestion,
   HIDDEN_FIELDS,
+  isValidLatLng,
+  SELECTION_METHODS,
+  type SelectionMethod,
+  type LatLngValue,
   TALLY_CONSENT_OPTION,
   TALLY_DISH_GROUPS,
   TALLY_MAX_DISH_PHOTOS,
@@ -40,8 +44,17 @@ export const submissionSchema = z
     source: z.string().optional(),
     /** From the hidden field: a claim to verify, not an instruction. */
     restaurantId: z.string().optional(),
-    restaurantNameZh: z.string().optional(),
-    restaurantNameEn: z.string().optional(),
+    /** The selected or manually entered restaurant name (hidden field). */
+    restaurantName: z.string().optional(),
+    restaurantAddress: z.string().optional(),
+    /** The explicitly selected restaurant location, only when the coordinates are valid. */
+    restaurantLocation: z.object({ lat: z.number(), lng: z.number() }).strict().optional(),
+    /** Coordinates as submitted when they were not valid. */
+    restaurantLocationRaw: z.string().optional(),
+    /** External POI that was selected (private; never a Rice Eats id). */
+    poi: z.object({ provider: z.string(), id: z.string() }).strict().optional(),
+    /** existing, poi, or manual (anything else is reported). */
+    selectionMethod: z.string().optional(),
     review: z.string().optional(),
     /** The answer as submitted; the stored rating is derived with ratingFromAnswer. */
     ratingAnswer: z.string().optional(),
@@ -132,16 +145,19 @@ export function submissionsFromCsv(text: string): Submission[] {
   }
   const first = (names: readonly string[]) => columns(names)[0];
   const picked = {
-    nameZh: first(TALLY_QUESTIONS.restaurantNameZh),
-    nameEn: first(TALLY_QUESTIONS.restaurantNameEn),
     review: first(TALLY_QUESTIONS.review),
     photos: columns(TALLY_QUESTIONS.photos),
     rating: first(TALLY_QUESTIONS.rating),
     displayName: first(TALLY_QUESTIONS.displayName),
     email: first(TALLY_QUESTIONS.email),
     restaurantId: exact(HIDDEN_FIELDS.restaurantId),
-    hiddenNameZh: exact(HIDDEN_FIELDS.restaurantNameZh),
-    hiddenNameEn: exact(HIDDEN_FIELDS.restaurantNameEn),
+    restaurantName: exact(HIDDEN_FIELDS.restaurantName),
+    lat: exact(HIDDEN_FIELDS.lat),
+    lng: exact(HIDDEN_FIELDS.lng),
+    address: exact(HIDDEN_FIELDS.address),
+    poiProvider: exact(HIDDEN_FIELDS.poiProvider),
+    poiId: exact(HIDDEN_FIELDS.poiId),
+    selectionMethod: exact(HIDDEN_FIELDS.selectionMethod),
     source: exact(HIDDEN_FIELDS.source),
     submittedAt: exact('Submitted at'),
   };
@@ -181,8 +197,13 @@ export function submissionsFromCsv(text: string): Submission[] {
       submittedAt: value(picked.submittedAt),
       source: value(picked.source),
       restaurantId: value(picked.restaurantId),
-      restaurantNameZh: value(picked.nameZh) ?? value(picked.hiddenNameZh),
-      restaurantNameEn: value(picked.nameEn) ?? value(picked.hiddenNameEn),
+      restaurantName: value(picked.restaurantName),
+      restaurantAddress: value(picked.address),
+      ...parseLocation(value(picked.lat), value(picked.lng)),
+      ...(value(picked.poiProvider) && value(picked.poiId)
+        ? { poi: { provider: value(picked.poiProvider)!, id: value(picked.poiId)! } }
+        : {}),
+      selectionMethod: value(picked.selectionMethod),
       review: value(picked.review),
       ratingAnswer: value(picked.rating),
       photoUrls: linksIn(picked.photos),
@@ -192,6 +213,19 @@ export function submissionsFromCsv(text: string): Submission[] {
       consent,
     });
   });
+}
+
+/** Parses hidden-field coordinates; invalid ones are kept only as text for the report. */
+export function parseLocation(
+  lat: string | undefined,
+  lng: string | undefined,
+): Pick<Submission, 'restaurantLocation' | 'restaurantLocationRaw'> {
+  if (lat === undefined && lng === undefined) return {};
+  const number = (v: string | undefined) => (v !== undefined && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : NaN);
+  const location = { lat: number(lat), lng: number(lng) };
+  return isValidLatLng(location)
+    ? { restaurantLocation: location }
+    : { restaurantLocationRaw: `${lat ?? ''},${lng ?? ''}` };
 }
 
 /** Reads a .csv export (one or more submissions) or a .json submission (one or a list). */
@@ -221,11 +255,11 @@ export async function readSubmissions(file: string): Promise<Submission[]> {
 
 export interface KnownRestaurant {
   id: string;
-  /** Display name (Chinese when there is one). */
   name: string;
-  /** Chinese, English, and other names, for matching. */
+  /** name and altNames, for matching. */
   names: string[];
   address?: string;
+  location?: LatLngValue;
   where: 'content' | 'draft';
 }
 
@@ -245,20 +279,19 @@ export async function loadKnownRestaurants(
       try {
         const info = JSON.parse(await readFile(file, 'utf8')) as {
           id?: unknown;
-          nameZh?: unknown;
-          nameEn?: unknown;
+          name?: unknown;
           altNames?: unknown;
           address?: unknown;
+          location?: Partial<LatLngValue>;
         };
-        const names = [info.nameZh, info.nameEn, ...(Array.isArray(info.altNames) ? info.altNames : [])].filter(
-          (n): n is string => typeof n === 'string' && n.trim() !== '',
-        );
-        if (typeof info.id !== 'string' || names.length === 0) continue;
+        if (typeof info.id !== 'string' || typeof info.name !== 'string' || !info.name.trim()) continue;
+        const alt = Array.isArray(info.altNames) ? info.altNames : [];
         known.push({
           id: info.id,
-          name: names[0]!,
-          names,
+          name: info.name,
+          names: [info.name, ...alt].filter((n): n is string => typeof n === 'string' && n.trim() !== ''),
           ...(typeof info.address === 'string' ? { address: info.address } : {}),
+          ...(isValidLatLng(info.location) ? { location: { lat: info.location.lat, lng: info.location.lng } } : {}),
           where,
         });
       } catch {
@@ -272,45 +305,101 @@ export async function loadKnownRestaurants(
 const normalizeName = (text: string) =>
   text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
 
-const nameMatches = (restaurant: KnownRestaurant, names: string[]) =>
-  restaurant.names.some((n) => names.some((name) => normalizeName(n) === normalizeName(name)));
+const nameMatches = (restaurant: KnownRestaurant, name: string | undefined) =>
+  !!name?.trim() && restaurant.names.some((n) => normalizeName(n) === normalizeName(name));
 
-/** The restaurant names a submission gives (Chinese and/or English). */
-export const submittedNames = (s: Submission) =>
-  [s.restaurantNameZh, s.restaurantNameEn].map((n) => n?.trim()).filter((n): n is string => Boolean(n));
+/** Great-circle distance in meters. */
+export function distanceMeters(a: LatLngValue, b: LatLngValue): number {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const h =
+    Math.sin(rad(b.lat - a.lat) / 2) ** 2 +
+    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
+/** Two places closer than this may be the same restaurant (POI coordinates differ a little). */
+export const NEARBY_METERS = 150;
+
+export interface Candidate {
+  restaurant: KnownRestaurant;
+  /** Meters between the submitted location and the restaurant, when both are known. */
+  distance?: number;
+  nameMatch: boolean;
+}
 
 export type Identity =
-  /** The id exists and the submitted name (if any) is one of its names. */
+  /** The id exists and nothing in the submission contradicts it. */
   | { kind: 'existing'; restaurant: KnownRestaurant }
-  /** The id exists but the submitted name belongs to another restaurant or none. */
-  | { kind: 'conflict'; restaurant: KnownRestaurant; submittedName: string; candidates: KnownRestaurant[] }
-  /** The id does not exist (stale link or tampered URL); name candidates follow. */
-  | { kind: 'unknown-id'; id: string; candidates: KnownRestaurant[] }
-  /** No id; the name matches existing restaurants (could be the same place or a namesake). */
-  | { kind: 'candidates'; candidates: KnownRestaurant[] }
-  /** No id and no matching name: probably a restaurant that is not listed yet. */
+  /** The id exists but the submitted name and location point elsewhere. */
+  | { kind: 'conflict'; restaurant: KnownRestaurant; reason: string; candidates: Candidate[] }
+  /** The id does not exist (stale link or tampered URL). */
+  | { kind: 'unknown-id'; id: string; candidates: Candidate[] }
+  /** The same POI was linked to this restaurant by an earlier, reviewed submission. */
+  | { kind: 'poi-match'; restaurant: KnownRestaurant; poi: string }
+  /** Existing restaurants that may be the same place; a maintainer decides. */
+  | { kind: 'candidates'; candidates: Candidate[] }
+  /** Nothing similar nearby or by name: probably a restaurant that is not listed yet. */
   | { kind: 'new' }
   /** Neither an id nor a name was submitted. */
   | { kind: 'unidentified' };
 
+/** POI key used in the private log, e.g. "geoapify:51a3…". */
+export const poiKey = (poi: { provider: string; id: string }) => `${poi.provider}:${poi.id}`;
+
 /**
- * Resolves which restaurant a submission is about. The result is a proposal
- * for the maintainer; a hidden-field id is never trusted on its own.
+ * Resolves which restaurant a submission is about, in this order: the Rice
+ * Eats id from a restaurant page, a POI already linked to a restaurant by an
+ * earlier reviewed submission, then location and names. The result is always
+ * a proposal for the maintainer: hidden fields are never trusted on their own,
+ * names alone never merge restaurants, and branches of a chain (same name,
+ * different place) stay separate candidates.
  */
-export function resolveIdentity(submission: Submission, known: KnownRestaurant[]): Identity {
-  const names = submittedNames(submission);
-  const byName = names.length > 0 ? known.filter((r) => nameMatches(r, names)) : [];
+export function resolveIdentity(
+  submission: Submission,
+  known: KnownRestaurant[],
+  poiIndex: Map<string, string> = new Map(),
+): Identity {
+  const name = submission.restaurantName?.trim();
+  const location = submission.restaurantLocation;
+  const candidates: Candidate[] = known
+    .map((restaurant) => ({
+      restaurant,
+      distance:
+        location && restaurant.location ? distanceMeters(location, restaurant.location) : undefined,
+      nameMatch: nameMatches(restaurant, name),
+    }))
+    .filter((c) => c.nameMatch || (c.distance !== undefined && c.distance <= NEARBY_METERS))
+    .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+
   const id = submission.restaurantId?.trim();
   if (id) {
     const restaurant = known.find((r) => r.id === id);
-    if (!restaurant) return { kind: 'unknown-id', id, candidates: byName };
-    if (names.length > 0 && !nameMatches(restaurant, names)) {
-      return { kind: 'conflict', restaurant, submittedName: names.join(' / '), candidates: byName };
+    if (!restaurant) return { kind: 'unknown-id', id, candidates };
+    const far =
+      location && restaurant.location
+        ? distanceMeters(location, restaurant.location) > NEARBY_METERS * 2
+        : false;
+    if (name && !nameMatches(restaurant, name) && (far || !location)) {
+      return {
+        kind: 'conflict',
+        restaurant,
+        reason: `the submission names "${name}"${far ? ' at a different location' : ''}`,
+        candidates: candidates.filter((c) => c.restaurant.id !== id),
+      };
+    }
+    if (far) {
+      return { kind: 'conflict', restaurant, reason: 'the submitted location is elsewhere', candidates };
     }
     return { kind: 'existing', restaurant };
   }
-  if (names.length === 0) return { kind: 'unidentified' };
-  return byName.length > 0 ? { kind: 'candidates', candidates: byName } : { kind: 'new' };
+
+  if (submission.poi) {
+    const linked = poiIndex.get(poiKey(submission.poi));
+    const restaurant = linked ? known.find((r) => r.id === linked) : undefined;
+    if (restaurant) return { kind: 'poi-match', restaurant, poi: poiKey(submission.poi) };
+  }
+  if (!name && !location) return { kind: 'unidentified' };
+  return candidates.length > 0 ? { kind: 'candidates', candidates } : { kind: 'new' };
 }
 
 // ---------------------------------------------------------------------------
@@ -578,8 +667,22 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
   if (!submission.consent) {
     blockers.push('no publication consent: do not prepare or publish anything; ask the contributor or reject');
   }
-  if (submittedNames(submission).length === 0 && !submission.restaurantId) {
-    notes.push('no restaurant name (Chinese or English): ask the contributor which restaurant this is');
+  if (!submission.restaurantName?.trim() && !submission.restaurantId) {
+    notes.push('no restaurant name: ask the contributor which restaurant this is');
+  }
+  const method = submission.selectionMethod;
+  if (method && !SELECTION_METHODS.includes(method as SelectionMethod)) {
+    notes.push(`unknown selection method "${method}": treat the restaurant fields as unverified`);
+  }
+  if (submission.restaurantLocationRaw) {
+    notes.push(
+      `invalid restaurant coordinates "${submission.restaurantLocationRaw}" were ignored: verify the location`,
+    );
+  }
+  if (!submission.restaurantId && submission.restaurantName?.trim() && !submission.restaurantLocation) {
+    notes.push('name only, no location: verify where the restaurant is before drafting it');
+  } else if (method === 'manual') {
+    notes.push('added by hand (not from a map listing): verify the name and location');
   }
   for (const [i, dish] of submission.dishes.entries()) {
     if (!dish.name?.trim()) {
@@ -625,6 +728,8 @@ const logSchema = z.record(
       importedAt: z.string(),
       updatedAt: z.string().optional(),
       restaurantId: z.string().optional(),
+      /** The submitted POI ("provider:id"), private. With restaurantId it links that POI to the restaurant. */
+      poi: z.string().optional(),
     })
     .strict(),
 );
@@ -669,6 +774,20 @@ export async function markSubmission(
   }));
 }
 
+/**
+ * POIs linked to restaurants by reviewed submissions (drafted or processed
+ * with a restaurant id), so later submissions of the same POI are matched.
+ */
+export function poiIndexFromLog(log: SubmissionLog): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const entry of Object.values(log)) {
+    if (entry.poi && entry.restaurantId && (entry.status === 'drafted' || entry.status === 'processed')) {
+      index.set(entry.poi, entry.restaurantId);
+    }
+  }
+  return index;
+}
+
 export const submissionDir = (submissionsDir: string, id: string) => path.join(submissionsDir, `tally-${id}`);
 
 export interface SubmissionReport {
@@ -710,7 +829,10 @@ export async function importSubmissions(
   submissions: Submission[],
   options: ImportOptions,
 ): Promise<SubmissionReport[]> {
-  const known = await loadKnownRestaurants(options.restaurantsDir, options.draftsDir);
+  const known = {
+    restaurants: await loadKnownRestaurants(options.restaurantsDir, options.draftsDir),
+    poiIndex: poiIndexFromLog(await readLog(options.submissionsDir)),
+  };
   const reports: SubmissionReport[] = [];
   for (const incoming of submissions) {
     const id = incoming.submissionId;
@@ -732,7 +854,13 @@ export async function importSubmissions(
       await writeFile(path.join(dir, SUBMISSION_FILE), `${JSON.stringify(submission, null, 2)}\n`, { flag: 'wx' });
     }
     let state = await loadPhotoState(dir, submission);
-    const entry = await updateLog(options.submissionsDir, id, (e) => e ?? { status: 'imported', importedAt: now() });
+    const entry = await updateLog(options.submissionsDir, id, (e) =>
+      e ?? {
+        status: 'imported',
+        importedAt: now(),
+        ...(submission.poi ? { poi: poiKey(submission.poi) } : {}),
+      },
+    );
     const before = photoSummary(state);
     if (logged && before !== 'incomplete') {
       reports.push(report(submission, 'duplicate', known, state, { entry, dir, extra }));
@@ -767,19 +895,22 @@ export async function retryPhotos(id: string, options: ImportOptions): Promise<S
 export async function submissionStatus(
   id: string,
   options: ImportOptions,
-  known?: PhotoState[],
+  photos?: PhotoState[],
 ): Promise<SubmissionReport> {
   const { dir, submission } = await openSubmission(options.submissionsDir, id);
-  const state = known ?? (await loadPhotoState(dir, submission));
+  const state = photos ?? (await loadPhotoState(dir, submission));
   const entry = await updateLog(options.submissionsDir, id, (e) => ({ ...e!, photos: photoSummary(state) }));
-  const restaurants = await loadKnownRestaurants(options.restaurantsDir, options.draftsDir);
-  return report(submission, 'status', restaurants, state, { entry, dir });
+  const known = {
+    restaurants: await loadKnownRestaurants(options.restaurantsDir, options.draftsDir),
+    poiIndex: poiIndexFromLog(await readLog(options.submissionsDir)),
+  };
+  return report(submission, 'status', known, state, { entry, dir });
 }
 
 function report(
   submission: Submission,
   outcome: SubmissionReport['outcome'],
-  known: KnownRestaurant[],
+  known: { restaurants: KnownRestaurant[]; poiIndex: Map<string, string> },
   photos: PhotoState[],
   more: { entry?: LogEntry; dir?: string; extra?: string[] },
 ): SubmissionReport {
@@ -790,7 +921,7 @@ function report(
     entry: more.entry,
     dir: more.dir,
     rating: ratingFromAnswer(submission.ratingAnswer),
-    identity: resolveIdentity(submission, known),
+    identity: resolveIdentity(submission, known.restaurants, known.poiIndex),
     photos,
     blockers,
     notes: [...(more.extra ?? []), ...notes],
@@ -819,6 +950,7 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   lines.push(`  saved:      ${rel(result.dir!)}/ (private)`);
   lines.push(`  source:     ${s.source ?? '(unknown)'}`);
   lines.push(`  restaurant: ${describeIdentity(result.identity, s)}`);
+  lines.push(`  selected:   ${describeSelection(s)}`);
   const kind = [
     s.review?.trim() && 'review text',
     s.dishes.length && `${s.dishes.length} dish(es)`,
@@ -862,26 +994,56 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   return lines.join('\n');
 }
 
+function describeSelection(s: Submission): string {
+  const parts = [
+    `method ${s.selectionMethod ?? '(unknown)'}`,
+    s.restaurantName?.trim() ? `name "${s.restaurantName.trim()}"` : 'no name',
+    s.restaurantAddress?.trim() ? `address "${s.restaurantAddress.trim()}"` : 'no address',
+    s.restaurantLocation
+      ? `at ${s.restaurantLocation.lat.toFixed(6)},${s.restaurantLocation.lng.toFixed(6)}`
+      : 'no location',
+    s.poi ? `POI ${poiKey(s.poi)} (private)` : 'no POI',
+  ];
+  return parts.join('; ');
+}
+
 function describeIdentity(identity: Identity, s: Submission): string {
   const label = (r: KnownRestaurant) =>
     `${r.id} "${r.name}"${r.address ? ` (${r.address})` : ''}${r.where === 'draft' ? ' [private draft]' : ''}`;
-  const others = (list: KnownRestaurant[]) =>
-    list.length ? `; name matches ${list.map(label).join(', ')}` : '';
+  const candidate = (c: Candidate) => {
+    const near = c.distance !== undefined && c.distance <= NEARBY_METERS;
+    const how =
+      c.nameMatch && near
+        ? 'same name nearby'
+        : c.nameMatch
+          ? c.distance !== undefined
+            ? `same name ${Math.round(c.distance)} m away: possibly another branch`
+            : 'same name, location unknown: possibly another branch'
+          : `different name ${Math.round(c.distance!)} m away`;
+    return `${label(c.restaurant)} [${how}]`;
+  };
+  const others = (list: Candidate[]) => (list.length ? `; candidates: ${list.map(candidate).join(', ')}` : '');
+  const name = s.restaurantName?.trim();
   switch (identity.kind) {
     case 'existing':
       return `existing ${label(identity.restaurant)}; update it with content:edit only as the maintainer decides`;
     case 'conflict':
       return (
-        `CONFLICT: id ${identity.restaurant.id} is "${identity.restaurant.name}" but the submission names ` +
-        `"${identity.submittedName}"${others(identity.candidates)}; ask the maintainer`
+        `CONFLICT: id ${identity.restaurant.id} is "${identity.restaurant.name}" but ${identity.reason}` +
+        `${others(identity.candidates)}; ask the maintainer`
       );
     case 'unknown-id':
       return `UNKNOWN id "${identity.id}" (not in the database)${others(identity.candidates)}; ask the maintainer`;
+    case 'poi-match':
+      return (
+        `same map listing as ${label(identity.restaurant)} in an earlier reviewed submission; ` +
+        'confirm before updating it'
+      );
     case 'candidates':
-      return `"${submittedNames(s).join(' / ')}" without an id${others(identity.candidates)}; compare addresses before deciding`;
+      return `"${name ?? '(no name)'}" without an id${others(identity.candidates)}; compare locations before deciding`;
     case 'new':
-      return `"${submittedNames(s).join(' / ')}": not in the database; a new draft may be needed`;
+      return `"${name ?? '(no name)'}": nothing similar in the database; a new draft may be needed`;
     case 'unidentified':
-      return 'no restaurant id or name; ask the contributor or the maintainer';
+      return 'no restaurant id, name, or location; ask the contributor or the maintainer';
   }
 }

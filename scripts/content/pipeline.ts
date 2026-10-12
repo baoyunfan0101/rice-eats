@@ -20,7 +20,6 @@ import { canonicalImageProblems, copyRenditions, processImage, type ProcessedIma
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
 import { findSensitiveMetadata, PRIVACY_FIX } from './privacy.ts';
 import {
-  displayName,
   formatIssues,
   privateContributorsSchema,
   publicContributorsSchema,
@@ -425,7 +424,7 @@ async function renderRestaurant(
   // Alt text: the restaurant name for the cover, the dish name or review alt text
   // where an image is used, otherwise the name with the photo's position.
   const reviewImages = restaurant.review?.trim() ? listMarkdownImages(restaurant.review) : [];
-  const name = displayName(info);
+  const name = info.name;
   const altFor = (ref: string, i: number) =>
     i === 0
       ? name
@@ -459,8 +458,6 @@ async function renderRestaurant(
     id: info.id,
     status: info.status,
     name,
-    nameZh: info.nameZh,
-    nameEn: info.nameEn,
     altNames: info.altNames ?? [],
     cuisines: info.cuisines ?? [],
     tags: info.tags ?? [],
@@ -483,8 +480,6 @@ function toSummary(detail: RestaurantDetail): RestaurantSummary {
     id: detail.id,
     status: detail.status,
     name: detail.name,
-    nameZh: detail.nameZh,
-    nameEn: detail.nameEn,
     altNames: detail.altNames,
     cuisines: detail.cuisines,
     tags: detail.tags,

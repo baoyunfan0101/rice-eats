@@ -36,9 +36,10 @@ so everything unapproved lives in the git-ignored `private/` folder:
   prices, dishes, dish names, tags, names, addresses, coordinates, or photo
   descriptions. Leave a field out when the submission does not support it, and
   report it as missing. Every field except `id` and `status` is optional, but
-  a restaurant needs `nameZh` (Chinese name), `nameEn` (English name), or
-  both; record each only as the contributor or a reliable source gives it,
-  and never translate a name yourself;
+  a restaurant needs `name` (its primary name, in whatever language it is
+  best known by); other names (another language, abbreviations, former names)
+  go in `altNames`. Record each only as the contributor or a reliable source
+  gives it, and never translate a name yourself;
   `contributorIds` is only needed to publish. Never fill fields to satisfy a
   layout.
 - **Keep uncertainty explicit.** Ambiguous or conflicting information ("near
@@ -102,12 +103,26 @@ requests to Tally's file hosts (see `docs/submissions.md`), continues ids
 whose photo intake is incomplete, skips completed ones, and reports for each
 one:
 
-- **restaurant**: `existing` (the hidden `restaurant_id` exists and the name
-  matches), `CONFLICT` or `UNKNOWN id` (ask the maintainer; never trust the
-  id alone), name `candidates` without an id (compare addresses), `new`, or
-  unidentified;
-- **names**: the Chinese and/or English name the contributor typed; they go
-  into `nameZh` and `nameEn` as given;
+- **restaurant**: matched in this order: the hidden `restaurant_id`
+  (`existing` when it exists and the name and location agree; `CONFLICT` or
+  `UNKNOWN id` otherwise: ask the maintainer, never trust the id alone); the
+  same map listing (POI) linked to a restaurant by an earlier reviewed
+  submission (`poi-match`, confirm it); then `candidates` by location and
+  name, each labelled "same name nearby", "same name … m away: possibly
+  another branch", or "different name … m away"; `new` when nothing is
+  similar; or unidentified. Names alone never decide that two places are the
+  same restaurant: chains have branches with the same name, so compare the
+  location and address, and ask the maintainer when unsure;
+- **selected**: how the contributor chose the restaurant (`existing`, `poi`
+  from the map search, or `manual`), the name, address, and coordinates they
+  confirmed, and the POI. Use the submitted name as `name` as given. A manual
+  entry, a name without a location, or invalid coordinates is reported in the
+  notes: verify the place (e.g. on a map) before drafting it, and leave
+  `location` out rather than guessing. The POI provider and id stay private:
+  never copy them into `content/` or use them as a Rice Eats id. After the
+  maintainer confirms which restaurant a submission is about, record it with
+  `content:submission -- mark <submission id> --status drafted --id <restaurant id>`,
+  which links the POI to that restaurant for later submissions;
 - **dishes**: each dish group's name, verdict (推荐 = `1`, 避雷 = `-1`,
   不评价 or empty = no verdict), comment, and the photo numbers that belong
   to it. Import general photos first, then each dish's photos, and set the
@@ -159,7 +174,7 @@ import each photo once.
 ```sh
 npm run content:check                         # lists every restaurant with its id and name
 npm run content:edit -- <id>                  # existing restaurant: copy to private/drafts/<id>/
-npm run content:new -- --name-zh "<中文名>" --name-en "<English name>"   # new restaurant (one or both names); prints the id
+npm run content:new -- --name "<name>"   # new restaurant; other names go in altNames; prints the id
 npm run content:contributor -- find "<name or email>"
 npm run content:contributor -- add --name "<display name>" --email "<email>"
 ```

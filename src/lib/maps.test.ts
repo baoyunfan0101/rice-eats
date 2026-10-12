@@ -14,11 +14,16 @@ describe('map links', () => {
     );
   });
 
-  it('uses coordinates when there is no address (Apple Maps prefers them)', () => {
-    const r = { ...place, location: { lat: 29.7, lng: -95.4 } };
+  it('prefers coordinates over the address, whatever language the name is in', () => {
+    const r = {
+      ...place,
+      name: '河粉小馆',
+      address: '1 Main St',
+      location: { lat: 29.7, lng: -95.4 },
+    };
     expect(googleMapsUrl(r)).toBe('https://www.google.com/maps/search/?api=1&query=29.7%2C-95.4');
-    expect(appleMapsUrl({ ...r, address: '1 Main St' })).toBe(
-      'https://maps.apple.com/?q=Pho+Spot&ll=29.7%2C-95.4',
+    expect(appleMapsUrl(r)).toBe(
+      'https://maps.apple.com/?q=%E6%B2%B3%E7%B2%89%E5%B0%8F%E9%A6%86&ll=29.7%2C-95.4',
     );
   });
 

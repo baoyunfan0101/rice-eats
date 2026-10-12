@@ -1,7 +1,7 @@
 {
   "id": "fixture-steak-room",
   "status": "published",
-  "nameZh": "牛排房（虚构示例）",
+  "name": "牛排房（虚构示例）",
   "cuisines": ["american", "steak"],
   "address": "600 Example Ln, Houston, TX 77098 (fictional)",
   "location": {
