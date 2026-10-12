@@ -1,0 +1,108 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
+    'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+  --color-paper: #fbf7f2;
+  --color-ink: #231d19;
+  --color-muted: #6f655d;
+  --color-line: #e8dfd5;
+  --color-chili-50: #fdf2ec;
+  --color-chili-100: #fae0d3;
+  --color-chili-600: #b4441f;
+  --color-chili-700: #943417;
+  --color-basil-600: #3f7a4f;
+  --color-basil-50: #ecf5ee;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-paper text-ink antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-chili-600;
+  }
+}
+
+/* Editorial content rendered from review.md. */
+.review {
+  @apply text-[1.0625rem] leading-8 text-ink;
+}
+.review > * + * {
+  @apply mt-5;
+}
+.review h2 {
+  @apply mt-10 text-xl font-bold leading-snug;
+}
+.review h3,
+.review h4,
+.review h5,
+.review h6 {
+  @apply mt-8 text-lg font-semibold;
+}
+.review a {
+  @apply font-medium text-chili-700 underline decoration-chili-100 decoration-2 underline-offset-4 hover:decoration-chili-600;
+}
+.review ul {
+  @apply list-disc pl-6;
+}
+.review ol {
+  @apply list-decimal pl-6;
+}
+.review li + li {
+  @apply mt-1;
+}
+.review blockquote {
+  @apply border-l-4 border-chili-100 pl-4 text-muted;
+}
+.review figure,
+.review img {
+  @apply my-8;
+}
+.review figure img {
+  @apply my-0;
+}
+.review img {
+  @apply h-auto max-h-[80vh] w-auto max-w-full rounded-xl bg-line object-contain;
+}
+.review figure {
+  @apply flex flex-col items-center;
+}
+.review figcaption {
+  @apply mt-2 text-center text-sm text-muted;
+}
+.review table {
+  @apply block w-full overflow-x-auto text-base;
+}
+.review th,
+.review td {
+  @apply border border-line px-3 py-1.5 text-left;
+}
+.review hr {
+  @apply my-10 border-line;
+}
+.review code {
+  @apply rounded bg-line/60 px-1 py-0.5 text-[0.9em];
+}
+
+/* Leaflet: keep map controls below the sticky header and visible focus. */
+.leaflet-container {
+  @apply font-sans;
+}
+.leaflet-container :focus-visible {
+  @apply outline-2 outline-chili-600;
+}
+.map-pin {
+  @apply flex items-center justify-center;
+}
+.map-pin span {
+  @apply block size-4 rounded-full border-2 border-white bg-chili-600 shadow-md transition-transform;
+}
+.map-pin.is-selected span {
+  @apply size-6 bg-ink ring-4 ring-chili-600/40;
+}

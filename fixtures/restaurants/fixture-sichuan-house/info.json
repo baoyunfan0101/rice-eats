@@ -1,0 +1,28 @@
+{
+  "id": "fixture-sichuan-house",
+  "status": "published",
+  "name": "蜀味小馆（虚构示例）",
+  "altNames": ["Sichuan House (fictional)"],
+  "cuisines": ["sichuan", "chinese"],
+  "address": "400 Example Rd, Houston, TX 77036 (fictional)",
+  "location": {
+    "lat": 29.7053,
+    "lng": -95.5465
+  },
+  "rating": 5,
+  "pricePerPerson": 25,
+  "tags": ["spicy", "group"],
+  "dishes": [
+    {
+      "name": "麻婆豆腐（示例）",
+      "verdict": 1,
+      "comment": "虚构点评：麻辣适中。",
+      "image": "images/02-mapo-tofu.jpg"
+    },
+    {
+      "name": "夫妻肺片（示例）",
+      "verdict": 1
+    }
+  ],
+  "contributorIds": ["u-001"]
+}

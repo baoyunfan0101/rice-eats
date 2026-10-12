@@ -1,0 +1,26 @@
+{
+  "id": "fixture-bayou-bbq",
+  "status": "published",
+  "name": "河湾烤肉（虚构示例）",
+  "altNames": ["Bayou BBQ (fictional)"],
+  "cuisines": ["bbq"],
+  "address": "200 Example Ave, Houston, TX 77006 (fictional)",
+  "location": {
+    "lat": 29.7445,
+    "lng": -95.3905
+  },
+  "rating": 5,
+  "pricePerPerson": 28,
+  "tags": ["group"],
+  "dishes": [
+    {
+      "name": "烟熏牛胸（示例）",
+      "verdict": 1,
+      "image": "images/02-brisket.jpg"
+    },
+    {
+      "name": "冰茶（示例）"
+    }
+  ],
+  "contributorIds": ["u-001"]
+}

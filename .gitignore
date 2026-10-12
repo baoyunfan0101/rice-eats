@@ -11,6 +11,7 @@ node_modules/
 
 # Build output
 dist/
+dist-e2e/
 dist-ssr/
 build/
 *.local
@@ -55,3 +56,15 @@ coverage/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Generated content and image cache (rebuilt by `npm run content:build`)
+public/generated/
+
+# Private working area: raw submissions, unapproved drafts, and contributor
+# contact details. Nothing here is committed or deployed; approved drafts are
+# moved into content/ with npm run content:promote.
+/private/
+
+# Playwright
+test-results/
+playwright-report/
