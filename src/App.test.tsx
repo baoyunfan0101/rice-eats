@@ -30,6 +30,7 @@ const img = (name: string, alt: string) => ({
 const restaurants = [
   summary('bayou-bbq', {
     name: 'Bayou BBQ',
+    nameEn: 'Bayou BBQ',
     cuisines: ['bbq'],
     tags: ['group'],
     rating: 5,
@@ -37,7 +38,10 @@ const restaurants = [
     location: { lat: 29.74, lng: -95.39 },
   }),
   summary('pho-garden', {
-    name: 'Pho Garden',
+    name: '河粉花园',
+    nameZh: '河粉花园',
+    nameEn: 'Pho Garden',
+    altNames: ['PG'],
     cuisines: ['vietnamese'],
     tags: ['budget'],
     rating: 3,
@@ -105,7 +109,9 @@ describe('browsing', () => {
   it('shows the list view with restaurant information', async () => {
     visit('');
     const list = await screen.findByRole('list', { name: '餐厅列表' });
-    expect(names(list)).toEqual(['Bayou BBQ', 'Pho Garden', 'Food Truck']);
+    expect(names(list)).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
+    // The English name (and other names) appear under the Chinese one.
+    expect(within(list).getByText('Pho Garden / PG')).toBeInTheDocument();
     expect(within(list).getByText('美式烧烤 · 人均 $28')).toBeInTheDocument();
     expect(within(list).getByText('适合聚餐')).toBeInTheDocument();
     expect(screen.getByText('共 3 家')).toBeInTheDocument();
@@ -139,12 +145,16 @@ describe('browsing', () => {
     expect(names(await screen.findByRole('list', { name: '餐厅网格' }))).toHaveLength(3);
   });
 
-  it('searches by name', async () => {
+  it('searches Chinese, English, and other names', async () => {
     const user = userEvent.setup();
     visit('');
-    await user.type(await screen.findByRole('searchbox'), 'pho');
-    expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['Pho Garden']);
+    const box = await screen.findByRole('searchbox');
+    await user.type(box, 'pho');
+    expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['河粉花园']);
     expect(window.location.search).toBe('?q=pho');
+    await user.clear(box);
+    await user.type(box, '河粉');
+    expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['河粉花园']);
   });
 
   it('shows a friendly empty state when nothing is published', async () => {
@@ -301,11 +311,11 @@ describe('submissions', () => {
     );
     expect(Object.fromEntries(direct.searchParams)).toEqual({
       restaurant_id: 'bayou-bbq',
-      restaurant_name: 'Bayou BBQ',
+      restaurant_name_en: 'Bayou BBQ',
       source: 'restaurant-page',
     });
     expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).toContain(
-      'restaurant_id=bayou-bbq&restaurant_name=Bayou+BBQ&source=restaurant-page',
+      'restaurant_id=bayou-bbq&restaurant_name_en=Bayou+BBQ&source=restaurant-page',
     );
     expect(screen.getByRole('link', { name: '← Bayou BBQ' })).toHaveAttribute(
       'href',

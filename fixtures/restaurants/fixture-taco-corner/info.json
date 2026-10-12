@@ -1,7 +1,7 @@
 {
   "id": "fixture-taco-corner",
   "status": "published",
-  "name": "街角塔可（虚构示例）",
+  "nameZh": "街角塔可（虚构示例）",
   "cuisines": ["mexican"],
   "location": {
     "lat": 29.7181,

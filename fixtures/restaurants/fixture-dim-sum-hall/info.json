@@ -1,8 +1,8 @@
 {
   "id": "fixture-dim-sum-hall",
   "status": "published",
-  "name": "点心大堂（虚构示例）",
-  "altNames": ["Dim Sum Hall (fictional)"],
+  "nameZh": "点心大堂（虚构示例）",
+  "nameEn": "Dim Sum Hall (fictional)",
   "cuisines": ["cantonese", "chinese"],
   "address": "500 Example Dr, Houston, TX 77036 (fictional)",
   "location": {

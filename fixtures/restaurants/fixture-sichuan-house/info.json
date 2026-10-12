@@ -1,8 +1,8 @@
 {
   "id": "fixture-sichuan-house",
   "status": "published",
-  "name": "蜀味小馆（虚构示例）",
-  "altNames": ["Sichuan House (fictional)"],
+  "nameZh": "蜀味小馆（虚构示例）",
+  "nameEn": "Sichuan House (fictional)",
   "cuisines": ["sichuan", "chinese"],
   "address": "400 Example Rd, Houston, TX 77036 (fictional)",
   "location": {

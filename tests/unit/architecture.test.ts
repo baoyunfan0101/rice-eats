@@ -58,7 +58,7 @@ describe('module boundaries', () => {
       restaurantInfoSchema.safeParse({
         id: 'r-abc123',
         status: 'draft',
-        name: 'x',
+        nameZh: 'x',
         rating: 2,
         dishes: [{ name: 'y', verdict: -1 }],
       }).success,

@@ -63,7 +63,7 @@ describe('content pipeline', () => {
     await writeRestaurant(root, 'bare', {
       id: 'bare',
       status: 'published',
-      name: 'Bare',
+      nameEn: 'Bare',
       contributorIds: ['u-001'],
     });
     const result = await pipeline(root);
@@ -84,7 +84,7 @@ describe('content pipeline', () => {
     const dir = await writeRestaurant(root, 'photos', {
       id: 'photos',
       status: 'published',
-      name: 'Photos',
+      nameEn: 'Photos',
       contributorIds: ['u-001'],
     });
     for (const name of ['01-a.jpg', '02-b.jpg', '03-c.jpg'])
@@ -137,12 +137,40 @@ describe('content pipeline', () => {
     expect(preview.index.restaurants.map((r) => r.id).sort()).toEqual(['a', 'b']);
   });
 
+  it('needs a Chinese or English name and shows the Chinese one first', async () => {
+    const root = await tempDir();
+    await writeRestaurant(
+      root,
+      'zh-en',
+      validInfo('zh-en', { nameZh: '双语面馆', nameEn: 'Twin Noodles' }),
+    );
+    await writeRestaurant(root, 'en-only', validInfo('en-only', { nameEn: 'English Only' }));
+    const ok = await pipeline(root);
+    expect(errors(ok)).toEqual([]);
+    const byId = Object.fromEntries(ok.details.map((d) => [d.id, d]));
+    expect(byId['zh-en']).toMatchObject({
+      name: '双语面馆',
+      nameZh: '双语面馆',
+      nameEn: 'Twin Noodles',
+    });
+    expect(byId['en-only']).toMatchObject({ name: 'English Only', nameEn: 'English Only' });
+    expect(byId['en-only']!.nameZh).toBeUndefined();
+
+    const bad = await tempDir();
+    const noName: Record<string, unknown> = validInfo('nameless');
+    delete noName.nameEn;
+    await writeRestaurant(bad, 'nameless', noName);
+    expect(errors(await pipeline(bad)).join('\n')).toMatch(
+      /nameZh: give "nameZh" \(Chinese name\), "nameEn" \(English name\), or both/,
+    );
+  });
+
   it('fails on invalid published content with actionable messages, and writes nothing', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'bad', {
       id: 'Bad Id',
       status: 'published',
-      name: '',
+      nameZh: '',
       summary: 'removed field',
       cuisines: ['越南菜'],
       tags: ['not-a-tag'],
@@ -152,7 +180,7 @@ describe('content pipeline', () => {
     const messages = errors(result).join('\n');
     expect(result.failed).toBe(true);
     expect(messages).toMatch(/id: must be lowercase/);
-    expect(messages).toMatch(/name: must not be empty/);
+    expect(messages).toMatch(/nameZh: must not be empty/);
     expect(messages).toMatch(/Unrecognized key: "summary"/);
     expect(messages).toMatch(/cuisines.0: unknown cuisine; use one of .*vietnamese/);
     expect(messages).toMatch(/tags.0: unknown tag; .* or add it to shared\/content\/vocabulary.ts/);
@@ -180,7 +208,7 @@ describe('content pipeline', () => {
     await writeRestaurant(root, 'wip', {
       id: 'wip',
       status: 'draft',
-      name: 'WIP',
+      nameEn: 'WIP',
       dishes: [{ name: 'x', image: 'images/01-missing.jpg' }],
     });
     const result = await pipeline(root);
@@ -203,8 +231,8 @@ describe('content pipeline', () => {
 
   it('allows restaurants with the same name under different ids', async () => {
     const root = await tempDir();
-    await writeRestaurant(root, 'r-aaaaaa', validInfo('r-aaaaaa', { name: '街角塔可' }));
-    await writeRestaurant(root, 'r-bbbbbb', validInfo('r-bbbbbb', { name: '街角塔可' }));
+    await writeRestaurant(root, 'r-aaaaaa', validInfo('r-aaaaaa', { nameZh: '街角塔可' }));
+    await writeRestaurant(root, 'r-bbbbbb', validInfo('r-bbbbbb', { nameZh: '街角塔可' }));
     const result = await pipeline(root);
     expect(errors(result)).toEqual([]);
     expect(result.index.restaurants.map((r) => r.id)).toEqual(['r-aaaaaa', 'r-bbbbbb']);
@@ -416,7 +444,7 @@ describe('content pipeline', () => {
     await writeRestaurant(drafts, 'wip', {
       id: 'wip',
       status: 'draft',
-      name: 'WIP',
+      nameEn: 'WIP',
       contributorIds: ['u-002'],
     });
     await writeRestaurant(drafts, 'early', validInfo('early'));
@@ -449,11 +477,11 @@ describe('content pipeline', () => {
   it('treats a private draft with a public id as an edit, not a duplicate', async () => {
     const root = await tempDir();
     const drafts = await tempDir();
-    await writeRestaurant(root, 'same', validInfo('same', { name: 'Public version' }));
+    await writeRestaurant(root, 'same', validInfo('same', { nameEn: 'Public version' }));
     await writeRestaurant(
       drafts,
       'same',
-      validInfo('same', { status: 'draft', name: 'Edited version' }),
+      validInfo('same', { status: 'draft', nameEn: 'Edited version' }),
     );
     const build = await pipeline(root, { draftsDir: drafts });
     expect(errors(build)).toEqual([]);

@@ -47,7 +47,7 @@ export async function makePhonePhoto(file: string): Promise<void> {
 export const validInfo = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
   status: 'published',
-  name: `Test ${id}`,
+  nameEn: `Test ${id}`,
   cuisines: ['japanese'],
   location: { lat: 29.72, lng: -95.4 },
   contributorIds: ['u-001'],

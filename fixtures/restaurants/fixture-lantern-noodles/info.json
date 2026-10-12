@@ -1,8 +1,8 @@
 {
   "id": "fixture-lantern-noodles",
   "status": "published",
-  "name": "灯笼拉面（虚构示例）",
-  "altNames": ["Lantern Noodles (fictional)"],
+  "nameZh": "灯笼拉面（虚构示例）",
+  "nameEn": "Lantern Noodles (fictional)",
   "cuisines": ["japanese", "ramen"],
   "address": "100 Example St, Houston, TX 77005 (fictional)",
   "location": {

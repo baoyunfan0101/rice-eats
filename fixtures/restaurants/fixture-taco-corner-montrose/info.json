@@ -1,7 +1,7 @@
 {
   "id": "fixture-taco-corner-montrose",
   "status": "published",
-  "name": "街角塔可（虚构示例）",
+  "nameZh": "街角塔可（虚构示例）",
   "cuisines": ["mexican"],
   "address": "800 Example Ave, Houston, TX 77006 (fictional)",
   "location": {

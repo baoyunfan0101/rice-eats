@@ -1,7 +1,7 @@
 {
   "id": "fixture-draft-only",
   "status": "draft",
-  "name": "草稿餐厅（虚构示例）",
+  "nameZh": "草稿餐厅（虚构示例）",
   "cuisines": ["bakery"],
   "location": {
     "lat": 29.72,

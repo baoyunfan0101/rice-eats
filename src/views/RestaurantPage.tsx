@@ -7,7 +7,7 @@ import { ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex, useRestaurantDetail } from '../lib/content';
 import { toSearchParams, DEFAULT_STATE } from '../lib/filters';
 import { cuisineLabel } from '../lib/labels';
-import { priceText, RATING_HINT, RATING_LABELS } from '../lib/format';
+import { priceText, RATING_HINT, RATING_LABELS, secondaryNames } from '../lib/format';
 import { placeImages } from '../lib/imagePlacement';
 import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
 import { browseHref, canGoBack, submitHref } from '../lib/router';
@@ -89,7 +89,9 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           <h1 className="text-3xl leading-tight font-black sm:text-4xl">{r.name}</h1>
           <RatingBadge rating={r.rating} size="lg" />
         </div>
-        {r.altNames.length > 0 && <p className="text-muted">{r.altNames.join(' / ')}</p>}
+        {secondaryNames(r).length > 0 && (
+          <p className="text-muted">{secondaryNames(r).join(' / ')}</p>
+        )}
 
         <dl className="grid gap-x-6 gap-y-2 rounded-2xl border border-line bg-white p-4 text-sm sm:grid-cols-2">
           {r.rating !== undefined && (

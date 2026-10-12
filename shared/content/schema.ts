@@ -41,10 +41,14 @@ const controlled = (ids: readonly string[], what: string) =>
 
 const unique = <T>(items: T[]) => new Set(items).size === items.length;
 
-export const restaurantInfoSchema = z.strictObject({
+export const restaurantInfoSchema = z
+  .strictObject({
   id: idSchema,
   status: z.enum(['draft', 'published'], { message: 'must be "draft" or "published"' }),
-  name: text,
+  /** Chinese and English names; at least one is required (see displayName). */
+  nameZh: text.optional(),
+  nameEn: text.optional(),
+  /** Other names (abbreviations, former names); searchable. */
   altNames: z.array(text).optional(),
   address: text.optional(),
   location: z
@@ -91,9 +95,18 @@ export const restaurantInfoSchema = z.strictObject({
     })
     .optional(),
   contributorIds: z.array(contributorIdSchema).refine(unique, 'must not repeat').optional(),
-});
+})
+  .refine((info) => info.nameZh !== undefined || info.nameEn !== undefined, {
+    message: 'give "nameZh" (Chinese name), "nameEn" (English name), or both',
+    path: ['nameZh'],
+  });
 
 export type RestaurantInfo = z.infer<typeof restaurantInfoSchema>;
+
+/** The name shown first: the Chinese name when there is one, otherwise the English name. */
+export function displayName(names: { nameZh?: string; nameEn?: string }): string {
+  return names.nameZh ?? names.nameEn ?? '';
+}
 
 const notAnEmail = text.refine((value) => !value.includes('@'), {
   message: 'display names are public; keep email addresses in private/contributors.json',

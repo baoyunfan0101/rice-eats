@@ -10,12 +10,12 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 
 ## Features
 
-- **List, grid, and map views** of the same restaurants, with shared search (by name), cuisine, scenario tag, rating, and price filters, and sorting by rating, name, or price.
+- **List, grid, and map views** of the same restaurants, with shared search (by Chinese, English, or other names), cuisine, scenario tag, rating, and price filters, and sorting by rating, name, or price.
 - **Shareable URLs**: the view, filters, and selected restaurant are kept in the address bar, and every restaurant has its own link (`/rice-eats/r/<id>/`).
 - **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
 - **Static**: no backend, database, accounts, or paid services. Hosted on GitHub Pages.
-- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page, which passes the restaurant's id and name along.
+- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page, which passes the restaurant's id and names along. Contributors can list dishes with a verdict and that dish's own photos.
 - **Content workflow**: contributors send ordinary text and photos; an Agent Skill turns them into validated drafts, and nothing is published without maintainer review.
 
 ## Technology

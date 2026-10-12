@@ -4,12 +4,15 @@
 
 import type { RestaurantSummary } from '../../shared/content/model';
 
-type Place = Pick<RestaurantSummary, 'name' | 'address' | 'location' | 'links'>;
+type Place = Pick<RestaurantSummary, 'name' | 'nameEn' | 'address' | 'location' | 'links'>;
+
+// Map apps index businesses mostly under their English names.
+const searchName = (r: Place) => r.nameEn ?? r.name;
 
 export function googleMapsUrl(r: Place): string | undefined {
   if (r.links.googleMaps) return r.links.googleMaps;
   const query = r.address
-    ? `${r.name}, ${r.address}`
+    ? `${searchName(r)}, ${r.address}`
     : r.location
       ? `${r.location.lat},${r.location.lng}`
       : undefined;
@@ -21,7 +24,7 @@ export function googleMapsUrl(r: Place): string | undefined {
 export function appleMapsUrl(r: Place): string | undefined {
   if (r.links.appleMaps) return r.links.appleMaps;
   if (!r.location && !r.address) return undefined;
-  const params = new URLSearchParams({ q: r.name });
+  const params = new URLSearchParams({ q: searchName(r) });
   if (r.location) params.set('ll', `${r.location.lat},${r.location.lng}`);
   else params.set('address', r.address!);
   return `https://maps.apple.com/?${params.toString()}`;

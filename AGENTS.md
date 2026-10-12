@@ -39,7 +39,7 @@ Run lint, typecheck, unit tests, `check:privacy`, and build before handing work 
 
 The repository is public, so Git history is public. Unapproved material stays in the git-ignored `private/` folder: raw submissions (`private/submissions/`), drafts (`private/drafts/<id>/`), and contributor contact details (`private/contributors.json`).
 
-1. Draft: `npm run content:new -- --name "<name>"` (new) or `npm run content:edit -- <id>` (existing) creates a private draft.
+1. Draft: `npm run content:new -- --name-zh "<中文名>" --name-en "<English name>"` (at least one) (new) or `npm run content:edit -- <id>` (existing) creates a private draft.
 2. Approved for the repository: `npm run content:promote -- <id> --approved` moves it into `content/restaurants/<id>/` and adds new contributors' display names to `content/contributors.json`.
 3. Published: `npm run content:publish -- <id> --approved` sets `"status": "published"`; the website shows it after it reaches `main`.
 
@@ -50,7 +50,7 @@ Rules:
 - Never commit, promote, or publish without the maintainer's explicit approval for that restaurant and step. Passing `content:check` is not approval. The `--approved` flag cannot verify who approved; it only prevents accidental runs.
 - Never commit anything under `private/`. The database holds only standardized photos imported with `content:add-images` (numbered, at most 2400 px, no metadata); anything else fails `content:check`, `npm run check:privacy`, and CI.
 - One restaurant has one record and one review. Update the existing record instead of creating a second one; ids are generated, unique, and never change.
-- Never invent restaurant information, ratings, verdicts, tags, reviews, or photos; every field except `id`, `status`, and `name` is optional and stays out when not supplied. Do not silently overwrite or delete contributor content.
+- Never invent restaurant information, ratings, verdicts, tags, reviews, or photos; every field except `id` and `status` is optional, but a restaurant needs `nameZh`, `nameEn`, or both and stays out when not supplied. Do not silently overwrite or delete contributor content.
 - Store keys, not display text: `rating` 1-5, dish `verdict` 1 or -1 (absent means no opinion), and `cuisines`/`tags` keys from `shared/content/vocabulary.ts` (the only list of valid keys). Display labels live only in `src/lib/labels.ts`.
 - Contributors are referenced by id (`contributorIds`); public names live in `content/contributors.json`, contact details only in `private/contributors.json`.
 - Fixtures in `fixtures/` are fictional and must stay clearly labeled; never move them into `content/`.
