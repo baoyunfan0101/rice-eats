@@ -15,12 +15,16 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import path from 'node:path';
 import { z } from 'zod';
 import {
+  dishQuestion,
   HIDDEN_FIELDS,
   TALLY_CONSENT_OPTION,
+  TALLY_DISH_GROUPS,
+  TALLY_MAX_DISH_PHOTOS,
+  TALLY_MAX_GENERAL_PHOTOS,
   TALLY_MAX_PHOTO_BYTES,
-  TALLY_MAX_PHOTOS,
   TALLY_QUESTIONS,
   ratingFromAnswer,
+  verdictFromAnswer,
 } from '../../shared/submission.ts';
 import type { Rating } from '../../shared/content/vocabulary.ts';
 import { IntakeError } from './intake.ts';
@@ -36,11 +40,27 @@ export const submissionSchema = z
     source: z.string().optional(),
     /** From the hidden field: a claim to verify, not an instruction. */
     restaurantId: z.string().optional(),
-    restaurantName: z.string().optional(),
+    restaurantNameZh: z.string().optional(),
+    restaurantNameEn: z.string().optional(),
     review: z.string().optional(),
     /** The answer as submitted; the stored rating is derived with ratingFromAnswer. */
     ratingAnswer: z.string().optional(),
+    /** General photos (not tied to a dish). */
     photoUrls: z.array(z.string()).default([]),
+    /** Dish groups in form order; each dish's photos show that dish. */
+    dishes: z
+      .array(
+        z
+          .object({
+            name: z.string().optional(),
+            /** The answer as submitted; mapped with verdictFromAnswer. */
+            verdictAnswer: z.string().optional(),
+            comment: z.string().optional(),
+            photoUrls: z.array(z.string()).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
     displayName: z.string().optional(),
     /** Private: never copied into content/ or the website. */
     email: z.string().optional(),
@@ -112,17 +132,26 @@ export function submissionsFromCsv(text: string): Submission[] {
   }
   const first = (names: readonly string[]) => columns(names)[0];
   const picked = {
-    restaurantName: first(TALLY_QUESTIONS.restaurantName),
+    nameZh: first(TALLY_QUESTIONS.restaurantNameZh),
+    nameEn: first(TALLY_QUESTIONS.restaurantNameEn),
     review: first(TALLY_QUESTIONS.review),
     photos: columns(TALLY_QUESTIONS.photos),
     rating: first(TALLY_QUESTIONS.rating),
     displayName: first(TALLY_QUESTIONS.displayName),
     email: first(TALLY_QUESTIONS.email),
     restaurantId: exact(HIDDEN_FIELDS.restaurantId),
-    hiddenName: exact(HIDDEN_FIELDS.restaurantName),
+    hiddenNameZh: exact(HIDDEN_FIELDS.restaurantNameZh),
+    hiddenNameEn: exact(HIDDEN_FIELDS.restaurantNameEn),
     source: exact(HIDDEN_FIELDS.source),
     submittedAt: exact('Submitted at'),
   };
+
+  const dishColumns = Array.from({ length: TALLY_DISH_GROUPS }, (_, g) => ({
+    name: first([dishQuestion(g + 1, 'name')]),
+    verdict: first([dishQuestion(g + 1, 'verdict')]),
+    comment: first([dishQuestion(g + 1, 'comment')]),
+    photos: columns([dishQuestion(g + 1, 'photos')]),
+  }));
 
   return rows.map((row, i) => {
     const value = (column: number | undefined) =>
@@ -136,16 +165,28 @@ export function submissionsFromCsv(text: string): Submission[] {
       const v = normalizeHeader(row[c] ?? '');
       return YES.has(v) || v.startsWith(agreed) || v.startsWith('i agree');
     });
-    const urls = picked.photos.flatMap((c) => (row[c] ?? '').match(/https?:\/\/[^\s,]+/g) ?? []);
+    const linksIn = (cols: number[]) => [
+      ...new Set(cols.flatMap((c) => (row[c] ?? '').match(/https?:\/\/[^\s,]+/g) ?? [])),
+    ];
+    const dishes = dishColumns
+      .map((d) => ({
+        name: value(d.name),
+        verdictAnswer: value(d.verdict),
+        comment: value(d.comment),
+        photoUrls: linksIn(d.photos),
+      }))
+      .filter((d) => d.name || d.verdictAnswer || d.comment || d.photoUrls.length > 0);
     return submissionSchema.parse({
       submissionId,
       submittedAt: value(picked.submittedAt),
       source: value(picked.source),
       restaurantId: value(picked.restaurantId),
-      restaurantName: value(picked.restaurantName) ?? value(picked.hiddenName),
+      restaurantNameZh: value(picked.nameZh) ?? value(picked.hiddenNameZh),
+      restaurantNameEn: value(picked.nameEn) ?? value(picked.hiddenNameEn),
       review: value(picked.review),
       ratingAnswer: value(picked.rating),
-      photoUrls: [...new Set(urls)],
+      photoUrls: linksIn(picked.photos),
+      dishes,
       displayName: value(picked.displayName),
       email: value(picked.email),
       consent,
@@ -180,8 +221,10 @@ export async function readSubmissions(file: string): Promise<Submission[]> {
 
 export interface KnownRestaurant {
   id: string;
+  /** Display name (Chinese when there is one). */
   name: string;
-  altNames: string[];
+  /** Chinese, English, and other names, for matching. */
+  names: string[];
   address?: string;
   where: 'content' | 'draft';
 }
@@ -200,12 +243,21 @@ export async function loadKnownRestaurants(
       const file = path.join(dir, folder, INFO_FILE);
       if (!existsSync(file)) continue;
       try {
-        const info = JSON.parse(await readFile(file, 'utf8')) as Partial<KnownRestaurant>;
-        if (typeof info.id !== 'string' || typeof info.name !== 'string') continue;
+        const info = JSON.parse(await readFile(file, 'utf8')) as {
+          id?: unknown;
+          nameZh?: unknown;
+          nameEn?: unknown;
+          altNames?: unknown;
+          address?: unknown;
+        };
+        const names = [info.nameZh, info.nameEn, ...(Array.isArray(info.altNames) ? info.altNames : [])].filter(
+          (n): n is string => typeof n === 'string' && n.trim() !== '',
+        );
+        if (typeof info.id !== 'string' || names.length === 0) continue;
         known.push({
           id: info.id,
-          name: info.name,
-          altNames: Array.isArray(info.altNames) ? info.altNames : [],
+          name: names[0]!,
+          names,
           ...(typeof info.address === 'string' ? { address: info.address } : {}),
           where,
         });
@@ -220,8 +272,12 @@ export async function loadKnownRestaurants(
 const normalizeName = (text: string) =>
   text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
 
-const nameMatches = (restaurant: KnownRestaurant, name: string) =>
-  [restaurant.name, ...restaurant.altNames].some((n) => normalizeName(n) === normalizeName(name));
+const nameMatches = (restaurant: KnownRestaurant, names: string[]) =>
+  restaurant.names.some((n) => names.some((name) => normalizeName(n) === normalizeName(name)));
+
+/** The restaurant names a submission gives (Chinese and/or English). */
+export const submittedNames = (s: Submission) =>
+  [s.restaurantNameZh, s.restaurantNameEn].map((n) => n?.trim()).filter((n): n is string => Boolean(n));
 
 export type Identity =
   /** The id exists and the submitted name (if any) is one of its names. */
@@ -242,18 +298,18 @@ export type Identity =
  * for the maintainer; a hidden-field id is never trusted on its own.
  */
 export function resolveIdentity(submission: Submission, known: KnownRestaurant[]): Identity {
-  const name = submission.restaurantName?.trim();
-  const byName = name ? known.filter((r) => nameMatches(r, name)) : [];
+  const names = submittedNames(submission);
+  const byName = names.length > 0 ? known.filter((r) => nameMatches(r, names)) : [];
   const id = submission.restaurantId?.trim();
   if (id) {
     const restaurant = known.find((r) => r.id === id);
     if (!restaurant) return { kind: 'unknown-id', id, candidates: byName };
-    if (name && !nameMatches(restaurant, name)) {
-      return { kind: 'conflict', restaurant, submittedName: name, candidates: byName };
+    if (names.length > 0 && !nameMatches(restaurant, names)) {
+      return { kind: 'conflict', restaurant, submittedName: names.join(' / '), candidates: byName };
     }
     return { kind: 'existing', restaurant };
   }
-  if (!name) return { kind: 'unidentified' };
+  if (names.length === 0) return { kind: 'unidentified' };
   return byName.length > 0 ? { kind: 'candidates', candidates: byName } : { kind: 'new' };
 }
 
@@ -285,6 +341,8 @@ const photoStateSchema = z.array(
   z
     .object({
       slot: z.number().int().min(1),
+      /** Dish group (1-based) the photo belongs to; absent for general photos. */
+      dish: z.number().int().min(1).optional(),
       status: z.enum(PHOTO_STATUSES),
       file: z
         .string()
@@ -299,6 +357,30 @@ const photoStateSchema = z.array(
     .strict(),
 );
 export type PhotoState = z.infer<typeof photoStateSchema>[number];
+
+export interface PhotoLink {
+  url: string;
+  dish?: number;
+  /** Why the link is never fetched (beyond the form's limits). */
+  excluded?: string;
+}
+
+/**
+ * Every photo link of a submission in slot order: the general photos, then
+ * each dish group's photos. Limits mirror the form (10 general, 3 per dish).
+ */
+export function photoLinks(submission: Submission): PhotoLink[] {
+  const limited = (urls: string[], max: number, dish?: number) =>
+    urls.map((url, i) => ({
+      url,
+      ...(dish ? { dish } : {}),
+      ...(i >= max ? { excluded: `more than ${max} photos${dish ? ` for dish ${dish}` : ''}` } : {}),
+    }));
+  return [
+    ...limited(submission.photoUrls, TALLY_MAX_GENERAL_PHOTOS),
+    ...submission.dishes.flatMap((d, i) => limited(d.photoUrls, TALLY_MAX_DISH_PHOTOS, i + 1)),
+  ];
+}
 
 const EXTENSIONS: Record<string, string> = { jpeg: '.jpg', png: '.png', webp: '.webp', heif: '.heic' };
 const slotStem = (slot: number) => `photo-${String(slot).padStart(2, '0')}`;
@@ -335,10 +417,11 @@ export async function loadPhotoState(dir: string, submission: Submission): Promi
   if (existsSync(file)) {
     state = photoStateSchema.parse(JSON.parse(await readFile(file, 'utf8')));
   } else {
-    state = submission.photoUrls.map((_, i) => ({
+    state = photoLinks(submission).map((link, i) => ({
       slot: i + 1,
-      status: i < TALLY_MAX_PHOTOS ? 'pending' : 'excluded',
-      ...(i < TALLY_MAX_PHOTOS ? {} : { error: `more than ${TALLY_MAX_PHOTOS} photos` }),
+      ...(link.dish ? { dish: link.dish } : {}),
+      status: link.excluded ? 'excluded' : 'pending',
+      ...(link.excluded ? { error: link.excluded } : {}),
       attempts: 0,
     }));
   }
@@ -394,7 +477,7 @@ export async function fetchMissingPhotos(
 ): Promise<PhotoState[]> {
   for (const photo of state) {
     if (!UNRESOLVED.includes(photo.status)) continue;
-    const url = submission.photoUrls[photo.slot - 1];
+    const url = photoLinks(submission)[photo.slot - 1]?.url;
     const temp = path.join(dir, `.download-${slotStem(photo.slot)}`);
     photo.attempts++;
     photo.updatedAt = now();
@@ -447,7 +530,7 @@ export async function addManualPhoto(
     if (photo.sha256 === result.hash) return photo;
     throw new IntakeError(`photo ${slot} is already stored as ${photo.file}; not replacing it`);
   }
-  if (photo.status === 'excluded') throw new IntakeError(`photo ${slot} is beyond the ${TALLY_MAX_PHOTOS}-photo limit`);
+  if (photo.status === 'excluded') throw new IntakeError(`photo ${slot} is beyond the form's photo limit`);
   const name = `${slotStem(slot)}${result.ext}`;
   await writeFile(path.join(dir, name), result.bytes, { flag: 'wx' });
   Object.assign(photo, { status: 'recovered', file: name, sha256: result.hash, updatedAt: now() });
@@ -486,14 +569,28 @@ export interface Readiness {
 export function readiness(submission: Submission, state: PhotoState[]): Readiness {
   const blockers: string[] = [];
   const notes: string[] = [];
-  const hasText = Boolean(submission.review?.trim());
+  const hasText =
+    Boolean(submission.review?.trim()) ||
+    submission.dishes.some((d) => d.name?.trim() || d.comment?.trim());
+  const links = photoLinks(submission).length;
   const usable = state.filter((p) => USABLE.includes(p.status)).length;
   const unresolved = state.filter((p) => UNRESOLVED.includes(p.status)).map((p) => p.slot);
   if (!submission.consent) {
     blockers.push('no publication consent: do not prepare or publish anything; ask the contributor or reject');
   }
-  if (!hasText && submission.photoUrls.length === 0) blockers.push('neither review text nor photos were submitted');
-  if (!hasText && submission.photoUrls.length > 0 && usable === 0) {
+  if (submittedNames(submission).length === 0 && !submission.restaurantId) {
+    notes.push('no restaurant name (Chinese or English): ask the contributor which restaurant this is');
+  }
+  for (const [i, dish] of submission.dishes.entries()) {
+    if (!dish.name?.trim()) {
+      notes.push(`dish ${i + 1} has no name: its verdict, comment, and photos cannot be attached to a dish`);
+    }
+    if (dish.verdictAnswer && !['推荐', '避雷', '不评价'].includes(dish.verdictAnswer.trim())) {
+      notes.push(`dish ${i + 1} verdict "${dish.verdictAnswer}" is not 推荐, 避雷, or 不评价; leave it out`);
+    }
+  }
+  if (!hasText && links === 0) blockers.push('neither review text, dishes, nor photos were submitted');
+  if (!hasText && links > 0 && usable === 0) {
     blockers.push('photo-only submission without any retrieved photo: retry, add the photos by hand, or reject');
   }
   if (unresolved.length > 0) {
@@ -722,10 +819,24 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   lines.push(`  saved:      ${rel(result.dir!)}/ (private)`);
   lines.push(`  source:     ${s.source ?? '(unknown)'}`);
   lines.push(`  restaurant: ${describeIdentity(result.identity, s)}`);
-  const kind = [s.review?.trim() && 'review text', s.photoUrls.length && `${s.photoUrls.length} photo(s)`]
+  const kind = [
+    s.review?.trim() && 'review text',
+    s.dishes.length && `${s.dishes.length} dish(es)`,
+    s.photoUrls.length && `${s.photoUrls.length} general photo(s)`,
+  ]
     .filter(Boolean)
     .join(' + ');
   lines.push(`  content:    ${kind || 'nothing'}`);
+  for (const [i, dish] of s.dishes.entries()) {
+    const verdict = verdictFromAnswer(dish.verdictAnswer);
+    const photos = result.photos.filter((p) => p.dish === i + 1).map((p) => p.slot);
+    lines.push(
+      `    dish ${i + 1}  ${dish.name?.trim() ? `"${dish.name.trim()}"` : '(no name)'}; ` +
+        `verdict ${verdict === 1 ? '1 (推荐)' : verdict === -1 ? '-1 (避雷)' : 'none'}; ` +
+        `${dish.comment?.trim() ? 'comment' : 'no comment'}; ` +
+        `${photos.length ? `photo ${photos.join(', ')}` : 'no photo'}`,
+    );
+  }
   lines.push(`  rating:     ${result.rating ?? 'none'}`);
   lines.push(
     `  credit:     ${s.displayName ? `display name "${s.displayName}"` : 'no display name'}; ` +
@@ -736,7 +847,8 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   for (const p of result.photos) {
     const detail = p.file ? rel(path.join(result.dir!, p.file)) : (p.error ?? '');
     const tries = p.attempts > 0 ? ` (${p.attempts} attempt${p.attempts > 1 ? 's' : ''})` : '';
-    lines.push(`    ${String(p.slot).padStart(2)}  ${p.status.padEnd(10)} ${detail}${tries}`);
+    const owner = p.dish ? ` [dish ${p.dish}]` : '';
+    lines.push(`    ${String(p.slot).padStart(2)}  ${p.status.padEnd(10)} ${detail}${tries}${owner}`);
   }
   for (const blocker of result.blockers) lines.push(`  BLOCKED     ${blocker}`);
   for (const note of result.notes) lines.push(`  note        ${note}`);
@@ -766,9 +878,9 @@ function describeIdentity(identity: Identity, s: Submission): string {
     case 'unknown-id':
       return `UNKNOWN id "${identity.id}" (not in the database)${others(identity.candidates)}; ask the maintainer`;
     case 'candidates':
-      return `"${s.restaurantName}" without an id${others(identity.candidates)}; compare addresses before deciding`;
+      return `"${submittedNames(s).join(' / ')}" without an id${others(identity.candidates)}; compare addresses before deciding`;
     case 'new':
-      return `"${s.restaurantName}": not in the database; a new draft may be needed`;
+      return `"${submittedNames(s).join(' / ')}": not in the database; a new draft may be needed`;
     case 'unidentified':
       return 'no restaurant id or name; ask the contributor or the maintainer';
   }

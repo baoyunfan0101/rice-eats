@@ -5,6 +5,7 @@ import {
   ratingFromAnswer,
   TALLY_RATING_OPTIONS,
   tallyUrls,
+  verdictFromAnswer,
 } from '../../shared/submission';
 import { RATING_LABELS } from './labels';
 
@@ -38,14 +39,16 @@ describe('Tally links', () => {
     const urls = tallyUrls('wMq8xY', {
       source: 'restaurant-page',
       restaurantId: 'r-abc234',
-      restaurantName: 'Pho & Co #1 越南粉',
+      restaurantNameZh: '河粉 & 越南粉 #1',
+      restaurantNameEn: 'Pho & Co #1',
     });
     const direct = new URL(urls.direct);
     expect(direct.origin + direct.pathname).toBe('https://tally.so/r/wMq8xY');
-    expect(urls.direct).toContain('restaurant_name=Pho+%26+Co+%231');
+    expect(urls.direct).toContain('restaurant_name_en=Pho+%26+Co+%231');
     expect(Object.fromEntries(direct.searchParams)).toEqual({
       restaurant_id: 'r-abc234',
-      restaurant_name: 'Pho & Co #1 越南粉',
+      restaurant_name_zh: '河粉 & 越南粉 #1',
+      restaurant_name_en: 'Pho & Co #1',
       source: 'restaurant-page',
     });
     const embed = new URL(urls.embed);
@@ -58,6 +61,19 @@ describe('Tally links', () => {
     expect(tallyUrls('wMq8xY', { source: 'site' }).direct).toBe(
       'https://tally.so/r/wMq8xY?source=site',
     );
+  });
+});
+
+describe('dish verdict answers', () => {
+  it.each([
+    ['推荐', 1],
+    [' 避雷 ', -1],
+    ['不评价', undefined],
+    ['', undefined],
+    [undefined, undefined],
+    ['还行', undefined],
+  ])('maps %j to %j', (answer, verdict) => {
+    expect(verdictFromAnswer(answer)).toBe(verdict);
   });
 });
 

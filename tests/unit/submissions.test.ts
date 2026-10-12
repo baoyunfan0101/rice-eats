@@ -24,18 +24,92 @@ import { tempDir, validInfo, writeRestaurant } from './helpers.ts';
 
 // Synthetic Tally CSV export: the columns Tally writes (Submission ID,
 // Submitted at, question titles, hidden fields). All data is fictional.
-const HEADER =
-  'Submission ID,Respondent ID,Submitted at,餐厅名称,你的点评,照片,总体评级,署名,联系邮箱,发布授权,restaurant_id,restaurant_name,source';
+const COLUMNS = [
+  'Submission ID',
+  'Respondent ID',
+  'Submitted at',
+  '餐厅中文名',
+  '餐厅英文名',
+  '你的点评',
+  '照片',
+  '菜品1 名称',
+  '菜品1 评价',
+  '菜品1 照片',
+  '菜品1 点评',
+  '菜品2 名称',
+  '菜品2 评价',
+  '菜品2 照片',
+  '菜品2 点评',
+  '总体评级',
+  '署名',
+  '联系邮箱',
+  '发布授权',
+  'restaurant_id',
+  'restaurant_name_zh',
+  'restaurant_name_en',
+  'source',
+];
 const PHOTO = 'https://storage.tally.so/private/photo-a.jpg?id=1&accessToken=secret';
 const PHOTO_B = 'https://storage.tally.so/private/photo-b.jpg?accessToken=secret';
-const csv = (...rows: string[]) => [HEADER, ...rows].join('\r\n');
+const PHOTO_C = 'https://storage.tally.so/private/photo-c.jpg?accessToken=secret';
+const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+/** One CSV row: the given columns, everything else empty. */
+const row = (values: Record<string, string>) =>
+  COLUMNS.map((c) => quote(values[c] ?? '')).join(',');
+const csv = (...rows: string[]) => [COLUMNS.join(','), ...rows].join('\r\n');
+const CONSENT = '我同意：我有权提交这些文字和照片，并授权 Rice吃啥 审核。';
 
 const ROWS = {
-  textOnly:
-    'sub1,resp1,2026-10-01 12:00:00,示例面馆,"汤很浓，面有点软。\n下次还会来",,,小明,ming@example.com,我同意,,,site',
-  photoOnly: `sub2,resp2,2026-10-01 13:00:00,示例面馆,,${PHOTO},,,,我同意,,,site`,
-  existing: `sub3,resp3,2026-10-02 09:00:00,测试餐厅,"推荐牛肉面",${PHOTO},顶级,,,我同意,r-abc234,测试餐厅,restaurant-page`,
-  noConsent: 'sub4,resp4,2026-10-02 10:00:00,示例面馆,好吃,,夯,,,,,,site',
+  textOnly: row({
+    'Submission ID': 'sub1',
+    'Submitted at': '2026-10-01 12:00:00',
+    餐厅中文名: '示例面馆',
+    你的点评: '汤很浓，面有点软。\n下次还会来',
+    署名: '小明',
+    联系邮箱: 'ming@example.com',
+    发布授权: CONSENT,
+    source: 'site',
+  }),
+  photoOnly: row({
+    'Submission ID': 'sub2',
+    餐厅英文名: 'Sample Noodles',
+    照片: PHOTO,
+    发布授权: CONSENT,
+    source: 'site',
+  }),
+  existing: row({
+    'Submission ID': 'sub3',
+    餐厅中文名: '测试餐厅',
+    餐厅英文名: 'Test Place',
+    你的点评: '推荐牛肉面',
+    照片: PHOTO,
+    总体评级: '顶级',
+    发布授权: CONSENT,
+    restaurant_id: 'r-abc234',
+    restaurant_name_zh: '测试餐厅',
+    restaurant_name_en: 'Test Place',
+    source: 'restaurant-page',
+  }),
+  noConsent: row({
+    'Submission ID': 'sub4',
+    餐厅中文名: '示例面馆',
+    你的点评: '好吃',
+    总体评级: '夯',
+    source: 'site',
+  }),
+  dishes: row({
+    'Submission ID': 'sub5',
+    餐厅中文名: '示例面馆',
+    照片: PHOTO_C,
+    '菜品1 名称': '牛肉面',
+    '菜品1 评价': '推荐',
+    '菜品1 照片': `${PHOTO}, ${PHOTO_B}`,
+    '菜品1 点评': '汤头浓',
+    '菜品2 名称': '煎饺',
+    '菜品2 评价': '避雷',
+    发布授权: CONSENT,
+    source: 'site',
+  }),
 };
 
 const img = await sharp({ create: { width: 40, height: 30, channels: 3, background: '#c86' } })
@@ -73,10 +147,10 @@ async function setup() {
   await writeRestaurant(
     restaurantsDir,
     'r-abc234',
-    validInfo('r-abc234', { name: '测试餐厅', altNames: ['Test Place'], address: '1 Main St' }),
+    validInfo('r-abc234', { nameZh: '测试餐厅', nameEn: 'Test Place', address: '1 Main St' }),
     { 'review.md': review },
   );
-  await writeRestaurant(restaurantsDir, 'r-def567', validInfo('r-def567', { name: '另一家店' }));
+  await writeRestaurant(restaurantsDir, 'r-def567', validInfo('r-def567', { nameZh: '另一家店' }));
   const snapshot = async () => {
     const files = (await readdir(restaurantsDir, { recursive: true })).sort();
     return Promise.all(
@@ -116,8 +190,9 @@ async function setup() {
 
 const sub = (extra: Partial<Submission>): Submission => ({
   submissionId: 's1',
-  restaurantName: '示例面馆',
+  restaurantNameZh: '示例面馆',
   photoUrls: [],
+  dishes: [],
   consent: true,
   ...extra,
 });
@@ -137,7 +212,7 @@ describe('reading Tally exports', () => {
     );
     expect(text).toMatchObject({
       submissionId: 'sub1',
-      restaurantName: '示例面馆',
+      restaurantNameZh: '示例面馆',
       review: '汤很浓，面有点软。\n下次还会来',
       photoUrls: [],
       displayName: '小明',
@@ -146,13 +221,30 @@ describe('reading Tally exports', () => {
       source: 'site',
     });
     expect(text!.ratingAnswer).toBeUndefined();
-    expect(photo).toMatchObject({ review: undefined, photoUrls: [PHOTO] });
+    expect(text!.restaurantNameEn).toBeUndefined();
+    expect(photo).toMatchObject({
+      restaurantNameEn: 'Sample Noodles',
+      review: undefined,
+      photoUrls: [PHOTO],
+      dishes: [],
+    });
     expect(existing).toMatchObject({
       restaurantId: 'r-abc234',
+      restaurantNameZh: '测试餐厅',
+      restaurantNameEn: 'Test Place',
       ratingAnswer: '顶级',
       source: 'restaurant-page',
     });
     expect(noConsent!.consent).toBe(false);
+  });
+
+  it('reads dish groups with their own photos', () => {
+    const [s] = submissionsFromCsv(csv(ROWS.dishes));
+    expect(s!.photoUrls).toEqual([PHOTO_C]);
+    expect(s!.dishes).toEqual([
+      { name: '牛肉面', verdictAnswer: '推荐', comment: '汤头浓', photoUrls: [PHOTO, PHOTO_B] },
+      { name: '煎饺', verdictAnswer: '避雷', photoUrls: [] },
+    ]);
   });
 
   it('reports exports that do not match the form', () => {
@@ -165,11 +257,12 @@ describe('reading Tally exports', () => {
     const file = path.join(dir, 'email.json');
     await writeFile(
       file,
-      JSON.stringify({ submissionId: 'mail1', restaurantName: 'X', review: 'ok', consent: true }),
+      JSON.stringify({ submissionId: 'mail1', restaurantNameEn: 'X', review: 'ok', consent: true }),
     );
     expect((await readSubmissions(file))[0]).toMatchObject({
       submissionId: 'mail1',
       photoUrls: [],
+      dishes: [],
     });
     await writeFile(file, JSON.stringify({ submissionId: '../etc', consent: true }));
     await expect(readSubmissions(file)).rejects.toThrow(/submissionId/);
@@ -180,25 +273,32 @@ describe('reading Tally exports', () => {
 
 describe('restaurant identity', () => {
   const known = [
-    { id: 'r-abc234', name: '测试餐厅', altNames: ['Test Place'], where: 'content' as const },
-    { id: 'r-def567', name: '另一家店', altNames: [], where: 'content' as const },
+    {
+      id: 'r-abc234',
+      name: '测试餐厅',
+      names: ['测试餐厅', 'Test Place'],
+      where: 'content' as const,
+    },
+    { id: 'r-def567', name: '另一家店', names: ['另一家店'], where: 'content' as const },
   ];
   const sub = (extra: Partial<Submission>): Submission => ({
     submissionId: 's',
     photoUrls: [],
+    dishes: [],
     consent: true,
     ...extra,
   });
 
   it('accepts a valid id with a matching (or alternative) name', () => {
     expect(
-      resolveIdentity(sub({ restaurantId: 'r-abc234', restaurantName: 'test place' }), known).kind,
+      resolveIdentity(sub({ restaurantId: 'r-abc234', restaurantNameEn: 'test place' }), known)
+        .kind,
     ).toBe('existing');
   });
 
   it('flags an id that conflicts with the submitted name', () => {
     const identity = resolveIdentity(
-      sub({ restaurantId: 'r-abc234', restaurantName: '另一家店' }),
+      sub({ restaurantId: 'r-abc234', restaurantNameZh: '另一家店' }),
       known,
     );
     expect(identity).toMatchObject({ kind: 'conflict', candidates: [{ id: 'r-def567' }] });
@@ -206,16 +306,38 @@ describe('restaurant identity', () => {
 
   it('flags unknown ids instead of trusting them', () => {
     expect(
-      resolveIdentity(sub({ restaurantId: 'r-zzz999', restaurantName: '测试餐厅' }), known),
+      resolveIdentity(sub({ restaurantId: 'r-zzz999', restaurantNameZh: '测试餐厅' }), known),
     ).toMatchObject({
       kind: 'unknown-id',
       candidates: [{ id: 'r-abc234' }],
     });
   });
 
+  it('matches either name, and flags a pair that names two restaurants', () => {
+    expect(resolveIdentity(sub({ restaurantNameEn: 'Test Place' }), known)).toMatchObject({
+      kind: 'candidates',
+      candidates: [{ id: 'r-abc234' }],
+    });
+    expect(
+      resolveIdentity(
+        sub({
+          restaurantId: 'r-abc234',
+          restaurantNameZh: '新名字',
+          restaurantNameEn: 'Test Place',
+        }),
+        known,
+      ).kind,
+    ).toBe('existing');
+  });
+
   it('suggests existing restaurants by name and recognizes new ones', () => {
-    expect(resolveIdentity(sub({ restaurantName: ' 测试 餐厅 ' }), known).kind).toBe('candidates');
-    expect(resolveIdentity(sub({ restaurantName: '新开的店' }), known).kind).toBe('new');
+    expect(resolveIdentity(sub({ restaurantNameZh: ' 测试 餐厅 ' }), known).kind).toBe(
+      'candidates',
+    );
+    expect(
+      resolveIdentity(sub({ restaurantNameZh: '新开的店', restaurantNameEn: 'Brand New' }), known)
+        .kind,
+    ).toBe('new');
     expect(resolveIdentity(sub({}), known).kind).toBe('unidentified');
   });
 });
@@ -247,6 +369,34 @@ describe('importing submissions', () => {
     expect(text).toContain('existing r-abc234 "测试餐厅"');
   });
 
+  it('keeps dish photos attached to their dish', async () => {
+    const { run, root } = await setup();
+    const [report] = await run(submissionsFromCsv(csv(ROWS.dishes)));
+    expect(report!.blockers).toEqual([]);
+    expect(report!.photos.map((p) => [p.slot, p.dish, p.status, p.file])).toEqual([
+      [1, undefined, 'downloaded', 'photo-01.jpg'],
+      [2, 1, 'downloaded', 'photo-02.jpg'],
+      [3, 1, 'downloaded', 'photo-03.jpg'],
+    ]);
+    const text = formatReport(report!, (f) => path.relative(root, f));
+    expect(text).toContain('dish 1  "牛肉面"; verdict 1 (推荐); comment; photo 2, 3');
+    expect(text).toContain('dish 2  "煎饺"; verdict -1 (避雷); no comment; no photo');
+    expect(text).toMatch(/photo-02\.jpg \(1 attempt\) \[dish 1\]/);
+  });
+
+  it('accepts a dish-only submission and limits photos per dish', async () => {
+    const { run } = await setup();
+    const many = Array.from({ length: 4 }, (_, i) => `https://storage.tally.so/private/d${i}.jpg`);
+    const [report] = await run([sub({ dishes: [{ name: '凉皮', photoUrls: many }] })]);
+    expect(report!.blockers).toEqual([]);
+    expect(statuses(report!)).toEqual(['downloaded', 'downloaded', 'downloaded', 'excluded']);
+    expect(report!.photos[3]!.error).toMatch(/more than 3 photos for dish 1/);
+    const [unnamed] = await run([
+      sub({ submissionId: 's2', review: 'ok', dishes: [{ verdictAnswer: '推荐', photoUrls: [] }] }),
+    ]);
+    expect(unnamed!.notes.join()).toMatch(/dish 1 has no name/);
+  });
+
   it('notes missing optional rating and contact details without blocking', async () => {
     const { run } = await setup();
     const [report] = await run(submissionsFromCsv(csv(ROWS.photoOnly)));
@@ -262,7 +412,7 @@ describe('importing submissions', () => {
     const stored = JSON.parse(await readFile(path.join(dir('sub4'), 'submission.json'), 'utf8'));
     expect(stored.consent).toBe(false);
     const [empty] = await run([sub({ submissionId: 'empty' })]);
-    expect(empty!.blockers.join()).toMatch(/neither review text nor photos/);
+    expect(empty!.blockers.join()).toMatch(/neither review text, dishes, nor photos/);
   });
 
   it('skips a completed duplicate without network requests or new files', async () => {
@@ -301,7 +451,7 @@ describe('importing submissions', () => {
   it('reports conflicting ids without failing', async () => {
     const { run } = await setup();
     const [report] = await run([
-      sub({ restaurantId: 'r-abc234', restaurantName: '另一家店', review: 'x' }),
+      sub({ restaurantId: 'r-abc234', restaurantNameZh: '另一家店', review: 'x' }),
     ]);
     expect(report!.identity.kind).toBe('conflict');
   });

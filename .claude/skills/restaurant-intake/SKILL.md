@@ -35,7 +35,10 @@ so everything unapproved lives in the git-ignored `private/` folder:
 - **Never fabricate.** Do not invent experiences, opinions, ratings, verdicts,
   prices, dishes, dish names, tags, names, addresses, coordinates, or photo
   descriptions. Leave a field out when the submission does not support it, and
-  report it as missing. Every field except `id`, `status`, `name` is optional;
+  report it as missing. Every field except `id` and `status` is optional, but
+  a restaurant needs `nameZh` (Chinese name), `nameEn` (English name), or
+  both; record each only as the contributor or a reliable source gives it,
+  and never translate a name yourself;
   `contributorIds` is only needed to publish. Never fill fields to satisfy a
   layout.
 - **Keep uncertainty explicit.** Ambiguous or conflicting information ("near
@@ -103,6 +106,13 @@ one:
   matches), `CONFLICT` or `UNKNOWN id` (ask the maintainer; never trust the
   id alone), name `candidates` without an id (compare addresses), `new`, or
   unidentified;
+- **names**: the Chinese and/or English name the contributor typed; they go
+  into `nameZh` and `nameEn` as given;
+- **dishes**: each dish group's name, verdict (推荐 = `1`, 避雷 = `-1`,
+  不评价 or empty = no verdict), comment, and the photo numbers that belong
+  to it. Import general photos first, then each dish's photos, and set the
+  dish's `image` to its first imported photo; never move a photo to a
+  different dish;
 - **rating**: already mapped to 1-5 from the form's five options, or none;
   never infer dish verdicts from it;
 - **credit and consent**: the display name, whether a contact email exists
@@ -149,7 +159,7 @@ import each photo once.
 ```sh
 npm run content:check                         # lists every restaurant with its id and name
 npm run content:edit -- <id>                  # existing restaurant: copy to private/drafts/<id>/
-npm run content:new -- --name "<name>"        # new restaurant: prints the generated id
+npm run content:new -- --name-zh "<中文名>" --name-en "<English name>"   # new restaurant (one or both names); prints the id
 npm run content:contributor -- find "<name or email>"
 npm run content:contributor -- add --name "<display name>" --email "<email>"
 ```

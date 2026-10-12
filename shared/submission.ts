@@ -3,12 +3,13 @@
 // names the website fills in, and the answer values intake understands.
 // Everything here is public; the form URL is not a secret.
 
-import type { Rating } from './content/vocabulary';
+import type { Rating, Verdict } from './content/vocabulary';
 
 /** Hidden fields configured in the Tally form, filled in from the URL. */
 export const HIDDEN_FIELDS = {
   restaurantId: 'restaurant_id',
-  restaurantName: 'restaurant_name',
+  restaurantNameZh: 'restaurant_name_zh',
+  restaurantNameEn: 'restaurant_name_en',
   source: 'source',
 } as const;
 
@@ -19,7 +20,8 @@ export type SubmissionSource = (typeof SUBMISSION_SOURCES)[number];
 export interface SubmissionContext {
   source: SubmissionSource;
   restaurantId?: string;
-  restaurantName?: string;
+  restaurantNameZh?: string;
+  restaurantNameEn?: string;
 }
 
 /**
@@ -28,7 +30,8 @@ export interface SubmissionContext {
  * with the title or one of its English aliases), so keep them when editing the form.
  */
 export const TALLY_QUESTIONS = {
-  restaurantName: ['餐厅名称', 'restaurant name'],
+  restaurantNameZh: ['餐厅中文名', 'chinese name'],
+  restaurantNameEn: ['餐厅英文名', 'english name'],
   review: ['你的点评', 'review'],
   photos: ['照片', 'photos'],
   rating: ['总体评级', 'overall rating'],
@@ -37,11 +40,44 @@ export const TALLY_QUESTIONS = {
   consent: ['发布授权', 'publication consent'],
 } as const;
 
+/**
+ * Optional dish groups: "菜品1 名称", "菜品1 评价", "菜品1 照片", "菜品1 点评",
+ * up to TALLY_DISH_GROUPS. Each group's photos belong to that dish.
+ */
+export const TALLY_DISH_GROUPS = 5;
+export const TALLY_DISH_QUESTIONS = {
+  name: '名称',
+  verdict: '评价',
+  photos: '照片',
+  comment: '点评',
+} as const;
+export const dishQuestion = (group: number, part: keyof typeof TALLY_DISH_QUESTIONS) =>
+  `菜品${group} ${TALLY_DISH_QUESTIONS[part]}`;
+
+/** Options of a dish's "评价" question; 不评价 or no answer means no verdict. */
+export const TALLY_VERDICT_OPTIONS: Record<string, Verdict | undefined> = {
+  推荐: 1,
+  避雷: -1,
+  不评价: undefined,
+};
+
+/** Maps a dish verdict answer to the stored verdict; undefined unless clearly 推荐 or 避雷. */
+export function verdictFromAnswer(answer: string | undefined): Verdict | undefined {
+  const text = answer?.normalize('NFKC').trim();
+  return text ? TALLY_VERDICT_OPTIONS[text] : undefined;
+}
+
 /** The single option of the required consent question. */
 export const TALLY_CONSENT_OPTION = '我同意';
 
-/** Photo upload limits configured in the form (Tally's free plan allows 10 MB per file). */
-export const TALLY_MAX_PHOTOS = 10;
+/**
+ * Photo upload limits configured in the form (Tally's free plan allows 10 MB
+ * per file): 10 general photos plus 3 per dish group.
+ */
+export const TALLY_MAX_GENERAL_PHOTOS = 10;
+export const TALLY_MAX_DISH_PHOTOS = 3;
+export const TALLY_MAX_PHOTOS =
+  TALLY_MAX_GENERAL_PHOTOS + TALLY_DISH_GROUPS * TALLY_MAX_DISH_PHOTOS;
 export const TALLY_MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 /**
@@ -124,7 +160,10 @@ export interface TallyUrls {
 export function tallyUrls(formId: string, context: SubmissionContext): TallyUrls {
   const params = new URLSearchParams();
   if (context.restaurantId) params.set(HIDDEN_FIELDS.restaurantId, context.restaurantId);
-  if (context.restaurantName) params.set(HIDDEN_FIELDS.restaurantName, context.restaurantName);
+  if (context.restaurantNameZh)
+    params.set(HIDDEN_FIELDS.restaurantNameZh, context.restaurantNameZh);
+  if (context.restaurantNameEn)
+    params.set(HIDDEN_FIELDS.restaurantNameEn, context.restaurantNameEn);
   params.set(HIDDEN_FIELDS.source, context.source);
   const id = encodeURIComponent(formId);
   const embedParams = new URLSearchParams({

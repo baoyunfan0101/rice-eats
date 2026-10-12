@@ -46,12 +46,25 @@ function RestaurantSubmit({ formId, restaurantId }: { formId: string; restaurant
       ? index.data.restaurants.find((r) => r.id === restaurantId)
       : undefined;
   const context: SubmissionContext = restaurant
-    ? { source: 'restaurant-page', restaurantId: restaurant.id, restaurantName: restaurant.name }
+    ? {
+        source: 'restaurant-page',
+        restaurantId: restaurant.id,
+        restaurantNameZh: restaurant.nameZh,
+        restaurantNameEn: restaurant.nameEn,
+      }
     : { source: 'site' };
-  return <SubmitForm formId={formId} context={context} />;
+  return <SubmitForm formId={formId} context={context} name={restaurant?.name} />;
 }
 
-function SubmitForm({ formId, context }: { formId: string; context: SubmissionContext }) {
+function SubmitForm({
+  formId,
+  context,
+  name,
+}: {
+  formId: string;
+  context: SubmissionContext;
+  name?: string;
+}) {
   const urls = tallyUrls(formId, context);
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
@@ -61,17 +74,15 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
             href={restaurantHref(context.restaurantId)}
             className="inline-flex min-h-10 items-center gap-1 text-sm font-semibold text-muted hover:text-ink"
           >
-            ← {context.restaurantName}
+            ← {name}
           </Link>
         )}
         <h1 className="text-2xl leading-tight font-black sm:text-3xl">
-          {context.restaurantName
-            ? `为「${context.restaurantName}」投稿`
-            : '投稿：分享你的用餐体验'}
+          {name ? `为「${name}」投稿` : '投稿：分享你的用餐体验'}
         </h1>
         <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-muted">
           <li>
-            {context.restaurantName
+            {name
               ? '写几句点评、上传照片，或两者都有。'
               : '可以点评已收录的餐厅，也可以推荐还没收录的餐厅；写几句点评、上传照片，或两者都有。'}
           </li>

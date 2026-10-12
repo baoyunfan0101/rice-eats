@@ -33,51 +33,62 @@ access to them. Menu names may differ slightly in Tally's editor.
    account if needed). The notification emails go to the account's address.
 2. **Create a form**, e.g. "Rice吃啥 投稿", with these blocks in this order.
    Keep the question titles exactly as written (intake finds answers in the CSV
-   export by these titles):
+   export by these titles, defined in `shared/submission.ts`):
 
-   | Block                                  | Title / name      | Settings                                                                                 |
-   | -------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
-   | Hidden fields                          | `restaurant_id`   | Filled in by the website on restaurant pages.                                            |
-   |                                        | `restaurant_name` | Filled in by the website on restaurant pages.                                            |
-   |                                        | `source`          | `site` or `restaurant-page`.                                                             |
-   | Short answer                           | `餐厅名称`        | Required. Conditional logic: hide it when `restaurant_id` is not empty (see step 4).     |
-   | Long answer                            | `你的点评`        | Optional. Help text: "随便写，口味、环境、推荐或踩雷的菜都可以。"                        |
-   | File upload                            | `照片`            | Optional. Multiple files, at most 10, images only, at most 10 MB each.                   |
-   | Multiple choice                        | `总体评级`        | Optional, nothing preselected. Options exactly: `夯`, `顶级`, `人上人`, `NPC`, `拉完了`. |
-   | Short answer                           | `署名`            | Optional. Help text below.                                                               |
-   | Email                                  | `联系邮箱`        | Optional. Help text below.                                                               |
-   | Checkboxes                             | `发布授权`        | Required, one option `我同意`, not preselected. Consent text below.                      |
-   | Captcha (reCAPTCHA) or spam protection |                   | Turn on whichever native spam protection the form offers.                                |
+   | Block                 | Title / name           | Settings                                                                                      |
+   | --------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
+   | Hidden fields         | `restaurant_id`        | Filled in by the website on restaurant pages.                                                 |
+   |                       | `restaurant_name_zh`   | The restaurant's Chinese name, when it has one.                                               |
+   |                       | `restaurant_name_en`   | The restaurant's English name, when it has one.                                               |
+   |                       | `source`               | `site` or `restaurant-page`.                                                                  |
+   | Text                  |                        | Short intro: listed or new restaurants; review, dishes, photos (at least one); manual review. |
+   | Short answer          | `餐厅中文名`           | Optional; default answer `@restaurant_name_zh`.                                               |
+   | Short answer          | `餐厅英文名`           | Optional; default answer `@restaurant_name_en`.                                               |
+   | Long answer           | `你的点评`             | Optional. Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                           |
+   | File upload           | `照片`                 | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.  |
+   | Short answer          | `菜品1 名称`           | Optional.                                                                                     |
+   | Multiple choice       | `菜品1 评价`           | Optional, nothing preselected. Options exactly: `推荐`, `避雷`, `不评价`.                     |
+   | File upload           | `菜品1 照片`           | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                           |
+   | Short answer          | `菜品1 点评`           | Optional; one sentence about the dish.                                                        |
+   | (same four questions) | `菜品2 …` to `菜品5 …` | Same settings; each group is shown only when the previous dish has a name (step 4).           |
+   | Multiple choice       | `总体评级`             | Optional, nothing preselected. Options exactly: `夯`, `顶级`, `人上人`, `NPC`, `拉完了`.      |
+   | Short answer          | `署名`                 | Optional. Placeholder: "采用后会显示在网站上；可写「匿名」"                                   |
+   | Email                 | `联系邮箱`             | Optional. Placeholder: "只用于和你沟通，不会公开"                                             |
+   | Checkboxes            | `发布授权`             | Required, one unchecked option whose text starts with `我同意` (consent text below).          |
+   | Conditional logic     |                        | See step 4.                                                                                   |
+   | reCAPTCHA             |                        | Native spam protection.                                                                       |
+   | 'Thank you' page      |                        | Confirmation text (step 9).                                                                   |
 
-   On restaurant pages, add a text block above the questions that mentions the
-   `restaurant_name` hidden field (type `@` and pick it), e.g. "你正在为
-   @restaurant_name 投稿", and show it only when `restaurant_id` is not empty.
+   Consent option text (`发布授权`); intake treats an answer starting with
+   `我同意` as consent:
 
-   Help text for `署名`: "如果投稿被采用，这个名字会显示在网站上。留空则由编辑和你确认署名方式，也可以写「匿名」。"
+   > 我同意：我有权提交这些文字和照片（文字由我撰写，照片由我拍摄或已获授权），并授权 Rice吃啥
+   > 审核；审核通过后可按约定的署名在网站上复制和展示。我了解投稿不保证发布，内容可能为统一格式而编辑
+   > 但不会歪曲我的观点，联系方式不会公开显示。
 
-   Help text for `联系邮箱`: "只用于就投稿和你联系，不会公开显示。"
-
-   Consent text (`发布授权`, shown above the option):
-
-   > 我确认自己有权提交这些文字和照片（文字由我撰写，照片由我拍摄或已获授权），并授权
-   > Rice吃啥 审核；审核通过后，Rice吃啥 可以按约定的署名在网站上复制和展示这些内容。
-   > 我了解投稿不保证一定发布，内容可能为统一格式而编辑，但不会歪曲我的观点；联系方式不会公开显示。
+   In the form settings, set the language to Chinese (Simplified) so buttons
+   and messages are in Chinese.
 
 3. **Hidden fields.** The names must be exactly `restaurant_id`,
-   `restaurant_name`, and `source`; the website passes them as URL parameters
-   (`?restaurant_id=r-abc123&restaurant_name=...&source=restaurant-page`).
-   They are context, not proof: intake checks them against the database.
-4. **Conditional logic.**
-   - `restaurant_id` is empty -> show `餐厅名称` (hidden otherwise), so general
-     submissions must name the restaurant and restaurant pages do not ask again.
-   - Prevent empty submissions: when `你的点评` is empty **and** `照片` has no
-     file, require an answer to `你的点评` (Tally's "require answer" action),
-     or show a required warning question if that action is not available.
-     Intake also rejects empty submissions, so a gap here never publishes
-     anything.
-5. **Photos.** In the file upload block, allow multiple files, limit to 10
-   files and 10 MB per file (the free-plan maximum), and accept images. HEIC
-   from iPhones is fine: intake converts it.
+   `restaurant_name_zh`, `restaurant_name_en`, and `source`; the website
+   passes them as URL parameters
+   (`?restaurant_id=r-abc123&restaurant_name_zh=...&restaurant_name_en=...&source=restaurant-page`).
+   The name questions default to them, so visitors from a restaurant page see
+   the names filled in and can correct them. They are context, not proof:
+   intake checks them against the database.
+4. **Conditional logic** (Tally's conditional logic blocks):
+   - At least one name: when `餐厅中文名` **and** `餐厅英文名` are empty,
+     require `餐厅中文名`.
+   - Something to review: when `你的点评`, `照片`, and `菜品1 名称` are all
+     empty, require `你的点评`.
+   - Dish groups: show the `菜品2` questions only when `菜品1 名称` is not
+     empty (hide them by default), and the same for `菜品3` to `菜品5`.
+     Intake also reports or rejects submissions without a name or content, so a
+     gap here never publishes anything.
+5. **Photos.** In each file upload block, allow multiple files, limit the
+   count (10 general, 3 per dish), set 10 MB per file (the free-plan maximum),
+   and accept .jpg, .jpeg, .png, .heic, and .webp. HEIC from iPhones is fine:
+   intake converts it. Each dish's photos stay attached to that dish.
 6. **Consent.** The `发布授权` question is required with a single unchecked
    option. Never prefill it.
 7. **Spam protection.** Add the captcha block or enable the form's spam
@@ -129,10 +140,19 @@ whose id is not in `npm run content:submission -- list`; move its email from
      "submittedAt": "2026-10-12 18:00",
      "source": "restaurant-page",
      "restaurantId": "r-abc123",
-     "restaurantName": "Example Noodles",
+     "restaurantNameZh": "示例拉面",
+     "restaurantNameEn": "Example Noodles",
      "review": "…",
      "ratingAnswer": "顶级",
      "photoUrls": ["https://storage.tally.so/…"],
+     "dishes": [
+       {
+         "name": "豚骨拉面",
+         "verdictAnswer": "推荐",
+         "comment": "…",
+         "photoUrls": ["https://storage.tally.so/…"]
+       }
+     ],
      "displayName": "小明",
      "email": "…",
      "consent": true
@@ -149,7 +169,8 @@ whose id is not in `npm run content:submission -- list`; move its email from
    `private/submissions/tally-<submission id>/`, records the id in the private
    log `private/submissions/tally-log.json` (so it is never imported twice,
    even after the files are deleted), and reports the restaurant match,
-   rating, credit, consent, photo state, and problems. It creates no drafts
+   dishes (with their verdicts and photo numbers), rating, credit, consent,
+   photo state, and problems. It creates no drafts
    and changes nothing in `content/`. `--skip-photos` records the photos as
    pending without downloading them.
 
@@ -168,8 +189,9 @@ whose id is not in `npm run content:submission -- list`; move its email from
 
 ### Photos
 
-Each photo link of a submission has a number (its position in the
-submission) and is stored as `photo-<NN>.<ext>`; its state is kept in
+Each photo link of a submission has a number (general photos first, then
+each dish's photos in order) and is stored as `photo-<NN>.<ext>`; the report
+shows which dish a photo belongs to. Its state is kept in
 `photos.json` next to `submission.json`, and `content:submission -- list`
 shows each submission's photo intake as `none`, `complete`, or `incomplete`.
 
@@ -180,7 +202,7 @@ shows each submission's photo intake as `none`, `complete`, or `incomplete`.
 | `downloaded` | Fetched and verified.                                                |
 | `recovered`  | Added by hand and verified.                                          |
 | `waived`     | The maintainer decided to proceed without it.                        |
-| `excluded`   | Beyond the 10-photo limit; never fetched.                            |
+| `excluded`   | Beyond the form's limit (10 general, 3 per dish); never fetched.     |
 
 `pending` and `failed` photos make the intake incomplete. Stored photos are
 re-verified (present, a real image, unchanged) whenever a submission is
@@ -242,8 +264,9 @@ checked by hand once the form exists:
 3. Submit a photo-only test response.
 4. On a restaurant page, use "补充点评或照片" and submit a test response.
 5. In Tally, confirm the third response recorded `restaurant_id`,
-   `restaurant_name`, and `source=restaurant-page`, and that the first two
-   recorded `source=site`.
+   `restaurant_name_zh` / `restaurant_name_en`, and `source=restaurant-page`,
+   and that the first two recorded `source=site`. Include a dish with a photo
+   in one response and check that the import lists the photo under that dish.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
 7. Export the CSV, run `npm run content:submission -- import`, and confirm the
    photos were downloaded (`photos: complete`). If Tally serves them from a
