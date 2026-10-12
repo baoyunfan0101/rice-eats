@@ -12,7 +12,7 @@
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import type { ContentIndex, RestaurantDetail } from '../src/content/model.ts';
+import type { ContentIndex, RestaurantDetail } from '../shared/content/model.ts';
 import { BASE_PATH, GENERATED_DIR } from '../site.config.ts';
 import { DRAFTS_DIR, PRIVATE_CONTRIBUTORS, RESTAURANT_DIRS, ROOT } from './content/paths.ts';
 import { findSensitiveMetadata, sniffImageFormat } from './content/privacy.ts';

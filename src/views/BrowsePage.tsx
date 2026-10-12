@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { RATINGS, type ContentIndex } from '../content/model';
+import type { ContentIndex } from '../../shared/content/model';
+import { RATINGS } from '../../shared/content/vocabulary';
 import { Toolbar } from '../components/Toolbar';
 import { Button, ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex } from '../lib/content';

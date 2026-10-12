@@ -10,7 +10,7 @@ import {
   publicContributorsSchema,
   type PrivateContributors,
   type PublicContributor,
-} from './schema.ts';
+} from '../../shared/content/schema.ts';
 import { IntakeError } from './intake.ts';
 
 export interface ContributorFiles {

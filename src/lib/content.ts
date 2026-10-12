@@ -1,7 +1,7 @@
 // Loads generated content (public/generated) with a small in-memory cache.
 
 import { useEffect, useState } from 'react';
-import type { ContentIndex, RestaurantDetail } from '../content/model';
+import type { ContentIndex, RestaurantDetail } from '../../shared/content/model';
 
 const BASE = import.meta.env.BASE_URL;
 

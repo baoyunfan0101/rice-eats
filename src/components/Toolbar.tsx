@@ -1,5 +1,6 @@
-import { PRICE_BUCKETS, type Rating } from '../content/model';
-import { cuisineLabel, RATING_LABELS, tagLabel } from '../content/taxonomy';
+import type { Rating } from '../../shared/content/vocabulary';
+import { PRICE_BUCKETS } from '../lib/price';
+import { cuisineLabel, RATING_LABELS, tagLabel } from '../lib/labels';
 import {
   clearFilters,
   hasActiveFilters,

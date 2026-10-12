@@ -2,7 +2,7 @@
 // the restaurant data gives an explicit link (useful when a search would land
 // on the wrong business).
 
-import type { RestaurantSummary } from '../content/model';
+import type { RestaurantSummary } from '../../shared/content/model';
 
 type Place = Pick<RestaurantSummary, 'name' | 'address' | 'location' | 'links'>;
 

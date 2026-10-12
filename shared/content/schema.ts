@@ -2,11 +2,11 @@
 //   content/restaurants/<id>/info.json   restaurant metadata (restaurantInfoSchema)
 //   content/contributors.json            public contributor identities
 //   private/contributors.json            pending contributors and contact details (git-ignored)
-// See docs/content.md for the field reference.
+// See docs/content.md for the field reference. Part of the shared data
+// contract: imports nothing from src/ or scripts/.
 
 import { z } from 'zod';
-import type { Rating } from '../../src/content/model.ts';
-import { CUISINE_IDS, TAG_IDS } from '../../src/content/taxonomy.ts';
+import { CUISINE_IDS, TAG_IDS, VERDICTS, type Rating } from './vocabulary';
 
 const text = z.string().trim().min(1, 'must not be empty');
 
@@ -36,7 +36,7 @@ const httpUrl = z.url({ protocol: /^https?$/, message: 'must be an http(s) URL' 
 
 const controlled = (ids: readonly string[], what: string) =>
   z.string().refine((value) => ids.includes(value), {
-    message: `unknown ${what}; use one of ${ids.join(', ')}, or add it to src/content/taxonomy.ts`,
+    message: `unknown ${what}; use one of ${ids.join(', ')}, or add it to shared/content/vocabulary.ts`,
   });
 
 const unique = <T>(items: T[]) => new Set(items).size === items.length;
@@ -74,7 +74,7 @@ export const restaurantInfoSchema = z.strictObject({
       z.strictObject({
         name: text,
         verdict: z
-          .union([z.literal(1), z.literal(-1)], {
+          .literal(VERDICTS, {
             message: 'must be 1 (recommended) or -1 (not recommended); leave it out for no opinion',
           })
           .optional(),

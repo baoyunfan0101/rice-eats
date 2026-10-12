@@ -10,7 +10,7 @@ import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
 import { SKIP, visit } from 'unist-util-visit';
-import type { ImageAsset } from '../../src/content/model.ts';
+import type { ImageAsset } from '../../shared/content/model.ts';
 
 /** Collects the local image paths referenced by a Markdown document. */
 export function listMarkdownImages(markdown: string): { url: string; alt: string }[] {

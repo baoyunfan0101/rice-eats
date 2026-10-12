@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { RATINGS } from '../content/model';
+import { RATINGS } from '../../shared/content/vocabulary';
 import { RATING_HINT, RATING_LABELS } from '../lib/format';
-import { VERDICT_LABELS } from '../content/taxonomy';
+import { VERDICT_LABELS } from '../lib/labels';
 import { RatingBadge, Tags, VerdictBadge } from './Badges';
 
 const original = { ...RATING_LABELS };

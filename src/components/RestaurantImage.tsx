@@ -1,4 +1,4 @@
-import type { ImageAsset } from '../content/model';
+import type { ImageAsset } from '../../shared/content/model';
 
 interface Props {
   image?: ImageAsset;

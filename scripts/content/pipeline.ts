@@ -15,7 +15,7 @@ import {
   type ImageAsset,
   type RestaurantDetail,
   type RestaurantSummary,
-} from '../../src/content/model.ts';
+} from '../../shared/content/model.ts';
 import { canonicalImageProblems, copyRenditions, processImage, type ProcessedImage } from './images.ts';
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
 import { findSensitiveMetadata, PRIVACY_FIX } from './privacy.ts';
@@ -25,7 +25,7 @@ import {
   publicContributorsSchema,
   restaurantInfoSchema,
   type RestaurantInfo,
-} from './schema.ts';
+} from '../../shared/content/schema.ts';
 
 export const INFO_FILE = 'info.json';
 export const REVIEW_FILE = 'review.md';
@@ -433,13 +433,17 @@ async function renderRestaurant(
   const images: ImageAsset[] = [];
   for (const [i, ref] of restaurant.images.entries()) images.push(await asset(ref, altFor(ref, i)));
   const byRef = new Map(restaurant.images.map((ref, i) => [ref, images[i]!]));
+  const indexOf = (ref: string) => restaurant.images.indexOf(ref);
 
+  // Placement is recorded as indexes into `images`, so the website can decide
+  // where each photo appears without inspecting HTML.
   const dishes: Dish[] = (info.dishes ?? []).map((dish) => ({
     name: dish.name,
     verdict: dish.verdict,
     comment: dish.comment,
-    image: dish.image ? { ...byRef.get(dish.image)!, alt: dish.name } : undefined,
+    imageIndex: dish.image ? indexOf(dish.image) : undefined,
   }));
+  const reviewImageIndexes = [...new Set(reviewImages.map((img) => indexOf(img.url)))].filter((i) => i >= 0);
 
   const reviewHtml = restaurant.review?.trim()
     ? await renderMarkdown(restaurant.review, (url) => {
@@ -465,6 +469,7 @@ async function renderRestaurant(
     images,
     dishes,
     reviewHtml,
+    reviewImageIndexes,
     contributors: (info.contributorIds ?? []).map((id) => contributors.get(id)!),
   };
 }

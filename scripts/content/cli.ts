@@ -8,7 +8,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { BASE_PATH } from '../../site.config.ts';
-import type { ContentSource } from '../../src/content/model.ts';
+import type { ContentSource } from '../../shared/content/model.ts';
 import {
   addContributor,
   findContributors,
@@ -41,7 +41,7 @@ import {
   sourceFromEnv,
 } from './paths.ts';
 import { missingInfo, printDiagnostics } from './report.ts';
-import type { RestaurantInfo } from './schema.ts';
+import type { RestaurantInfo } from '../../shared/content/schema.ts';
 
 const USAGE = `Usage: tsx scripts/content/cli.ts <command> [options]
 

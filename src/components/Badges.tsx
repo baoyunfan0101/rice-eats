@@ -1,5 +1,5 @@
-import type { Rating, Verdict } from '../content/model';
-import { tagLabel, VERDICT_LABELS } from '../content/taxonomy';
+import type { Rating, Verdict } from '../../shared/content/model';
+import { tagLabel, VERDICT_LABELS } from '../lib/labels';
 import { RATING_HINT, RATING_LABELS, RATING_STYLES } from '../lib/format';
 
 export function RatingBadge({ rating, size = 'sm' }: { rating?: Rating; size?: 'sm' | 'lg' }) {

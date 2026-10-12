@@ -18,7 +18,7 @@ import {
   checkImageExtension,
 } from './images.ts';
 import { IMAGES_DIR, INFO_FILE } from './pipeline.ts';
-import { idSchema, type RestaurantInfo } from './schema.ts';
+import { idSchema, type RestaurantInfo } from '../../shared/content/schema.ts';
 
 const run = promisify(execFile);
 

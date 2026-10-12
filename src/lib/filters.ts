@@ -1,14 +1,9 @@
 // Browsing state (view, search, filters, selection) lives in the URL query so
 // it is shareable and survives reloads. All views use the same filtered list.
 
-import {
-  PRICE_BUCKETS,
-  priceBucketOf,
-  RATINGS,
-  type PriceBucketId,
-  type Rating,
-  type RestaurantSummary,
-} from '../content/model';
+import type { RestaurantSummary } from '../../shared/content/model';
+import { RATINGS, type Rating } from '../../shared/content/vocabulary';
+import { PRICE_BUCKETS, priceBucketOf, type PriceBucketId } from './price';
 
 export const VIEWS = ['list', 'grid', 'map'] as const;
 export type View = (typeof VIEWS)[number];

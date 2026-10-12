@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { GENERATED_DIR } from '../../site.config.ts';
-import type { ContentSource } from '../../src/content/model.ts';
+import type { ContentSource } from '../../shared/content/model.ts';
 
 export const ROOT = path.resolve(import.meta.dirname, '../..');
 

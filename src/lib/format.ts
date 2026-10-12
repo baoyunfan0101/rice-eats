@@ -1,5 +1,7 @@
-import { RATINGS, type PriceBucketId, type Rating, type RestaurantSummary } from '../content/model';
-import { cuisineLabel, RATING_LABELS } from '../content/taxonomy';
+import type { RestaurantSummary } from '../../shared/content/model';
+import { RATINGS, type Rating } from '../../shared/content/vocabulary';
+import { cuisineLabel, RATING_LABELS } from './labels';
+import type { PriceBucketId } from './price';
 
 export { RATING_LABELS };
 

@@ -2,7 +2,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
-import { RICE_CENTER, type LatLng, type RestaurantSummary } from '../content/model';
+import { RICE_CENTER, type LatLng, type RestaurantSummary } from '../../shared/content/model';
 import { RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';

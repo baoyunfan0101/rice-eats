@@ -20,6 +20,7 @@
   },
   "include": [
     "scripts",
+    "shared",
     "tests",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",

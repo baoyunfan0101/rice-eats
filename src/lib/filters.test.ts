@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RestaurantSummary } from '../content/model';
+import type { RestaurantSummary } from '../../shared/content/model';
 import {
   DEFAULT_STATE,
   facetValues,

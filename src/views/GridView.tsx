@@ -1,4 +1,4 @@
-import type { RestaurantSummary } from '../content/model';
+import type { RestaurantSummary } from '../../shared/content/model';
 import { DraftBadge, RatingBadge, Tags } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
