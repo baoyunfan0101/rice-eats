@@ -26,29 +26,42 @@ Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notificat
   any other area. The device position is never submitted; the location sent
   is the chosen place's (or the contributor's map marker).
   - Discovery loads fixed tiles of 0.01° (about 1 km) covering the visible
-    area, up to 100 places per tile, each cached for the session, so panning
-    back and forth reuses them and coverage does not depend on a small result
-    limit. Geoapify charges one credit per 20 places returned, so a first view
-    costs at most a few dozen credits and usually far less. Below zoom 14, or
-    when the view would need more than 30 tiles, the page asks the contributor
-    to zoom in instead of searching.
-  - A name search ("按名字搜索", within 5 km of the map center, debounced and
-    cancelled when superseded) finds a specific restaurant. If the place is
+    area, each cached for the session, so panning back and forth reuses them.
+    A Geoapify tile asks for up to 500 places (Geoapify's maximum); credits
+    are charged per place returned (one per 20), not per limit, so a first
+    view costs at most a few dozen credits and usually far less. If a tile (or
+    an Overpass batch, up to 2,000 places) reaches its limit, the page says
+    some restaurants may be missing and suggests zooming in or searching by
+    name. Below zoom 14, or when the view would need more than 30 tiles, the
+    page asks the contributor to zoom in instead of searching.
+  - Each tile loads independently: restaurants from tiles that loaded stay on
+    the map when others fail, the page says part of the area did not load,
+    and "重试" (or moving the map) loads only the failed tiles again (failures
+    are not cached). When nothing loads, the previous pins stay with an error
+    and "重试". Results for an area the map has already left are ignored.
+  - A name search ("按名字搜索") finds a specific restaurant within 5 km of the
+    map center, snapped to a ~2 km grid: moving the map to another cell
+    searches again, and results are only shown for the query and area they
+    were made for, so late answers never replace newer ones. If the place is
     missing, or search is unavailable, "手动添加餐厅" takes a name, an optional
     address, and a map marker; a name alone is allowed and is marked for
     location verification.
   - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
     (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
-    the rest of the session), or a Geoapify request fails, the same search
-    goes to the free OpenStreetMap
+    the rest of the session), or a Geoapify request fails, the search goes to
+    the free OpenStreetMap
     [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) (no key;
     named `amenity` restaurant, fast_food, cafe, or food_court within the tile
     or around the map center). Geoapify itself serves OpenStreetMap data, so
     both find the same places; Overpass addresses are sparser (street and
     number when tagged). Such selections send `poi_provider=osm` and
-    `poi_id=<node|way|relation>/<id>`. The public Overpass server has
-    fair-use limits (roughly 10,000 requests a day) and may answer 429 when
-    busy; then the page shows an error and manual entry still works.
+    `poi_id=<node|way|relation>/<id>`. To respect the public server's
+    fair-use limits (about two concurrent requests per visitor, roughly 10,000
+    a day), all tiles of a view that need Overpass (every tile without a key,
+    or the tiles Geoapify could not load) are fetched in one request for their
+    bounding box and split back into tiles, at most two Overpass requests run
+    at once, and a busy answer (504) is retried once. If Overpass still
+    fails, the page shows an error with "重试", and manual entry still works.
   - Arriving from a restaurant page skips the selection (with "更换餐厅" to
     choose another). The page shows the data attribution (Geoapify and
     OpenStreetMap, or OpenStreetMap alone without a key) and a short note that

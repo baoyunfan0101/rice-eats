@@ -75,11 +75,12 @@ const LIMIT = 30;
 /**
  * Map discovery loads fixed tiles of TILE_DEGREES (about 1 km) covering the
  * visible area, so panning reuses cached tiles instead of searching again.
- * TILE_LIMIT places per tile is plenty around Rice and caps the cost of a
- * tile at 5 credits.
+ * TILE_LIMIT is Geoapify's maximum: credits are charged per place returned
+ * (one per 20), not per limit, so a high limit costs nothing extra and makes
+ * a truncated tile (reported to the page) very unlikely.
  */
 export const TILE_DEGREES = 0.01;
-export const TILE_LIMIT = 100;
+export const TILE_LIMIT = 500;
 /** Below this zoom the visible area needs too many tiles; the page asks to zoom in. */
 export const DISCOVERY_MIN_ZOOM = 14;
 export const MAX_TILES = 30;
@@ -316,13 +317,15 @@ const searchKey = (search: PoiSearch) =>
     search.limit ?? LIMIT,
   ]);
 
-/** Whether searches currently go to Overpass (no key, or Geoapify refused it). */
-const usingOverpass = () => !poiApiKey() || geoapifyRefused;
 /** Set when Geoapify refuses the key (credits used up or key rejected) this session. */
 let geoapifyRefused = false;
+const noteGeoapifyFailure = (e: unknown) => {
+  if (e instanceof PoiError && e.kind === 'quota') geoapifyRefused = true;
+};
 
 export function clearPoiCache() {
   cache.clear();
+  tileCache.clear();
   geoapifyRefused = false;
 }
 
@@ -336,6 +339,17 @@ export async function searchRestaurants(
   search: PoiSearch,
   signal?: AbortSignal,
 ): Promise<RestaurantCandidate[]> {
+  try {
+    return await cachedSearch(search, signal);
+  } catch (e) {
+    // A cached request started by a caller that has since cancelled it: this
+    // caller still wants the result, so it asks again (the cache entry is gone).
+    if (isAbort(e) && !signal?.aborted) return cachedSearch(search, signal);
+    throw e;
+  }
+}
+
+function cachedSearch(search: PoiSearch, signal?: AbortSignal): Promise<RestaurantCandidate[]> {
   const cacheKey = searchKey(search);
   let promise = cache.get(cacheKey);
   if (!promise) {
@@ -349,7 +363,7 @@ export async function searchRestaurants(
           );
         } catch (e) {
           if (isAbort(e)) throw e;
-          if (e instanceof PoiError && e.kind === 'quota') geoapifyRefused = true;
+          noteGeoapifyFailure(e);
         }
       }
       return fromOverpass(search, signal);
@@ -378,20 +392,137 @@ export function tilesFor(bounds: Bounds): Bounds[] | undefined {
   return tiles;
 }
 
+// ---------------------------------------------------------------------------
+// Map discovery
+//
+// The visible area is covered by fixed tiles (tilesFor), each cached for the
+// session. Uncached tiles of a view are loaded as one batch:
+//  - through Geoapify, one request per tile, while it has a key that has not
+//    been refused;
+//  - tiles Geoapify could not load (refused, rate-limited, failed) and every
+//    tile once Geoapify is not used go to Overpass in ONE request for their
+//    bounding box, split back into tiles. So a fallback never fans out into
+//    one Overpass request per tile.
+// Each tile succeeds or fails on its own: failures are not cached (a retry
+// loads them again) and do not hide the tiles that loaded.
+
+interface TileResult {
+  candidates: RestaurantCandidate[];
+  /** The provider's result limit was reached, so the tile may be incomplete. */
+  truncated: boolean;
+}
+
+/** Places per Overpass batch (Overpass has no per-result cost). */
+export const OVERPASS_AREA_LIMIT = 2000;
+
+const tileCache = new Map<string, Promise<TileResult>>();
+const tileKey = (t: Bounds) => `${t.south},${t.west}`;
+
+const inTile = (tile: Bounds) => (c: RestaurantCandidate) =>
+  c.location.lat >= tile.south &&
+  c.location.lat < tile.north &&
+  c.location.lng >= tile.west &&
+  c.location.lng < tile.east;
+
+async function geoapifyTile(tile: Bounds, apiKey: string): Promise<TileResult> {
+  const body = await request(geoapifyUrl({ bounds: tile, limit: TILE_LIMIT }, apiKey), {});
+  const raw = (body as { features?: unknown[] })?.features;
+  return {
+    candidates: normalizeGeoapify(body),
+    truncated: Array.isArray(raw) && raw.length >= TILE_LIMIT,
+  };
+}
+
+async function overpassTiles(tiles: Bounds[]): Promise<TileResult[]> {
+  const box: Bounds = {
+    south: Math.min(...tiles.map((t) => t.south)),
+    west: Math.min(...tiles.map((t) => t.west)),
+    north: Math.max(...tiles.map((t) => t.north)),
+    east: Math.max(...tiles.map((t) => t.east)),
+  };
+  const all = await fromOverpass({ bounds: box, limit: OVERPASS_AREA_LIMIT });
+  // A full batch may have dropped places anywhere in the box.
+  const truncated = all.length >= OVERPASS_AREA_LIMIT;
+  return tiles.map((tile) => ({ candidates: all.filter(inTile(tile)), truncated }));
+}
+
+/** Starts loading the tiles that are not cached (or loading) yet. */
+function loadMissingTiles(tiles: Bounds[]) {
+  const missing = tiles.filter((t) => !tileCache.has(tileKey(t)));
+  if (missing.length === 0) return;
+  const settle = new Map<
+    string,
+    { resolve: (r: TileResult) => void; reject: (e: unknown) => void }
+  >();
+  for (const tile of missing) {
+    const key = tileKey(tile);
+    const promise = new Promise<TileResult>((resolve, reject) =>
+      settle.set(key, { resolve, reject }),
+    );
+    promise.catch(() => tileCache.delete(key));
+    tileCache.set(key, promise);
+  }
+  void (async () => {
+    let remaining = missing;
+    const apiKey = poiApiKey();
+    if (apiKey && !geoapifyRefused) {
+      const results = await Promise.allSettled(missing.map((t) => geoapifyTile(t, apiKey)));
+      remaining = [];
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') settle.get(tileKey(missing[i]!))!.resolve(r.value);
+        else {
+          noteGeoapifyFailure(r.reason);
+          remaining.push(missing[i]!);
+        }
+      });
+    }
+    if (remaining.length === 0) return;
+    try {
+      const results = await overpassTiles(remaining);
+      remaining.forEach((t, i) => settle.get(tileKey(t))!.resolve(results[i]!));
+    } catch (e) {
+      for (const t of remaining) settle.get(tileKey(t))!.reject(e);
+    }
+  })();
+}
+
+export interface AreaResult {
+  candidates: RestaurantCandidate[];
+  /** Tiles that could not be loaded (not cached; loading the area again retries them). */
+  failed: number;
+  /** Tiles in the area. */
+  total: number;
+  /** Some tile reached the provider's result limit and may be incomplete. */
+  truncated: boolean;
+  /** The first failure, for the message when nothing loaded. */
+  error?: unknown;
+}
+
 /**
- * Restaurants in the visible map area, loaded tile by tile (each tile cached
- * for the session) and merged. Returns [] when the area needs more than
- * MAX_TILES tiles. Rejects like searchRestaurants; tiles that loaded stay cached.
+ * Restaurants in the visible map area, merged from its tiles. Never rejects:
+ * tiles that fail are reported in `failed` while the others are returned.
+ * An area that needs more than MAX_TILES tiles returns nothing.
  */
-export async function restaurantsInArea(bounds: Bounds): Promise<RestaurantCandidate[]> {
+export async function restaurantsInArea(bounds: Bounds): Promise<AreaResult> {
   const tiles = tilesFor(bounds);
-  if (!tiles) return [];
-  if (usingOverpass()) prefetchOverpassTiles(tiles);
+  if (!tiles) return { candidates: [], failed: 0, total: 0, truncated: false };
+  loadMissingTiles(tiles);
   // Tiles are not cancelled when the map moves on: they stay useful in the
   // cache, and callers ignore results for an area that is no longer shown.
-  const lists = await Promise.all(
-    tiles.map((tile) => searchRestaurants({ bounds: tile, limit: TILE_LIMIT })),
-  );
+  const settled = await Promise.allSettled(tiles.map((t) => tileCache.get(tileKey(t))!));
+  const lists: RestaurantCandidate[][] = [];
+  let failed = 0;
+  let truncated = false;
+  let error: unknown;
+  for (const r of settled) {
+    if (r.status === 'fulfilled') {
+      lists.push(r.value.candidates);
+      truncated ||= r.value.truncated;
+    } else {
+      failed++;
+      error ??= r.reason;
+    }
+  }
   // Tiles loaded before and after a fallback come from different providers;
   // the same restaurant then has two keys, so also merge by name and place.
   const merged: RestaurantCandidate[] = [];
@@ -403,41 +534,13 @@ export async function restaurantsInArea(bounds: Bounds): Promise<RestaurantCandi
     keys.add(c.key);
     merged.push(c);
   }
-  return merged;
-}
-
-/** Places per combined Overpass request (Overpass has no per-result cost). */
-const OVERPASS_AREA_LIMIT = 1000;
-
-/**
- * Loads the uncached tiles of an area from Overpass in one request (one
- * request per tile would exceed its per-visitor limit) and caches each tile's
- * share of the result, so later views reuse tiles as with Geoapify.
- */
-function prefetchOverpassTiles(tiles: Bounds[]) {
-  const missing = tiles.filter((t) => !cache.has(searchKey({ bounds: t, limit: TILE_LIMIT })));
-  if (missing.length === 0) return;
-  const box: Bounds = {
-    south: Math.min(...missing.map((t) => t.south)),
-    west: Math.min(...missing.map((t) => t.west)),
-    north: Math.max(...missing.map((t) => t.north)),
-    east: Math.max(...missing.map((t) => t.east)),
+  return {
+    candidates: merged,
+    failed,
+    total: tiles.length,
+    truncated,
+    ...(error ? { error } : {}),
   };
-  const all = fromOverpass({ bounds: box, limit: OVERPASS_AREA_LIMIT });
-  for (const tile of missing) {
-    const key = searchKey({ bounds: tile, limit: TILE_LIMIT });
-    const share = all.then((list) =>
-      list.filter(
-        (c) =>
-          c.location.lat >= tile.south &&
-          c.location.lat < tile.north &&
-          c.location.lng >= tile.west &&
-          c.location.lng < tile.east,
-      ),
-    );
-    share.catch(() => cache.delete(key));
-    cache.set(key, share);
-  }
 }
 
 /** Short Chinese description of a distance, e.g. "120 米", "1.2 公里". */

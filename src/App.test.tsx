@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
@@ -423,7 +423,7 @@ describe('submissions', () => {
 
   describe('with POI search', () => {
     const DEVICE = { latitude: 29.7111, longitude: -95.3999 };
-    /** Fake places: one near Rice, one in the area the stub pans to. */
+    /** Fake places: two near Rice, one in the area the stub pans to, one near the device. */
     const PLACES = [
       {
         place_id: 'p-noodle',
@@ -446,12 +446,24 @@ describe('submissions', () => {
         lat: 29.7113,
         lon: -95.4,
       },
+      // In view at Rice, in the tile east of -95.40.
+      {
+        place_id: 'p-east',
+        name: 'East Deli',
+        address_line2: '3 Bay St',
+        lat: 29.716,
+        lon: -95.398,
+      },
     ];
     let geolocation: { getCurrentPosition: ReturnType<typeof vi.fn> };
     let places: URL[];
     let placesStatus = 200;
     let overpass: string[];
     let overpassStatus = 200;
+    /** Holds name searches around Rice until resolved (for out-of-order responses). */
+    let slowRiceNames: Promise<void> | undefined;
+    /** Per-tile Geoapify status for partial failures. */
+    let tileStatus: ((filter: string) => number) | undefined;
 
     beforeEach(() => {
       vi.stubEnv('VITE_TALLY_FORM', FORM);
@@ -462,6 +474,8 @@ describe('submissions', () => {
       placesStatus = 200;
       overpass = [];
       overpassStatus = 200;
+      slowRiceNames = undefined;
+      tileStatus = undefined;
       const indexFetch = vi.mocked(fetch);
       vi.stubGlobal(
         'fetch',
@@ -499,7 +513,20 @@ describe('submissions', () => {
             ];
             matches = PLACES.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
           }
-          if (name) matches = [{ ...PLACES[0]!, name: `${name} Noodles` }];
+          if (name) {
+            // Named results depend on the search center: near Rice or north-east.
+            const north = !filter.includes('29.720000');
+            if (!north && slowRiceNames) await slowRiceNames;
+            matches = [
+              north
+                ? { ...PLACES[1]!, name: `${name} North` }
+                : { ...PLACES[0]!, name: `${name} Noodles` },
+            ];
+          }
+          if (tileStatus && filter.startsWith('rect:')) {
+            const status = tileStatus(filter);
+            if (status !== 200) return new Response('', { status });
+          }
           return Response.json({ features: matches.map((properties) => ({ properties })) });
         }),
       );
@@ -517,12 +544,12 @@ describe('submissions', () => {
       const user = userEvent.setup();
       visit('submit/');
       const pin = await screen.findByRole('button', { name: '图钉：Noodle Corner' });
-      expect(screen.getByText('地图上有 1 家餐厅，点图钉选择。')).toBeInTheDocument();
+      expect(screen.getByText('地图上有 2 家餐厅，点图钉选择。')).toBeInTheDocument();
       // The location is never requested without a click.
       expect(geolocation.getCurrentPosition).not.toHaveBeenCalled();
       // The visible area is loaded as cached tiles covering Rice University.
       expect(rects().length).toBeGreaterThan(0);
-      expect(rects().every((u) => u.searchParams.get('limit') === '100')).toBe(true);
+      expect(rects().every((u) => u.searchParams.get('limit') === '500')).toBe(true);
       expect(screen.getByText(/Powered by Geoapify/)).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '搜索地图中心附近' })).not.toBeInTheDocument();
       await user.click(pin);
@@ -591,9 +618,74 @@ describe('submissions', () => {
       // Debounced: one request for the whole query, around the map center.
       const byName = places.filter((u) => u.searchParams.has('name'));
       expect(byName).toHaveLength(1);
-      expect(byName[0]!.searchParams.get('filter')).toBe('circle:-95.401800,29.717400,5000');
+      // Around the map center, snapped to a ~2 km grid.
+      expect(byName[0]!.searchParams.get('filter')).toBe('circle:-95.400000,29.720000,5000');
       await user.click(within(list).getByRole('button', { name: /Pho Noodles/ }));
       expect(screen.getByRole('heading', { name: '确认餐厅' })).toBeInTheDocument();
+    });
+
+    it('searches the new area when the map moves during a name search', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
+      await screen.findByRole('button', { name: '图钉：Pho Noodles' });
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      const list = await screen.findByRole('list', { name: '搜索结果' });
+      await within(list).findByRole('button', { name: /Pho North/ });
+      expect(within(list).queryByRole('button', { name: /Pho Noodles/ })).not.toBeInTheDocument();
+      const byName = places.filter((u) => u.searchParams.has('name'));
+      expect(byName.map((u) => u.searchParams.get('filter'))).toEqual([
+        'circle:-95.400000,29.720000,5000',
+        'circle:-95.380000,29.740000,5000',
+      ]);
+    });
+
+    it('never shows a late answer for an area the map has left', async () => {
+      let release!: () => void;
+      slowRiceNames = new Promise((resolve) => (release = resolve));
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
+      await waitFor(() => expect(places.filter((u) => u.searchParams.has('name'))).toHaveLength(1));
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      await screen.findByRole('button', { name: '图钉：Pho North' });
+      release();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole('button', { name: '图钉：Pho Noodles' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '图钉：Pho North' })).toBeInTheDocument();
+    });
+
+    it('keeps the restaurants that loaded when part of the map fails, and retries', async () => {
+      // Tiles west of -95.40 fail on Geoapify; the Overpass fallback is busy.
+      tileStatus = (filter) => (filter.startsWith('rect:-95.41') ? 500 : 200);
+      overpassStatus = 504;
+      const user = userEvent.setup();
+      visit('submit/');
+      expect(await screen.findByText(/部分区域没能加载/)).toBeInTheDocument();
+      // East Deli's tile loaded; Noodle Corner's did not.
+      expect(screen.getByRole('button', { name: '图钉：East Deli' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '图钉：Noodle Corner' })).not.toBeInTheDocument();
+      overpassStatus = 200;
+      await user.click(screen.getByRole('button', { name: '重试' }));
+      expect(
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' }),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/部分区域没能加载/)).not.toBeInTheDocument();
+    });
+
+    it('recovers from a complete failure with 重试', async () => {
+      placesStatus = 503;
+      overpassStatus = 504;
+      const user = userEvent.setup();
+      visit('submit/');
+      expect(await screen.findByText(/餐厅搜索出错了/)).toBeInTheDocument();
+      placesStatus = 200;
+      await user.click(screen.getByRole('button', { name: '重试' }));
+      expect(
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' }),
+      ).toBeInTheDocument();
     });
 
     it('falls back to OpenStreetMap when Geoapify is out of credits', async () => {
@@ -615,7 +707,8 @@ describe('submissions', () => {
       await user.click(screen.getByRole('button', { name: '拖动地图' }));
       expect(await screen.findByRole('button', { name: '图钉：Taco Stop' })).toBeInTheDocument();
       expect(rects()).toHaveLength(asked);
-      expect(overpass.length).toBeGreaterThan(asked);
+      // One Overpass request per area, not one per tile.
+      expect(overpass).toHaveLength(2);
     });
 
     it('shows search errors with the manual fallback', async () => {

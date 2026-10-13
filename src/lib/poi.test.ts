@@ -253,27 +253,6 @@ describe('searching', () => {
     await expect(searchRestaurants({ center, radiusMeters: 300 })).resolves.toEqual([]);
   });
 
-  it('loads an area from Overpass in one request and caches it per tile', async () => {
-    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
-    fetchMock.mockResolvedValue(
-      Response.json({
-        elements: [
-          { type: 'node', id: 1, lat: 29.715, lon: -95.405, tags: { name: 'West' } },
-          { type: 'node', id: 2, lat: 29.715, lon: -95.395, tags: { name: 'East' } },
-        ],
-      }),
-    );
-    const bounds = { south: 29.712, west: -95.408, north: 29.718, east: -95.392 };
-    const found = await restaurantsInArea(bounds);
-    expect(found.map((c) => c.name).sort()).toEqual(['East', 'West']);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const sent = new URLSearchParams(String(fetchMock.mock.calls[0]![1]?.body)).get('data');
-    expect(sent).toContain('(29.710000,-95.410000,29.720000,-95.390000);out center 1000;');
-    // A view inside the loaded tiles needs no request.
-    await restaurantsInArea({ south: 29.713, west: -95.399, north: 29.717, east: -95.393 });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it('retries a busy Overpass server once', async () => {
     vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
     fetchMock
@@ -283,24 +262,25 @@ describe('searching', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('merges the tiles of an area and caches each tile', async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const filter = new URL(String(input)).searchParams.get('filter')!;
-      const [w, south] = filter.slice(5).split(',').map(Number) as [number, number];
-      return Response.json({
-        features: [
-          feature({ place_id: 'shared', name: 'Shared', lat: 29.715, lon: -95.405 }),
-          feature({ place_id: `t${w}${south}`, name: 'Tile', lat: south + 0.005, lon: w + 0.005 }),
-        ],
-      });
-    });
-    const bounds = { south: 29.712, west: -95.408, north: 29.722, east: -95.398 };
-    const first = await restaurantsInArea(bounds);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(first.filter((c) => c.poiId === 'shared')).toHaveLength(1);
-    expect(first).toHaveLength(5);
-    await restaurantsInArea(bounds);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+  it('lets a caller retry a shared search that another caller cancelled', async () => {
+    let calls = 0;
+    fetchMock.mockImplementation(
+      async (_input, init) =>
+        new Promise((resolve, reject) => {
+          calls++;
+          if (calls === 1) {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError')),
+            );
+          } else resolve(Response.json({ features: [] }));
+        }),
+    );
+    const first = new AbortController();
+    const cancelled = searchRestaurants({ center, radiusMeters: 300 }, first.signal);
+    const wanted = searchRestaurants({ center, radiusMeters: 300 });
+    first.abort();
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(wanted).resolves.toEqual([]);
   });
 
   it('reports network errors and passes cancellation through', async () => {
@@ -313,5 +293,156 @@ describe('searching', () => {
     await expect(
       searchRestaurants({ center, radiusMeters: 300 }, AbortSignal.abort()),
     ).rejects.toBe(abort);
+  });
+});
+
+describe('map discovery', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  /** Two tiles wide, one tall: (29.71..29.72) x (-95.41..-95.39). */
+  const twoTiles = { south: 29.712, west: -95.408, north: 29.718, east: -95.392 };
+  const isOverpass = (input: unknown) => String(input) === OVERPASS_ENDPOINT;
+  const overpassCalls = () => fetchMock.mock.calls.filter(([u]) => isOverpass(u));
+  const geoapifyCalls = () => fetchMock.mock.calls.filter(([u]) => !isOverpass(u));
+  const osm = {
+    elements: [
+      { type: 'node', id: 1, lat: 29.715, lon: -95.405, tags: { name: 'West' } },
+      { type: 'node', id: 2, lat: 29.715, lon: -95.395, tags: { name: 'East' } },
+    ],
+  };
+  /** A Geoapify answer with one place in the tile of the request. */
+  const geoapifyTile = (input: unknown) => {
+    const [w, south] = new URL(String(input)).searchParams
+      .get('filter')!
+      .slice(5)
+      .split(',')
+      .map(Number) as [number, number];
+    return Response.json({
+      features: [feature({ place_id: `g${w}`, name: `G${w}`, lat: south + 0.005, lon: w + 0.005 })],
+    });
+  };
+
+  beforeEach(() => {
+    clearPoiCache();
+    setOverpassRetryDelay(0);
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', 'test-key');
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('loads each tile from Geoapify, merges shared places, and caches tiles', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const body = (await geoapifyTile(input).json()) as { features: unknown[] };
+      body.features.push(feature({ place_id: 'shared', name: 'Shared', lat: 29.715, lon: -95.4 }));
+      return Response.json(body);
+    });
+    const first = await restaurantsInArea(twoTiles);
+    expect(first).toMatchObject({ failed: 0, total: 2, truncated: false });
+    expect(first.candidates.map((c) => c.poiId).sort()).toEqual(['g-95.4', 'g-95.41', 'shared']);
+    expect(geoapifyCalls()[0]![0]).toContain('limit=500');
+    await restaurantsInArea(twoTiles);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses one Overpass request for an area when there is no key', async () => {
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
+    fetchMock.mockResolvedValue(Response.json(osm));
+    const found = await restaurantsInArea(twoTiles);
+    expect(found.candidates.map((c) => c.name).sort()).toEqual(['East', 'West']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const sent = new URLSearchParams(String(fetchMock.mock.calls[0]![1]?.body)).get('data');
+    expect(sent).toContain('(29.710000,-95.410000,29.720000,-95.390000);out center 2000;');
+    // A view inside the loaded tiles needs no request.
+    await restaurantsInArea({ south: 29.713, west: -95.399, north: 29.717, east: -95.393 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back with a single Overpass request when every tile is refused at once', async () => {
+    const wide = { south: 29.712, west: -95.418, north: 29.728, east: -95.382 }; // 8 tiles
+    fetchMock.mockImplementation(async (input) =>
+      isOverpass(input) ? Response.json(osm) : new Response('', { status: 429 }),
+    );
+    const found = await restaurantsInArea(wide);
+    expect(found).toMatchObject({ failed: 0, total: 8 });
+    expect(found.candidates.map((c) => c.provider)).toEqual(['osm', 'osm']);
+    expect(geoapifyCalls()).toHaveLength(8);
+    expect(overpassCalls()).toHaveLength(1);
+    // Refused for the session: the next area skips Geoapify.
+    await restaurantsInArea({ south: 29.732, west: -95.408, north: 29.738, east: -95.392 });
+    expect(geoapifyCalls()).toHaveLength(8);
+    expect(overpassCalls()).toHaveLength(2);
+  });
+
+  it('sends only the tiles Geoapify failed to Overpass, in one request', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (isOverpass(input)) return Response.json(osm);
+      // The western tile fails (server error), the eastern one loads.
+      return decodeURIComponent(String(input)).includes('rect:-95.41')
+        ? new Response('', { status: 500 })
+        : geoapifyTile(input);
+    });
+    const found = await restaurantsInArea(twoTiles);
+    expect(found.failed).toBe(0);
+    expect(found.candidates.map((c) => `${c.provider}:${c.name}`).sort()).toEqual([
+      'geoapify:G-95.4',
+      'osm:West',
+    ]);
+    const sent = new URLSearchParams(String(overpassCalls()[0]![1]?.body)).get('data');
+    expect(sent).toContain('(29.710000,-95.410000,29.720000,-95.400000)');
+    // A server error is not a refusal: Geoapify stays the first choice.
+    clearPoiCache();
+    await restaurantsInArea(twoTiles);
+    expect(geoapifyCalls()).toHaveLength(4);
+  });
+
+  it('keeps the tiles that loaded when others fail, and retries only the failed ones', async () => {
+    let overpassUp = false;
+    fetchMock.mockImplementation(async (input) => {
+      if (isOverpass(input))
+        return overpassUp ? Response.json(osm) : new Response('', { status: 504 });
+      return decodeURIComponent(String(input)).includes('rect:-95.41')
+        ? new Response('', { status: 500 })
+        : geoapifyTile(input);
+    });
+    const partial = await restaurantsInArea(twoTiles);
+    expect(partial).toMatchObject({ failed: 1, total: 2 });
+    expect(partial.error).toBeInstanceOf(PoiError);
+    expect(partial.candidates.map((c) => c.name)).toEqual(['G-95.4']);
+
+    overpassUp = true;
+    fetchMock.mockClear();
+    const retried = await restaurantsInArea(twoTiles);
+    expect(retried.failed).toBe(0);
+    expect(retried.candidates.map((c) => c.name).sort()).toEqual(['G-95.4', 'West']);
+    // The eastern tile came from the cache; only the western one was loaded again.
+    expect(geoapifyCalls()).toHaveLength(1);
+    expect(decodeURIComponent(String(geoapifyCalls()[0]![0]))).toContain('rect:-95.41');
+  });
+
+  it('reports a complete failure without rejecting', async () => {
+    fetchMock.mockResolvedValue(new Response('', { status: 429 }));
+    const result = await restaurantsInArea(twoTiles);
+    expect(result).toMatchObject({ candidates: [], failed: 2, total: 2 });
+    expect(result.error).toMatchObject({ kind: 'quota' });
+  });
+
+  it('flags tiles that reach the result limit', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const w = Number(new URL(String(input)).searchParams.get('filter')!.slice(5).split(',')[0]);
+      const many = w < -95.405 ? 500 : 3;
+      return Response.json({
+        features: Array.from({ length: many }, (_, i) =>
+          feature({ place_id: `${w}-${i}`, name: `P${i}`, lat: 29.715, lon: w + 0.001 }),
+        ),
+      });
+    });
+    expect(await restaurantsInArea(twoTiles)).toMatchObject({ truncated: true });
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
+    clearPoiCache();
+    fetchMock.mockResolvedValue(Response.json(osm));
+    expect(await restaurantsInArea(twoTiles)).toMatchObject({ truncated: false });
   });
 });
