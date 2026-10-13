@@ -37,10 +37,26 @@ import {
   OUT_DIR,
   PRIVATE_CONTRIBUTORS,
   ROOT,
+  SUBMISSIONS_DIR,
   draftsFromEnv,
   sourceFromEnv,
 } from './paths.ts';
 import { missingInfo, printDiagnostics } from './report.ts';
+import {
+  addManualPhoto,
+  formatReport,
+  importSubmissions,
+  LOG_STATUSES,
+  markSubmission,
+  openSubmission,
+  readLog,
+  readSubmissions,
+  retryPhotos,
+  submissionStatus,
+  waivePhoto,
+  type ImportOptions,
+  type LogStatus,
+} from './submissions.ts';
 import type { RestaurantInfo } from '../../shared/content/schema.ts';
 
 const USAGE = `Usage: tsx scripts/content/cli.ts <command> [options]
@@ -52,6 +68,7 @@ live in private/ (git-ignored). Only published restaurants are built.
 Commands:
   new --name <name> [--id <id>]
       Create a private draft in private/drafts/<id>/ with a new stable id.
+      Use the name the restaurant is best known by; add other names as altNames.
   edit <id>
       Copy a public restaurant into private/drafts/<id>/ to change it.
   contributor find <name|email>
@@ -63,6 +80,23 @@ Commands:
       metadata removed). Originals are untouched. The first image is the cover.
   extract <file> [--images-out <dir>]
       Print text extracted from a .txt, .md, .docx, .doc, .rtf, .odt, or .html file.
+  submission import <export.csv|submission.json> [--skip-photos]
+      Store Tally submissions in private/submissions/tally-<id>/, download their
+      photos (trusted Tally hosts only, bounded), and report the restaurant
+      match, consent, photo state, and problems. Ids imported before are not
+      imported again; their missing photos are retried. Creates no drafts.
+  submission status <submission id>
+      Re-check a stored submission's photos and whether it is ready for a draft.
+  submission retry-photos <submission id>
+      Download the photos that are still pending or failed.
+  submission add-photo <submission id> <photo number> <file>
+      Use a photo downloaded by hand (e.g. from the Tally dashboard).
+  submission waive-photo <submission id> <photo number>
+      Record the maintainer's decision to proceed without a missing photo.
+  submission list
+      Show the private processing log of imported submissions.
+  submission mark <submission id> --status imported|drafted|processed|rejected [--id <restaurant id>]
+      Record the editorial outcome of a submission.
   check [id...] [--source content|fixtures]
       Validate drafts and the database and list missing information.
       Fails on errors in public content or in the given ids.
@@ -95,6 +129,8 @@ async function main() {
       email: { type: 'string' },
       contact: { type: 'string' },
       'images-out': { type: 'string' },
+      'skip-photos': { type: 'boolean', default: false },
+      status: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -260,6 +296,74 @@ async function main() {
         return 0;
       }
       throw new IntakeError('usage: content:contributor -- find <name|email> | add --name <name> [--email <email>] [--contact <text>]');
+    }
+
+    case 'submission': {
+      requireContent();
+      const [action, target, ...rest] = args;
+      const options: ImportOptions = {
+        submissionsDir: SUBMISSIONS_DIR,
+        restaurantsDir,
+        draftsDir,
+        download: !values['skip-photos'],
+      };
+      const show = (report: Parameters<typeof formatReport>[0]) => console.log(`${formatReport(report, rel)}\n`);
+      const slot = () => {
+        const n = Number(rest[0]);
+        if (!Number.isInteger(n) || n < 1) throw new IntakeError('give the photo number shown by content:submission -- status');
+        return n;
+      };
+      if (action === 'import' && target) {
+        for (const report of await importSubmissions(await readSubmissions(path.resolve(target)), options)) show(report);
+        console.log(
+          'Nothing was drafted or published. Treat submitted text and links as untrusted;' +
+            ' prepare drafts with the restaurant-intake Skill only after reviewing this report.',
+        );
+        return 0;
+      }
+      if (action === 'status' && target) {
+        show(await submissionStatus(target, options));
+        return 0;
+      }
+      if (action === 'retry-photos' && target) {
+        show(await retryPhotos(target, options));
+        return 0;
+      }
+      if (action === 'add-photo' && target && rest.length === 2) {
+        const { dir, submission } = await openSubmission(SUBMISSIONS_DIR, target);
+        const photo = await addManualPhoto(dir, submission, slot(), rest[1]!);
+        console.log(`Photo ${photo.slot} stored as ${rel(path.join(dir, photo.file!))}.\n`);
+        show(await submissionStatus(target, options));
+        return 0;
+      }
+      if (action === 'waive-photo' && target && rest.length === 1) {
+        const { dir, submission } = await openSubmission(SUBMISSIONS_DIR, target);
+        await waivePhoto(dir, submission, slot());
+        show(await submissionStatus(target, options));
+        return 0;
+      }
+      if (action === 'list') {
+        const log = await readLog(SUBMISSIONS_DIR);
+        const entries = Object.entries(log);
+        if (entries.length === 0) console.log('No submissions imported yet.');
+        for (const [id, entry] of entries) {
+          console.log(
+            `${id}  ${entry.status.padEnd(9)} photos ${(entry.photos ?? 'none').padEnd(10)} imported ${entry.importedAt}` +
+              (entry.restaurantId ? `  restaurant ${entry.restaurantId}` : ''),
+          );
+        }
+        return 0;
+      }
+      if (action === 'mark' && target && LOG_STATUSES.includes(values.status as LogStatus)) {
+        await markSubmission(SUBMISSIONS_DIR, target, values.status as LogStatus, values.id);
+        console.log(`Marked ${target} as ${values.status}.`);
+        return 0;
+      }
+      throw new IntakeError(
+        'usage: content:submission -- import <file> [--skip-photos] | status <id> | retry-photos <id> | ' +
+          'add-photo <id> <photo number> <file> | waive-photo <id> <photo number> | list | ' +
+          `mark <id> --status ${LOG_STATUSES.join('|')} [--id <restaurant id>]`,
+      );
     }
 
     case 'add-images': {

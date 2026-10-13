@@ -36,14 +36,14 @@ export const TAG_LABELS: Record<TagId, string> = {
 };
 
 export const RATING_LABELS: Record<Rating, string> = {
-  5: '夯',
-  4: '顶级',
-  3: '人上人',
-  2: 'NPC',
-  1: '拉完了',
+  5: '🥵 夯',
+  4: '😘 顶级',
+  3: '🤤 人上人',
+  2: '🫤 NPC',
+  1: '🤮 拉完了',
 };
 
-export const VERDICT_LABELS: Record<Verdict, string> = { 1: '推荐', [-1]: '避雷' };
+export const VERDICT_LABELS: Record<Verdict, string> = { 1: '🔥 推荐', [-1]: '💣 避雷' };
 
 /** Label for a stored key; unknown keys (none pass validation) fall back to the key. */
 export const cuisineLabel = (id: string) => CUISINE_LABELS[id as CuisineId] ?? id;

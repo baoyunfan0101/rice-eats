@@ -137,6 +137,24 @@ describe('content pipeline', () => {
     expect(preview.index.restaurants.map((r) => r.id).sort()).toEqual(['a', 'b']);
   });
 
+  it('requires a name and keeps other names in altNames', async () => {
+    const root = await tempDir();
+    await writeRestaurant(
+      root,
+      'multi',
+      validInfo('multi', { name: '双语面馆', altNames: ['Twin Noodles'] }),
+    );
+    const ok = await pipeline(root);
+    expect(errors(ok)).toEqual([]);
+    expect(ok.details[0]).toMatchObject({ name: '双语面馆', altNames: ['Twin Noodles'] });
+
+    const bad = await tempDir();
+    const noName: Record<string, unknown> = validInfo('nameless');
+    delete noName.name;
+    await writeRestaurant(bad, 'nameless', noName);
+    expect(errors(await pipeline(bad)).join('\n')).toMatch(/name: /);
+  });
+
   it('fails on invalid published content with actionable messages, and writes nothing', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'bad', {

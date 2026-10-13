@@ -74,6 +74,7 @@ describe('postbuild allowlist', () => {
     expect(await run()).toEqual([]);
     expect(existsSync(path.join(dist, '404.html'))).toBe(true);
     expect(existsSync(path.join(dist, 'r/a/index.html'))).toBe(true);
+    expect(existsSync(path.join(dist, 'submit/index.html'))).toBe(true);
     expect(existsSync(path.join(dist, '.vite'))).toBe(false);
     expect(existsSync(path.join(dist, '.DS_Store'))).toBe(false);
   });

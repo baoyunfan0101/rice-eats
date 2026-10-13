@@ -41,10 +41,13 @@ const controlled = (ids: readonly string[], what: string) =>
 
 const unique = <T>(items: T[]) => new Set(items).size === items.length;
 
-export const restaurantInfoSchema = z.strictObject({
+export const restaurantInfoSchema = z
+  .strictObject({
   id: idSchema,
   status: z.enum(['draft', 'published'], { message: 'must be "draft" or "published"' }),
+  /** The display name, in whatever language the restaurant is best known by. */
   name: text,
+  /** Other names in any language (translations, abbreviations, former names); searchable. */
   altNames: z.array(text).optional(),
   address: text.optional(),
   location: z

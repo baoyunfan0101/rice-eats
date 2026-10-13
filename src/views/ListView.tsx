@@ -2,7 +2,7 @@ import type { RestaurantSummary } from '../../shared/content/model';
 import { DraftBadge, Tags, RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
-import { metaLine } from '../lib/format';
+import { metaLine, secondaryNames } from '../lib/format';
 import { restaurantHref } from '../lib/router';
 
 export function ListView({ restaurants }: { restaurants: RestaurantSummary[] }) {
@@ -28,8 +28,8 @@ export function ListView({ restaurants }: { restaurants: RestaurantSummary[] }) 
                 <RatingBadge rating={r.rating} />
                 {r.status === 'draft' && <DraftBadge />}
               </div>
-              {r.altNames.length > 0 && (
-                <p className="text-sm text-muted">{r.altNames.join(' / ')}</p>
+              {secondaryNames(r).length > 0 && (
+                <p className="text-sm text-muted">{secondaryNames(r).join(' / ')}</p>
               )}
               <p className="text-sm font-medium text-ink/80">{metaLine(r)}</p>
               {r.address && <p className="hidden text-xs text-muted sm:block">{r.address}</p>}

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { browseHref } from '../lib/router';
+import { browseHref, submitHref } from '../lib/router';
+import { submissionFormId } from '../lib/submission';
 import { Link } from './Link';
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -24,6 +25,16 @@ export function Layout({ children }: { children: ReactNode }) {
             </span>
           </Link>
           <p className="hidden text-sm text-muted sm:block">莱斯大学周边的社区美食指南</p>
+          {submissionFormId() && (
+            <nav aria-label="站点" className="ml-auto">
+              <Link
+                href={submitHref()}
+                className="inline-flex min-h-10 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600"
+              >
+                投稿
+              </Link>
+            </nav>
+          )}
         </div>
       </header>
       <main id="main" className="flex flex-1 flex-col">

@@ -75,6 +75,9 @@ describe('intake helpers', () => {
     expect(existsSync(path.join(dir, 'review.md'))).toBe(false); // no empty review
     await expect(createDraft(drafts, a, 'Again')).rejects.toThrow(/already exists/);
     await expect(createDraft(drafts, 'Bad Id', 'x')).rejects.toThrow(/invalid id/);
+    await expect(createDraft(drafts, 'r-noname', ' ')).rejects.toThrow(
+      /a restaurant name is required/,
+    );
   });
 
   it('keeps the private area out of Git by default', () => {

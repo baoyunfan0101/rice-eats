@@ -424,12 +424,13 @@ async function renderRestaurant(
   // Alt text: the restaurant name for the cover, the dish name or review alt text
   // where an image is used, otherwise the name with the photo's position.
   const reviewImages = restaurant.review?.trim() ? listMarkdownImages(restaurant.review) : [];
+  const name = info.name;
   const altFor = (ref: string, i: number) =>
     i === 0
-      ? info.name
+      ? name
       : (info.dishes?.find((d) => d.image === ref)?.name ??
         reviewImages.find((img) => img.url === ref && img.alt.trim())?.alt ??
-        `${info.name} (${i + 1})`);
+        `${name} (${i + 1})`);
   const images: ImageAsset[] = [];
   for (const [i, ref] of restaurant.images.entries()) images.push(await asset(ref, altFor(ref, i)));
   const byRef = new Map(restaurant.images.map((ref, i) => [ref, images[i]!]));
@@ -456,7 +457,7 @@ async function renderRestaurant(
   return {
     id: info.id,
     status: info.status,
-    name: info.name,
+    name,
     altNames: info.altNames ?? [],
     cuisines: info.cuisines ?? [],
     tags: info.tags ?? [],

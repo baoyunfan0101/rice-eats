@@ -87,7 +87,8 @@ export function filterRestaurants(
 ): RestaurantSummary[] {
   const query = normalize(state.query);
   const result = restaurants.filter((r) => {
-    if (query && ![r.name, ...r.altNames].some((name) => normalize(name).includes(query))) {
+    const names = [r.name, ...r.altNames];
+    if (query && !names.some((name) => normalize(name).includes(query))) {
       return false;
     }
     if (state.cuisine && !r.cuisines.includes(state.cuisine)) return false;

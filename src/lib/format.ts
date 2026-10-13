@@ -33,3 +33,8 @@ export function metaLine(r: RestaurantSummary): string {
     .filter(Boolean)
     .join(' · ');
 }
+
+/** Other names, shown under the main name. */
+export function secondaryNames(r: Pick<RestaurantSummary, 'altNames'>): string[] {
+  return r.altNames;
+}

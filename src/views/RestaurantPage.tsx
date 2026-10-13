@@ -6,11 +6,12 @@ import { RestaurantImage } from '../components/RestaurantImage';
 import { ErrorState, Loading, Message } from '../components/States';
 import { useContentIndex, useRestaurantDetail } from '../lib/content';
 import { toSearchParams, DEFAULT_STATE } from '../lib/filters';
-import { cuisineLabel } from '../lib/labels';
-import { priceText, RATING_HINT, RATING_LABELS } from '../lib/format';
+import { cuisineLabel, VERDICT_LABELS } from '../lib/labels';
+import { priceText, RATING_HINT, RATING_LABELS, secondaryNames } from '../lib/format';
 import { placeImages } from '../lib/imagePlacement';
 import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
-import { browseHref, canGoBack } from '../lib/router';
+import { browseHref, canGoBack, submitHref } from '../lib/router';
+import { submissionFormId } from '../lib/submission';
 
 export function RestaurantPage({ id }: { id: string }) {
   const [attempt, setAttempt] = useState(0);
@@ -88,7 +89,9 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           <h1 className="text-3xl leading-tight font-black sm:text-4xl">{r.name}</h1>
           <RatingBadge rating={r.rating} size="lg" />
         </div>
-        {r.altNames.length > 0 && <p className="text-muted">{r.altNames.join(' / ')}</p>}
+        {secondaryNames(r).length > 0 && (
+          <p className="text-muted">{secondaryNames(r).join(' / ')}</p>
+        )}
 
         <dl className="grid gap-x-6 gap-y-2 rounded-2xl border border-line bg-white p-4 text-sm sm:grid-cols-2">
           {r.rating !== undefined && (
@@ -130,7 +133,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           <DishList dishes={unrated} />
           {avoided.length > 0 && (
             <>
-              <h3 className="mt-6 text-base font-semibold text-muted">避雷</h3>
+              <h3 className="mt-6 text-base font-semibold text-muted">{VERDICT_LABELS[-1]}</h3>
               <DishList dishes={avoided} />
             </>
           )}
@@ -161,6 +164,25 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
             ))}
           </ul>
         </section>
+      )}
+
+      {submissionFormId() && (
+        <aside className="mx-auto mt-12 max-w-3xl px-4" aria-labelledby="contribute">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white p-4">
+            <div>
+              <h2 id="contribute" className="font-bold">
+                吃过这家店？
+              </h2>
+              <p className="text-sm text-muted">欢迎补充你的点评或照片，审核后可能会更新到这里。</p>
+            </div>
+            <Link
+              href={submitHref(r.id)}
+              className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700"
+            >
+              补充点评或照片
+            </Link>
+          </div>
+        </aside>
       )}
 
       <footer className="mx-auto mt-12 max-w-3xl space-y-1 border-t border-line px-4 pt-6 text-sm text-muted">
