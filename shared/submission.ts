@@ -94,7 +94,7 @@ export const TALLY_QUESTIONS = {
  * Optional dish groups: "菜品1 名称", "菜品1 评价", "菜品1 照片", "菜品1 点评",
  * up to TALLY_DISH_GROUPS. Each group's photos belong to that dish.
  */
-export const TALLY_DISH_GROUPS = 5;
+export const TALLY_DISH_GROUPS = 10;
 export const TALLY_DISH_QUESTIONS = {
   name: '名称',
   verdict: '评价',
