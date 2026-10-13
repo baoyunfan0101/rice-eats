@@ -86,7 +86,7 @@ Coding agents follow the `restaurant-intake` Agent Skill ([.claude/skills/restau
 
 ### Public submissions
 
-The website's submission form is hosted by Tally and notifies `hello.riceeats@gmail.com`. Maintainers import submissions with `npm run content:submission -- import <export.csv>`, which stores them in `private/submissions/`, downloads their photos through checked requests to Tally's file hosts, lets missing photos be retried or added by hand, skips duplicates, and reports the restaurant match and consent before the Agent Skill prepares a draft. Form setup, the Gmail workflow, and the end-to-end checklist are in [docs/submissions.md](docs/submissions.md). **Status:** the form has not been created yet, so `TALLY_FORM` is empty and the site hides its submission links until a maintainer completes that setup.
+The website's submission form is hosted by Tally and notifies `hello.riceeats@gmail.com`. Maintainers import submissions with `npm run content:submission -- import <export.csv>`, which stores them in `private/submissions/`, downloads their photos through checked requests to Tally's file hosts, lets missing photos be retried or added by hand, skips duplicates, and reports the restaurant match and consent before the Agent Skill prepares a draft. Form setup, the Gmail workflow, and the end-to-end checklist are in [docs/submissions.md](docs/submissions.md). **Status:** the form is published at https://tally.so/r/obrKlP and configured as `TALLY_FORM` in `site.config.ts`; the live end-to-end checklist has not been run yet.
 
 ## Deployment
 

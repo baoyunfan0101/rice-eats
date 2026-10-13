@@ -712,7 +712,7 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
     notes.push(`rating answer "${submission.ratingAnswer}" is not one of the five levels; leave the rating out`);
   }
   if (!submission.email) notes.push('no contact email: questions cannot be sent back to the contributor');
-  if (!submission.displayName) notes.push('no display name: ask the maintainer how to credit it (e.g. anonymous)');
+  if (!submission.displayName) notes.push('no display name: credit it as 匿名 (the form says so)');
   return { blockers, notes, photos: photoSummary(state) };
 }
 
@@ -976,7 +976,7 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   }
   lines.push(`  rating:     ${result.rating ?? 'none'}`);
   lines.push(
-    `  credit:     ${s.displayName ? `display name "${s.displayName}"` : 'no display name'}; ` +
+    `  credit:     ${s.displayName ? `display name "${s.displayName}"` : 'no display name (credit as 匿名)'}; ` +
       `${s.email ? 'contact email provided (private)' : 'no contact email'}`,
   );
   lines.push(`  consent:    ${s.consent ? 'yes' : 'NO'}`);
