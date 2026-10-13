@@ -46,7 +46,10 @@ vi.mock('./views/PickerMap', async () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view]);
     return (
-      <div aria-label={props.label}>
+      <div
+        aria-label={props.label}
+        data-view={`${view.center.lat.toFixed(4)},${view.center.lng.toFixed(4)},${view.zoom}`}
+      >
         {props.onMapClick && (
           <button type="button" onClick={() => props.onMapClick!({ lat: 29.7, lng: -95.4 })}>
             在地图上点一下
@@ -75,6 +78,9 @@ vi.mock('./views/PickerMap', async () => {
   }
   return { default: PickerMapStub };
 });
+
+/** The view the map was given: "lat,lng,zoom". */
+const mapView = () => screen.getByLabelText('附近餐厅地图').getAttribute('data-view');
 
 /** Hidden fields passed to the embedded form (its URL without the embed options). */
 const formParams = () => {
@@ -401,6 +407,14 @@ describe('submissions', () => {
       selection_method: 'manual',
       source: 'site',
     });
+    // Back to step 1: the entry stays selected and the map stays where it was.
+    await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+    expect(
+      within(screen.getByRole('region', { name: '已选餐厅' })).getByText('小面馆'),
+    ).toBeInTheDocument();
+    expect(mapView()).toBe('29.7174,-95.4018,15');
+    await user.click(screen.getByRole('button', { name: NEXT }));
+    expect(formParams()).toMatchObject({ restaurant_name: '小面馆', selection_method: 'manual' });
   });
 
   it('passes a manual marker as the restaurant location', async () => {
@@ -734,6 +748,49 @@ describe('submissions', () => {
       expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
     });
 
+    it('focuses a chosen restaurant and restores the last map view after step 2', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
+      // Choosing focuses the map on the restaurant.
+      expect(mapView()).toBe('29.7183,-95.4012,16');
+      // The contributor keeps browsing, then continues and comes back.
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+      expect(mapView()).toBe('29.7350,-95.3900,15');
+      expect(
+        within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Noodle Corner'),
+      ).toBeInTheDocument();
+      // Choosing another restaurant focuses on it.
+      await user.click(await screen.findByRole('button', { name: '图钉：Taco Stop' }));
+      expect(mapView()).toBe('29.7352,-95.3897,16');
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      expect(formParams()).toMatchObject({ restaurant_name: 'Taco Stop', poi_id: 'p-taco' });
+    });
+
+    it('lists the restaurants in view for choosing without the pins', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      await user.click(screen.getByText('按列表查看这 2 家餐厅'));
+      const list = screen.getByRole('list', { name: '地图上的餐厅' });
+      // Nearest the map center first.
+      expect(
+        within(list)
+          .getAllByRole('button')
+          .map((b) => b.textContent),
+      ).toEqual(['Noodle Corner7 Pine St', 'East Deli3 Bay St']);
+      await user.click(within(list).getByRole('button', { name: /East Deli/ }));
+      expect(
+        within(screen.getByRole('region', { name: '已选餐厅' })).getByText('East Deli'),
+      ).toBeInTheDocument();
+      expect(within(list).getByRole('button', { name: /East Deli/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
     it('lets the contributor change the selection and come back from step 2', async () => {
       const user = userEvent.setup();
       visit('submit/');
@@ -786,6 +843,8 @@ describe('submissions', () => {
     );
     await user.click(screen.getByRole('button', { name: '更换餐厅' }));
     expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+    // The map opens on that restaurant.
+    expect(mapView()).toBe('29.7400,-95.3900,16');
     // The restaurant stays selected (its pin and the panel) until another is chosen.
     expect(
       within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Bayou BBQ'),
@@ -796,24 +855,112 @@ describe('submissions', () => {
     expect(formParams()).toMatchObject({ restaurant_id: 'bayou-bbq', source: 'restaurant-page' });
   });
 
-  it('offers the form in a new window only when it does not load', async () => {
-    vi.stubEnv('VITE_TALLY_FORM', FORM);
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
+  describe('embedded form loading', () => {
+    const FALLBACK = /在新窗口打开投稿表单/;
+    /** Tally's message from the embedded form (or, with other arguments, an impostor). */
+    const tallyMessage = (
+      frame: HTMLIFrameElement,
+      { formId = 'wMq8xY', origin = 'https://tally.so', source = frame.contentWindow } = {},
+    ) =>
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: JSON.stringify({ event: 'Tally.FormLoaded', payload: { formId } }),
+            origin,
+            source,
+          }),
+        );
+      });
+    const frame = () => screen.getByTitle<HTMLIFrameElement>('Rice吃啥 投稿表单');
+
+    beforeEach(() => {
+      vi.stubEnv('VITE_TALLY_FORM', FORM);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('shows the form without recovery options once Tally reports it loaded', async () => {
       visit('submit/?restaurant=bayou-bbq');
-      const frame = await screen.findByTitle('Rice吃啥 投稿表单');
-      expect(screen.queryByText(/在新窗口打开投稿表单/)).not.toBeInTheDocument();
-      act(() => void vi.advanceTimersByTime(16000));
-      const link = screen.getByRole('link', { name: /在新窗口打开投稿表单/ });
-      expect(link.getAttribute('href')).toMatch(
-        /^https:\/\/tally\.so\/r\/wMq8xY\?restaurant_id=bayou-bbq/,
-      );
-      // Once the embed loads, the fallback goes away.
-      act(() => void frame.dispatchEvent(new Event('load')));
-      expect(screen.queryByText(/在新窗口打开投稿表单/)).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+      await screen.findByTitle('Rice吃啥 投稿表单');
+      expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
+      tallyMessage(frame());
+      expect(screen.queryByText('正在加载投稿表单…')).not.toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(30000));
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '重新加载表单' })).not.toBeInTheDocument();
+    });
+
+    it('offers recovery when the form loads slowly or not at all', async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice吃啥 投稿表单');
+      act(() => void vi.advanceTimersByTime(9000));
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(2000));
+      expect(screen.getByText(/表单好像没有正常加载/)).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: FALLBACK });
+      expect(link).toHaveAttribute('target', '_blank');
+      // The new window gets the same restaurant, without the embed options.
+      const direct = new URL(link.getAttribute('href')!);
+      expect(direct.origin + direct.pathname).toBe('https://tally.so/r/wMq8xY');
+      expect(Object.fromEntries(direct.searchParams)).toEqual(formParams());
+      // A late load still clears the notice.
+      tallyMessage(frame());
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+    });
+
+    it('does not count a frame that loaded an error page as the form', async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice吃啥 投稿表单');
+      // The iframe's load event fires for any page, including Tally's error page.
+      act(() => void frame().dispatchEvent(new Event('load')));
+      // Messages from elsewhere, or about another form, do not count either.
+      tallyMessage(frame(), { origin: 'https://evil.example' });
+      tallyMessage(frame(), { formId: 'other' });
+      tallyMessage(frame(), { source: window });
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(screen.getByRole('link', { name: FALLBACK })).toBeInTheDocument();
+    });
+
+    it('reloads the form on request and starts the check again', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice吃啥 投稿表单');
+      act(() => void vi.advanceTimersByTime(11000));
+      const before = frame();
+      await user.click(screen.getByRole('button', { name: '重新加载表单' }));
+      // A new frame with the same restaurant, and no stale notice.
+      expect(frame()).not.toBe(before);
+      expect(formParams()).toMatchObject({ restaurant_id: 'bayou-bbq' });
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
+      tallyMessage(frame());
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+    });
+
+    it('starts a fresh form after changing the restaurant', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice吃啥 投稿表单');
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(screen.getByRole('link', { name: FALLBACK })).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+      await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
+      await user.type(screen.getByLabelText('餐厅名字'), 'Other Place');
+      await user.click(screen.getByLabelText(/我不确定具体位置/));
+      await user.click(screen.getByRole('button', { name: '下一步' }));
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      // The old timeout does not carry over to the new form.
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
+      expect(formParams()).toMatchObject({ restaurant_name: 'Other Place' });
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(
+        new URL(
+          screen.getByRole('link', { name: FALLBACK }).getAttribute('href')!,
+        ).searchParams.get('restaurant_name'),
+      ).toBe('Other Place');
+    });
   });
 
   it('ignores unknown restaurant ids and lets the contributor choose', async () => {

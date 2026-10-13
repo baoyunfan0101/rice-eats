@@ -3,6 +3,7 @@ import 'leaflet/dist/leaflet.css';
 import { useEffect, useMemo, useState } from 'react';
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngValue } from '../../shared/submission';
+import { placeLabels, type LabelPlacement } from '../lib/labelLayout';
 import type { Bounds, RestaurantCandidate } from '../lib/poi';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
@@ -12,12 +13,17 @@ const escapeHtml = (text: string) =>
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
 
-/** A pin with the restaurant name beside it (names come from POI data: escaped). */
-function poiIcon(name: string | undefined, selected: boolean): L.DivIcon {
-  const label = name ? `<span class="poi-label">${escapeHtml(name)}</span>` : '';
+/**
+ * A pin, with the restaurant name beside it when it has a label placement
+ * (names come from POI data: escaped).
+ */
+function poiIcon(name: string, selected: boolean, label?: LabelPlacement): L.DivIcon {
+  const html = label
+    ? `<span class="poi-label${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px">${escapeHtml(name)}</span>`
+    : '';
   return L.divIcon({
     className: `poi-marker${selected ? ' is-selected' : ''}`,
-    html: `<span class="poi-pin" aria-hidden="true"></span>${label}`,
+    html: `<span class="poi-pin" aria-hidden="true"></span>${html}`,
     // The anchor is the tip of the pin.
     iconSize: selected ? [32, 40] : [24, 30],
     iconAnchor: selected ? [16, 40] : [12, 30],
@@ -103,19 +109,13 @@ function Container({ label }: { label: string }) {
   return null;
 }
 
-/** Approximate label box in pixels, relative to the pin tip. */
-const LABEL_HEIGHT = 22;
-const labelWidth = (name: string) => {
-  let units = 0;
-  for (const ch of name) units += /[\u2E80-\uFFFF]/.test(ch) ? 2 : 1.1;
-  return Math.min(176, units * 6.5 + 14);
-};
-
 /**
- * Restaurant pins with their names. Names are placed greedily so they do not
- * overlap: the selected restaurant first, then the ones nearest the map
- * center; a name that would overlap one already placed is left out (its pin
- * stays, and the name shows as the map is zoomed in).
+ * Restaurant pins with their names. `placeLabels` decides which pins are
+ * named and on which side: the selected restaurant always, the others nearest
+ * the map center first, without overlaps, covered pins, or names cut off by
+ * the map edge. Pins without room keep their name as a tooltip and appear in
+ * the list below the map. The layout follows pans, zooms, resizes, and new
+ * candidates.
  */
 function CandidateMarkers({
   candidates,
@@ -124,39 +124,30 @@ function CandidateMarkers({
 }: Pick<Props, 'selectedKey' | 'onSelect'> & { candidates: RestaurantCandidate[] }) {
   const map = useMap();
   const [layout, setLayout] = useState(0);
-  useMapEvents({ zoomend: () => setLayout((n) => n + 1), moveend: () => setLayout((n) => n + 1) });
+  const relayout = () => setLayout((n) => n + 1);
+  useMapEvents({ zoomend: relayout, moveend: relayout, resize: relayout });
 
-  const labeled = useMemo(() => {
+  const labels = useMemo(() => {
     void layout; // recompute when the map moves
     const size = map.getSize();
-    const center = L.point(size.x / 2, size.y / 2);
-    const placed: L.Bounds[] = [];
-    const shown = new Set<string>();
-    const ordered = candidates
-      .map((c) => ({ c, p: map.latLngToContainerPoint([c.location.lat, c.location.lng]) }))
-      .sort(
-        (a, b) =>
-          Number(b.c.key === selectedKey) - Number(a.c.key === selectedKey) ||
-          a.p.distanceTo(center) - b.p.distanceTo(center),
-      );
-    for (const { c, p } of ordered) {
-      const top = p.y - (c.key === selectedKey ? 34 : 26);
-      const box = L.bounds([p.x + 10, top], [p.x + 14 + labelWidth(c.name), top + LABEL_HEIGHT]);
-      if (c.key !== selectedKey && placed.some((b) => b.intersects(box))) continue;
-      placed.push(box);
-      shown.add(c.key);
-    }
-    return shown;
+    return placeLabels(
+      candidates.map((c) => {
+        const p = map.latLngToContainerPoint([c.location.lat, c.location.lng]);
+        return { key: c.key, x: p.x, y: p.y, name: c.name, selected: c.key === selectedKey };
+      }),
+      { width: size.x, height: size.y },
+    );
   }, [candidates, selectedKey, map, layout]);
 
   return candidates.map((c) => {
     const selected = c.key === selectedKey;
+    const label = labels.get(c.key);
     return (
       <Marker
         key={c.key}
         position={[c.location.lat, c.location.lng]}
-        icon={poiIcon(labeled.has(c.key) ? c.name : undefined, selected)}
-        zIndexOffset={selected ? 1000 : labeled.has(c.key) ? 100 : 0}
+        icon={poiIcon(c.name, selected, label)}
+        zIndexOffset={selected ? 1000 : label ? 100 : 0}
         title={c.name}
         alt={c.name}
         eventHandlers={{

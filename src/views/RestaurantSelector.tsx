@@ -3,6 +3,7 @@ import { RICE_CENTER } from '../../shared/content/model';
 import type { LatLngValue } from '../../shared/submission';
 import {
   DISCOVERY_MIN_ZOOM,
+  distanceMeters,
   distanceText,
   poiAttribution,
   PoiError,
@@ -77,7 +78,7 @@ const FOCUS_ZOOM = 16;
 
 /**
  * Step 1, map-first restaurant selection: the map opens on Rice University
- * (or the selected restaurant) and shows the restaurants in view as named
+ * (or the selected restaurant, or where it was left) and shows the restaurants in view as named
  * pins, updating as the map is panned or zoomed (including after
  * "使用当前位置", which only moves the map). Choosing a pin, a search result,
  * or a manual entry selects it in place: the map focuses on it, it is shown
@@ -98,10 +99,13 @@ export function RestaurantSelector({
   onNext: () => void;
   onViewChange?: (v: MapView) => void;
 }) {
+  // Coming back to this step restores the map where the contributor left it;
+  // otherwise the map opens on the selected restaurant (e.g. from a
+  // restaurant page), or on Rice University.
   const [view, setView] = useState<MapView>(
     () =>
-      (selection?.location && { center: selection.location, zoom: FOCUS_ZOOM }) ??
       startView ??
+      (selection?.location && { center: selection.location, zoom: FOCUS_ZOOM }) ??
       START,
   );
   const [area, setArea] = useState<MapArea>();
@@ -302,6 +306,22 @@ export function RestaurantSelector({
           onRetry={() => setAttempt((n) => n + 1)}
         />
       )}
+      {!searching && discovered.length > 0 && area && (
+        // Where pins are too dense for every name (or on a small screen), the
+        // restaurants in view can be read and chosen as a list.
+        <details className="group rounded-2xl border border-line bg-white">
+          <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-semibold">
+            按列表查看这 {discovered.length} 家餐厅
+          </summary>
+          <CandidateList
+            label="地图上的餐厅"
+            candidates={byDistance(discovered, area.center)}
+            selectedKey={selectedKey}
+            onSelect={(c) => choose(fromCandidate(c))}
+            className="max-h-80 overflow-y-auto border-t border-line"
+          />
+        </details>
+      )}
 
       <div className="space-y-2">
         <label className="block">
@@ -469,11 +489,43 @@ function NameResultList({
     );
   }
   return (
-    <ul
-      aria-label="搜索结果"
-      className="divide-y divide-line rounded-2xl border border-line bg-white"
-    >
-      {results.candidates.map((c) => (
+    <CandidateList
+      label="搜索结果"
+      candidates={results.candidates}
+      selectedKey={selectedKey}
+      onSelect={onSelect}
+      className="rounded-2xl border border-line bg-white"
+    />
+  );
+}
+
+/**
+ * Nearest the map center first. Distances are left out: they would be
+ * measured from the map center, not from the contributor.
+ */
+function byDistance(candidates: RestaurantCandidate[], center: LatLngValue) {
+  return candidates
+    .map((c) => ({ c, d: distanceMeters(center, c.location) }))
+    .sort((a, b) => a.d - b.d)
+    .map(({ c: { distance: _, ...c } }) => c);
+}
+
+function CandidateList({
+  label,
+  candidates,
+  selectedKey,
+  onSelect,
+  className,
+}: {
+  label: string;
+  candidates: RestaurantCandidate[];
+  selectedKey?: string;
+  onSelect: (c: RestaurantCandidate) => void;
+  className: string;
+}) {
+  return (
+    <ul aria-label={label} className={`divide-y divide-line ${className}`}>
+      {candidates.map((c) => (
         <li key={c.key}>
           <button
             type="button"

@@ -17,19 +17,37 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   panel shows its name and address with "下一步：填写点评 →". There is no
   separate confirmation page. "第二步 · 填写点评" shows the restaurant name
   once in the heading ("为「…」投稿") with "更换餐厅" as a secondary action
-  (back to step 1, keeping the selection and map view), then the embedded
-  form. A direct link to the Tally-hosted form ("在新窗口打开投稿表单")
-  appears only if the form has not loaded after 15 seconds. The form loads
-  only on that page, and the website never writes to the database.
+  (back to step 1, keeping the selection and restoring the map where the
+  contributor left it), then the embedded form. The form loads only on that
+  page, and the website never writes to the database.
+- **Form loading** (`src/views/SubmitPage.tsx`): the iframe's load event also
+  fires for Tally's error pages, so the page waits instead for Tally's own
+  `Tally.FormLoaded` message, which embedded forms post to the parent page
+  (accepted only from `https://tally.so`, from that iframe, for this form
+  id). Until then a short "正在加载投稿表单…" note is shown. Without the
+  message after 10 seconds (offline, blocked, Tally unavailable, or an error
+  page inside the frame), the page says the form did not load properly and
+  offers "重新加载表单" (a fresh iframe and a fresh check) and
+  "在新窗口打开投稿表单" (the Tally-hosted form with the same hidden fields).
+  Neither appears while the form works. Choosing another restaurant starts a
+  fresh form and check.
 - **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
   `src/views/PickerMap.tsx`, `src/lib/poi.ts`) is map-first. The map opens on
   Rice University and shows the restaurants in view (restaurants, fast food,
   cafes, food courts from the
   [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)) as pins
-  labelled with the restaurant name (labels that would overlap are left out,
-  keeping the selected one and those nearest the center; every pin still has
-  its name as a tooltip); clicking a pin selects that restaurant. Distances
-  are shown in miles. Panning or zooming updates the pins
+  labelled with the restaurant name; clicking a pin (or its name) selects that
+  restaurant. Labels (`src/lib/labelLayout.ts`) go on the right of a pin, or
+  on the left near the right edge, so they stay inside the map; they never
+  overlap each other or cover another pin. The selected restaurant's name is
+  always shown (truncated only if neither side has room); the others are
+  named nearest the map center first, and a pin without room keeps its name
+  as a tooltip. The layout follows pans, zooms, resizes, and newly loaded
+  pins. Where pins are dense (or the screen is small), "按列表查看这 N
+  家餐厅" lists every restaurant in view, nearest the map center first, to
+  read and choose from. Choosing a restaurant focuses the map on it; going
+  back from step 2 restores the last view instead. Distances are shown in
+  miles. Panning or zooming updates the pins
   once the map settles. "使用当前位置" only moves the map (the browser asks
   for location after that click, never on load); discovery then works as for
   any other area. The device position is never submitted; the location sent
@@ -370,7 +388,8 @@ processed they can be deleted, while the log keeps the ids.
 
 ## End-to-end verification (after setup)
 
-Automated tests use a stub instead of Tally, so the live integration must be
+Automated tests use a stub instead of Tally (it posts the same
+`Tally.FormLoaded` message), so the live integration must be
 checked by hand once the form exists:
 
 1. Open https://baoyunfan0101.github.io/rice-eats/ and use the "投稿" link.

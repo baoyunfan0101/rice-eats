@@ -285,6 +285,26 @@ describe('reading Tally exports', () => {
     ]);
   });
 
+  it('ignores the untitled "add a dish" checkbox columns', () => {
+    // The 菜品N 添加 questions have no title in the form, so an export may
+    // show them blank, as "Untitled …", or by their option text.
+    const extra = ['', 'Untitled checkboxes field (＋ 添加一道菜)', '(＋ 再添加一道菜)'];
+    const header = [...COLUMNS.slice(0, 5), ...extra, ...COLUMNS.slice(5)];
+    const values: Record<string, string> = {
+      'Submission ID': 'sub-untitled',
+      你的点评: '不错',
+      '菜品1 名称': '牛肉面',
+      '菜品1 评价': '🔥 推荐',
+      发布授权: CONSENT,
+    };
+    const line = header
+      .map((c, i) => quote(i >= 5 && i < 5 + extra.length ? 'true' : (values[c] ?? '')))
+      .join(',');
+    const [s] = submissionsFromCsv([header.map(quote).join(','), line].join('\r\n'));
+    expect(s!.review).toBe('不错');
+    expect(s!.dishes).toEqual([{ name: '牛肉面', verdictAnswer: '🔥 推荐', photoUrls: [] }]);
+  });
+
   it('reports exports that do not match the form', () => {
     expect(() => submissionsFromCsv('Name,Review\nx,y')).toThrow(/Submission ID/);
     expect(() => submissionsFromCsv('Submission ID,Review\nx,y')).toThrow(/consent/);

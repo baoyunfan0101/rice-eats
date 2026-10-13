@@ -13,10 +13,12 @@ test.beforeEach(async ({ page }) => {
   );
   // The fixture build points at a fake Tally form (TALLY_FORM in build:e2e);
   // a stub page stands in for it, so no test depends on a real Tally account.
+  // Like Tally, it tells the page once the form has rendered.
   await page.route(/^https:\/\/tally\.so\//, (route) =>
     route.fulfill({
       contentType: 'text/html',
-      body: `<!doctype html><title>stub</title><p>Stub Tally form</p><p id="query">${new URL(route.request().url()).search}</p>`,
+      body: `<!doctype html><title>stub</title><p>Stub Tally form</p><p id="query">${new URL(route.request().url()).search}</p>
+<script>parent.postMessage(JSON.stringify({ event: 'Tally.FormLoaded', payload: { formId: 'e2eForm' } }), '*');</script>`,
     }),
   );
 });
@@ -189,15 +191,15 @@ const FAKE_PLACES = [
 ];
 
 /** A fake Geoapify Places API: the fake places inside a rectangle, or one named after the query. */
-async function fakePlaces(page: Page) {
+async function fakePlaces(page: Page, fixtures = FAKE_PLACES) {
   const requests: URL[] = [];
   await page.route(/^https:\/\/api\.geoapify\.com\//, (route) => {
     const url = new URL(route.request().url());
     requests.push(url);
     const filter = url.searchParams.get('filter')!;
     const name = url.searchParams.get('name');
-    let places = FAKE_PLACES;
-    if (name) places = [{ ...FAKE_PLACES[0]!, place_id: 'e2e-named', name: `${name} Kitchen` }];
+    let places = fixtures;
+    if (name) places = [{ ...fixtures[0]!, place_id: 'e2e-named', name: `${name} Kitchen` }];
     else if (filter.startsWith('rect:')) {
       const [w, s, e, n] = filter.slice(5).split(',').map(Number) as [
         number,
@@ -205,7 +207,7 @@ async function fakePlaces(page: Page) {
         number,
         number,
       ];
-      places = FAKE_PLACES.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
+      places = fixtures.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
     }
     return route.fulfill({ json: { features: places.map((properties) => ({ properties })) } });
   });
@@ -254,6 +256,91 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   await expect(query).toContainText('restaurant_lat=29.718400&restaurant_lng=-95.401800');
   await expect(query).toContainText('poi_provider=geoapify&poi_id=e2e-place');
   await expect(query).toContainText('selection_method=poi&source=site');
+});
+
+/** Label boxes of the pins on the map, and the map's box. */
+async function labelBoxes(page: Page) {
+  const map = (await page.getByRole('region', { name: '附近餐厅地图' }).boundingBox())!;
+  const labels = await page.locator('.poi-label').evaluateAll((els) =>
+    els.map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        name: el.textContent ?? '',
+        selected: !!el.closest('.is-selected'),
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+      };
+    }),
+  );
+  return { map, labels };
+}
+
+test('pin names stay readable, inside the map, and follow the map', async ({ page }) => {
+  // A dense block next to Rice, long names, and a restaurant at the map's east edge.
+  const dense = Array.from({ length: 12 }, (_, i) => ({
+    place_id: `e2e-dense-${i}`,
+    name: i % 2 ? `川味小馆 ${i}号店` : `The Long Named Neighborhood Bistro ${i}`,
+    address_line2: `${i} Dense St`,
+    lat: 29.7174 + (i % 4) * 0.0002,
+    lon: -95.4018 + Math.floor(i / 4) * 0.0003,
+  }));
+  await fakePlaces(page, [...FAKE_PLACES, ...dense]);
+  await page.goto('/rice-eats/submit/');
+  await expect(page.locator('.poi-label').first()).toBeVisible();
+  const check = async () => {
+    const { map, labels } = await labelBoxes(page);
+    expect(labels.length).toBeGreaterThan(1);
+    for (const l of labels) {
+      expect(l.left).toBeGreaterThanOrEqual(map.x - 1);
+      expect(l.right).toBeLessThanOrEqual(map.x + map.width + 1);
+    }
+    // No two names overlap.
+    for (const [i, a] of labels.entries()) {
+      for (const b of labels.slice(i + 1)) {
+        const overlap =
+          a.left < b.right - 1 &&
+          b.left < a.right - 1 &&
+          a.top < b.bottom - 1 &&
+          b.top < a.bottom - 1;
+        expect(overlap, `${a.name} / ${b.name}`).toBe(false);
+      }
+    }
+    return labels;
+  };
+  await check();
+
+  // Every restaurant in view can be read and chosen from the list.
+  await page.getByText(/按列表查看这 \d+ 家餐厅/).click();
+  const list = page.getByRole('list', { name: '地图上的餐厅' });
+  await expect(list.getByRole('button')).toHaveCount(13);
+  await list.getByRole('button', { name: /川味小馆 7号店/ }).click();
+  const selectedPin = pin(page, '川味小馆 7号店');
+  await expect(selectedPin).toHaveClass(/is-selected/);
+  // The selected name is always shown, whatever crowds it.
+  await expect(selectedPin.locator('.poi-label')).toHaveText('川味小馆 7号店');
+  await check();
+
+  // After zooming out and panning, the layout follows the map.
+  await page.getByRole('button', { name: 'Zoom out' }).click();
+  await expect(page.locator('.poi-label')).not.toHaveCount(0);
+  await page.waitForTimeout(500); // the zoom animation
+  const map = page.getByRole('region', { name: '附近餐厅地图' });
+  const box = (await map.boundingBox())!;
+  // Pan the map (with the keyboard, 80 px a step) until the selected
+  // restaurant is near its right edge.
+  const pinBox = (await selectedPin.boundingBox())!;
+  const steps = Math.floor((box.x + box.width - 14 - (pinBox.x + pinBox.width / 2)) / 80);
+  await map.focus();
+  for (let i = 0; i < steps; i++) {
+    await page.keyboard.press('ArrowLeft');
+    // Leaflet ignores arrow keys while the previous pan is animating.
+    await page.waitForTimeout(400);
+  }
+  await expect(selectedPin.locator('.poi-label')).toHaveClass(/is-left/);
+  const labels = await check();
+  expect(labels.some((l) => l.selected && l.name === '川味小馆 7号店')).toBe(true);
 });
 
 test('the current location moves the map and the pins follow', async ({ page, context }) => {
@@ -376,7 +463,8 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await expect(query).toContainText('restaurant_lat=29.705300&restaurant_lng=-95.546500');
   await expect(query).toContainText('selection_method=existing&source=restaurant-page');
   await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
-  // The fallback link only appears when the form does not load.
+  // Tally reports the form loaded: no loading note and no fallback link.
+  await expect(page.getByText('正在加载投稿表单…')).toHaveCount(0);
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
 
   await page.getByRole('button', { name: '更换餐厅' }).click();
@@ -385,6 +473,39 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await page.getByRole('link', { name: '投稿', exact: true }).click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);
   await expect(page.locator('iframe')).toHaveCount(0);
+});
+
+test('the form offers recovery when Tally does not load', async ({ page }) => {
+  // Tally answers with a page that never reports a loaded form (like its
+  // error page): the iframe still fires its load event.
+  let broken = true;
+  await page.route(/^https:\/\/tally\.so\//, (route) =>
+    broken
+      ? route.fulfill({ status: 503, contentType: 'text/html', body: '<p>Service unavailable</p>' })
+      : route.fallback(),
+  );
+  await page.clock.install();
+  await page.goto('/rice-eats/submit/?restaurant=fixture-sichuan-house');
+  await expect(page.getByText('正在加载投稿表单…')).toBeVisible();
+  await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
+  await page.clock.fastForward(11000);
+  await expect(page.getByText(/表单好像没有正常加载/)).toBeVisible();
+  const link = page.getByRole('link', { name: /在新窗口打开投稿表单/ });
+  const direct = new URL((await link.getAttribute('href'))!);
+  expect(direct.pathname).toBe('/r/e2eForm');
+  expect(direct.searchParams.get('restaurant_id')).toBe('fixture-sichuan-house');
+  expect(direct.searchParams.get('source')).toBe('restaurant-page');
+  expect(direct.searchParams.has('hideTitle')).toBe(false);
+
+  // Once Tally works again, reloading shows the form and clears the notice.
+  broken = false;
+  await page.getByRole('button', { name: '重新加载表单' }).click();
+  await expect(
+    page.frameLocator('iframe[title="Rice吃啥 投稿表单"]').getByText('Stub Tally form'),
+  ).toBeVisible();
+  await expect(page.getByText('正在加载投稿表单…')).toHaveCount(0);
+  await page.clock.fastForward(11000);
+  await expect(page.getByText(/表单好像没有正常加载/)).toHaveCount(0);
 });
 
 test('the form does not load on other pages', async ({ page }) => {
