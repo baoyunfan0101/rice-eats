@@ -129,12 +129,23 @@ one:
   dish's `image` to its first imported photo; never move a photo to a
   different dish;
 - **rating**: already mapped to 1-5 from the form's five options, or none;
-  never infer dish verdicts from it;
+  never infer dish verdicts from it. The form requires the rating and makes
+  the review text optional, so a **rating-only** submission is valid: draft
+  `info.json` with the rating and no `review.md` (for an existing
+  restaurant, ask the maintainer whether the new rating replaces the current
+  one). Older submissions may have text and no rating;
 - **credit and consent**: the display name (credit a blank one as 匿名, as the form promises), whether a contact email exists
   (the email stays private: pass it only to `content:contributor -- add
---email`), and consent. A `BLOCKED` submission (no consent, or neither text
-  nor photos, or photos only and none retrieved) gets no draft; report it to
-  the maintainer.
+--email`), and consent. A `BLOCKED` submission (no consent, or neither a
+  valid rating, text, nor photos, or photos only and none retrieved) gets no
+  draft; report it to the maintainer.
+- **review checks**: notes starting with `review check:` flag promotion,
+  a possible undisclosed relationship with the restaurant, strong
+  accusations, near-identical texts, or repeat reviews by one email. They
+  never block on their own: show them to the maintainer, remove promotional
+  content, and do not draft such a submission until the maintainer decides
+  (ask the contributor to disclose a relationship, keep only supported
+  claims, or reject).
 - **photos**: `complete` or `incomplete`, with each photo's state. For an
   incomplete intake, run `npm run content:submission -- retry-photos <id>`;
   if a link has expired, ask the maintainer to download the photo from the

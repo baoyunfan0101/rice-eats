@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from '../components/Link';
+import type { SearchArea } from '../lib/areas';
 import { Loading, Message } from '../components/States';
 import { useContentIndex } from '../lib/content';
 import { browseHref, restaurantHref } from '../lib/router';
@@ -23,7 +24,7 @@ export function SubmitPage({ restaurantId }: { restaurantId?: string }) {
   const formId = submissionFormId();
 
   useEffect(() => {
-    document.title = '投稿 · Rice吃啥';
+    document.title = '投稿 · Rice Eats';
   }, []);
 
   if (!formId) {
@@ -71,6 +72,7 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
   const [selection, setSelection] = useState<Selection | undefined>(initial);
   // Where the map was, so going back to step 1 keeps the contributor's place.
   const [mapView, setMapView] = useState<MapView>();
+  const [searchArea, setSearchArea] = useState<SearchArea>();
   const heading = useRef<HTMLHeadingElement>(null);
   const first = useRef(true);
 
@@ -130,9 +132,11 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
         <RestaurantSelector
           selection={selection}
           startView={mapView}
+          startArea={searchArea}
           onSelect={setSelection}
           onNext={() => setStep('form')}
           onViewChange={setMapView}
+          onAreaChange={setSearchArea}
         />
       )}
     </div>
@@ -252,7 +256,7 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
         key={attempt}
         ref={frame}
         src={urls.embed}
-        title="Rice吃啥 投稿表单"
+        title="Rice Eats 投稿表单"
         className="h-[75dvh] min-h-[560px] w-full rounded-2xl border border-line bg-white"
       />
     </section>

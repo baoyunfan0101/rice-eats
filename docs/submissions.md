@@ -31,6 +31,21 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   "在新窗口打开投稿表单" (the Tally-hosted form with the same hidden fields).
   Neither appears while the form works. Choosing another restaurant starts a
   fresh form and check.
+- **Search area** (`src/views/AreaPicker.tsx`, `src/lib/areas.ts`,
+  `src/lib/geocode.ts`): step 1 starts with "选择查找区域" (A), then the
+  restaurant is chosen (B) on the same page. One group of controls moves the
+  map: "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in southwest
+  Houston, between Dun Huang Plaza and Hong Kong City Mall; static
+  coordinates, no request), "使用当前位置" (the browser asks only after that
+  click; a denial leaves the other ways), and "输入地址或地点" (a street
+  address, landmark, or other place, searched only when submitted). A single
+  match moves the map at once; several are listed by name and address to
+  choose from; a failed search offers "重试", and the map can always be
+  dragged. "当前查找区域：…" names the area while the map is within about
+  1.2 km of its center, and "地图当前位置附近" once the contributor has moved
+  away. Choosing an area only moves the map: it never selects a restaurant,
+  and the selected restaurant and the area are separate (both are kept when
+  coming back from step 2).
 - **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
   `src/views/PickerMap.tsx`, `src/lib/poi.ts`) is map-first. The map opens on
   Rice University and shows the restaurants in view (restaurants, fast food,
@@ -66,13 +81,17 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
     and "重试" (or moving the map) loads only the failed tiles again (failures
     are not cached). When nothing loads, the previous pins stay with an error
     and "重试". Results for an area the map has already left are ignored.
-  - A name search ("按名字搜索") finds a specific restaurant within 5 km of the
-    map center, snapped to a ~2 km grid: moving the map to another cell
-    searches again, and results are only shown for the query and area they
-    were made for, so late answers never replace newer ones. If the place is
-    missing, or search is unavailable, "手动添加餐厅" takes a name, an optional
-    address, and a map marker; a name alone is allowed and is marked for
-    location verification.
+  - "在当前区域搜索餐厅" finds a specific restaurant within 5 km (shown as
+    "约 3.1 mi") of the map center, snapped to a ~2 km grid: moving the map
+    or choosing another area searches again, and results are only shown for
+    the query and area they were made for, so late answers never replace
+    newer ones. If the place is missing, or search is unavailable,
+    "手动添加餐厅" takes the 餐厅名称, an optional 餐厅地址, and a map marker;
+    a name alone ("我不确定具体位置") is allowed and is marked for location
+    verification. Manual entry has the same area controls but no restaurant
+    pins. The area is never the restaurant's location: only the
+    contributor's marker is, or a searched place after "用这个地点作为餐厅位置"
+    (which also fills an empty address).
   - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
     (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
     the rest of the session), or a Geoapify request fails, the search goes to
@@ -93,8 +112,20 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
     choose another, and "← 返回餐厅页面" while that restaurant is selected). The page shows the data attribution (Geoapify and
     OpenStreetMap, or OpenStreetMap alone without a key) and a short note that
     the map area and name searches are sent to these services.
-- **Tally**: collects the text, photos, rating, credit, contact email, and
-  consent. Free-plan features only.
+- **Requests** (cheapest that does the job first): the preset areas need no
+  request and the current location comes from the browser. Address search
+  uses the Geoapify Geocoding API (same key; one credit per search), biased
+  to the map center, only on submit, cached per query and area for the
+  session; without a key or when Geoapify refuses or fails, it uses
+  OpenStreetMap [Nominatim](https://nominatim.org/) within its
+  [usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+  (no autocomplete, at most one request a second, cached). Nearby
+  restaurants use Geoapify Places by cached tiles, and name searches a
+  bounded circle; Overpass is only the fallback (one batched request per
+  view), never queried alongside Geoapify. No details service is needed:
+  the places already carry name, address, and coordinates.
+- **Tally**: collects the rating, text, photos, dishes, credit, contact email,
+  and consent. Free-plan features only.
 - **Gmail** (`hello.riceeats@gmail.com`): receives a notification per
   submission. It is a queue, not a database.
 - **Local intake** (`npm run content:submission`, the `restaurant-intake`
@@ -113,54 +144,62 @@ access to them. Menu names may differ slightly in Tally's editor.
 
 1. **Account.** Sign in to Tally with `hello.riceeats@gmail.com` (create the
    account if needed). The notification emails go to the account's address.
-2. **Create a form**, e.g. "Rice吃啥 投稿", with these blocks in this order.
+2. **Create a form**, named "Rice Eats 投稿", with these blocks in this order.
    Keep the question titles exactly as written (intake finds answers in the CSV
    export by these titles, defined in `shared/submission.ts`):
 
-   | Block              | Title / name            | Settings                                                                                                |
-   | ------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------- |
-   | Hidden fields      | `restaurant_id`         | Rice Eats id, only for a restaurant already on the site.                                                |
-   |                    | `restaurant_name`       | The selected restaurant name.                                                                           |
-   |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                       |
-   |                    | `restaurant_lng`        | Longitude, as above.                                                                                    |
-   |                    | `restaurant_address`    | Address, when known.                                                                                    |
-   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                             |
-   |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                |
-   |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                         |
-   |                    | `source`                | `site` or `restaurant-page`.                                                                            |
-   | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                              |
-   | Multiple choice    | `总体评级`              | Optional, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
-   | Long answer        | `你的点评`              | **Required.** Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                       |
-   | Text               |                         | "餐厅整体照片，例如环境、菜单等（选填）。"                                                              |
-   | File upload        | `照片`                  | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.            |
-   | Divider            |                         |                                                                                                         |
-   | Heading 2          |                         | "菜品点评（选填）"                                                                                      |
-   | Text               |                         | "如果想单独评价某道菜，可以添加菜品点评，并上传对应照片（选填）。"                                      |
-   | Checkboxes         | `菜品1 添加`            | Optional, one unchecked option `＋ 添加一道菜`. Title cleared in the editor (see below).                |
-   | Short answer       | `菜品1 名称`            | **Required** (only while shown).                                                                        |
-   | Multiple choice    | `菜品1 评价`            | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.            |
-   | File upload        | `菜品1 照片`            | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                     |
-   | Short answer       | `菜品1 点评`            | Optional; one sentence about the dish.                                                                  |
-   | (same five blocks) | `菜品2 …` to `菜品10 …` | Same settings, with the option `＋ 再添加一道菜` (step 4).                                              |
-   | Divider            |                         |                                                                                                         |
-   | Heading 2          |                         | "署名与授权"                                                                                            |
-   | Short answer       | `署名`                  | Optional. Placeholder: "不填则显示为「匿名」"; intake credits a blank name as 匿名                      |
-   | Email              | `联系邮箱`              | Optional. Placeholder: "只用于和你沟通，不会公开"                                                       |
-   | Checkboxes         | `发布授权`              | Required, one unchecked option whose text starts with `我同意` (consent text below).                    |
-   | Conditional logic  |                         | See step 4.                                                                                             |
-   | reCAPTCHA          |                         | Native spam protection.                                                                                 |
-   | 'Thank you' page   |                         | Confirmation text (step 9).                                                                             |
+   | Block              | Title / name            | Settings                                                                                                    |
+   | ------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+   | Hidden fields      | `restaurant_id`         | Rice Eats id, only for a restaurant already on the site.                                                    |
+   |                    | `restaurant_name`       | The selected restaurant name.                                                                               |
+   |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                           |
+   |                    | `restaurant_lng`        | Longitude, as above.                                                                                        |
+   |                    | `restaurant_address`    | Address, when known.                                                                                        |
+   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                                 |
+   |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                    |
+   |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                             |
+   |                    | `source`                | `site` or `restaurant-page`.                                                                                |
+   | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                  |
+   | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
+   | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                               |
+   | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                |
+   | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                            |
+   | Divider            |                         |                                                                                                             |
+   | Heading 2          |                         | "菜品点评（选填）"                                                                                          |
+   | Text               |                         | "如果想单独评价某道菜，可以添加菜品点评，并上传对应照片。"                                                  |
+   | Checkboxes         | `菜品1 添加`            | Optional, one unchecked option `＋ 添加一道菜`. Title cleared in the editor (see below).                    |
+   | Short answer       | `菜品1 名称`            | **Required** (only while shown).                                                                            |
+   | Multiple choice    | `菜品1 评价`            | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.                |
+   | File upload        | `菜品1 照片（选填）`    | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                         |
+   | Short answer       | `菜品1 点评（选填）`    | Optional; one sentence about the dish.                                                                      |
+   | (same five blocks) | `菜品2 …` to `菜品10 …` | Same settings and the same option `＋ 添加一道菜` (step 4).                                                 |
+   | Divider            |                         |                                                                                                             |
+   | Heading 2          |                         | "署名与授权"                                                                                                |
+   | Short answer       | `署名（选填）`          | Optional; intake credits a blank name as 匿名.                                                              |
+   | Text               |                         | Below it: "采用后会显示在网站上；不填则显示为「匿名」。"                                                    |
+   | Email              | `联系邮箱（选填）`      | Optional.                                                                                                   |
+   | Text               |                         | Below it: "只用于和你沟通，不会公开。"                                                                      |
+   | Checkboxes         | `发布授权`              | Required, one unchecked option whose text starts with `我同意` (consent text below).                        |
+   | Conditional logic  |                         | See step 4.                                                                                                 |
+   | reCAPTCHA          |                         | Native spam protection.                                                                                     |
+   | 'Thank you' page   |                         | Confirmation text (step 9).                                                                                 |
+
+   Optional questions say so in their own title ("（选填）"); required ones
+   use Tally's required setting only. Help text sits directly below the
+   question it belongs to and does not repeat "选填". Intake matches titles by
+   prefix, so `你的点评（选填）` and `菜品1 照片（选填）` are read like
+   `你的点评` and `菜品1 照片` (exports of the older titles still work).
 
    Consent option text (`发布授权`); intake treats an answer starting with
    `我同意` as consent:
 
-   > 我同意：我有权提交这些文字和照片（文字由我撰写，照片由我拍摄或已获授权），并授权 Rice吃啥
-   > 审核；审核通过后可按约定的署名在网站上复制和展示。我了解投稿不保证发布，内容可能为统一格式而编辑
-   > 但不会歪曲我的观点，联系方式不会公开显示。
+   > 我同意并确认：投稿基于真实用餐体验，内容真实、客观，不含虚假宣传、恶意贬损或未披露的商业推广及利益关系。
+   > 我有权提交相关文字和照片，并授权 Rice Eats 经审核后按约定署名展示，以及在不歪曲原意的前提下进行必要编辑。
+   > Rice Eats 保留独立审核及决定是否收录的权利，联系信息仅用于沟通，不对外公开。
 
    The `菜品N 添加` checkbox questions have an empty title, so contributors see
-   only the option (`＋ 添加一道菜` / `＋ 再添加一道菜`), not a second label
-   above it. Intake never reads these answers, and the conditional logic
+   only the option `＋ 添加一道菜` (the same for every dish; the next dish's
+   questions are numbered `菜品2 …`), not a second label above it. Intake never reads these answers, and the conditional logic
    refers to the questions by id, so the empty titles change nothing else
    (the names above are how this document refers to them).
 
@@ -183,8 +222,11 @@ access to them. Menu names may differ slightly in Tally's editor.
      `菜品3` to `菜品10`. Tally does not enforce required questions while they
      are hidden, so a dish's name and verdict are required only once the
      contributor adds that dish. Intake also reports dishes without a name or
-     verdict and submissions without a review, so a gap here never publishes
-     anything.
+     verdict, so a gap here never publishes anything.
+   - The overall rating is required and the review text optional, so a
+     submission may carry only a rating (plus consent). Intake accepts that
+     as content; an invalid rating alone is blocked. Older submissions with
+     text and no rating stay valid.
    - Option labels carry the same emoji as the website (`src/lib/labels.ts`);
      intake accepts the answers with or without the emoji.
 5. **Photos.** In each file upload block, allow multiple files, limit the
@@ -199,7 +241,7 @@ access to them. Menu names may differ slightly in Tally's editor.
    email notifications** to `hello.riceeats@gmail.com`.
 9. **Confirmation.** Customize the thank-you page (or message) to:
 
-   > 投稿已收到，谢谢！我们会先人工审核，内容不会立即出现在网站上，也不保证一定发布。
+   > 投稿已收到，谢谢！Rice Eats 会先人工审核，审核通过后才会收录到网站上。
    > 如果留了邮箱，我们可能会就署名或细节联系你。
 
    Do not say that a restaurant page has been updated.
@@ -292,6 +334,18 @@ whose id is not in `npm run content:submission -- list`; move its email from
    photo state, and problems. It creates no drafts
    and changes nothing in `content/`. `--skip-photos` records the photos as
    pending without downloading them.
+
+   The report also lists **review checks** for the editor (notes, never
+   automatic rejections; `scripts/content/moderation.ts`): text that reads
+   like promotion (deals, calls to action, links, phone numbers), hints of an
+   undisclosed relationship with the restaurant (owner, staff, sponsorship,
+   free meals), strong accusations (fraud, poisoning) that need support from
+   the described experience, reviews nearly identical to another submission
+   (in the export or imported earlier), and repeat reviews of one restaurant
+   from the same email. Decide on these before drafting: ask the contributor
+   to disclose a relationship, keep only supported claims, remove promotion,
+   or reject. The consent statement asks for exactly this, but cannot enforce
+   it on its own.
 
    The restaurant match is a proposal, resolved in this order: the
    `restaurant_id` (checked against the submitted name and location), then a

@@ -172,10 +172,10 @@ export function distanceMeters(a: LatLngValue, b: LatLngValue): number {
   return 2 * 6371000 * Math.asin(Math.sqrt(h));
 }
 
-const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
+export const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
 
 /** Fetches and maps HTTP and network failures to PoiError (aborts pass through). */
-async function request(url: string, init: RequestInit): Promise<unknown> {
+export async function request(url: string, init: RequestInit): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(url, init);

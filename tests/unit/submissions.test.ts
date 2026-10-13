@@ -285,6 +285,37 @@ describe('reading Tally exports', () => {
     ]);
   });
 
+  it('reads the current form titles with "（选填）" and the new consent text', () => {
+    const titled = (c: string) =>
+      /^(你的点评|照片|署名|联系邮箱)$|^菜品\d+ (照片|点评)$/.test(c) ? `${c}（选填）` : c;
+    const header = COLUMNS.map(titled);
+    const values: Record<string, string> = {
+      'Submission ID': 'sub-new-titles',
+      总体评级: '🫤 NPC',
+      你的点评: '还行',
+      照片: PHOTO,
+      '菜品1 名称': '煎饺',
+      '菜品1 评价': '💣 避雷',
+      '菜品1 照片': PHOTO_B,
+      '菜品1 点评': '太油',
+      署名: '小红',
+      联系邮箱: 'hong@example.com',
+      发布授权:
+        '我同意并确认：投稿基于真实用餐体验，内容真实、客观，不含虚假宣传、恶意贬损或未披露的商业推广及利益关系。',
+    };
+    const line = COLUMNS.map((c) => quote(values[c] ?? '')).join(',');
+    const [s] = submissionsFromCsv([header.map(quote).join(','), line].join('\r\n'));
+    expect(s).toMatchObject({
+      ratingAnswer: '🫤 NPC',
+      review: '还行',
+      photoUrls: [PHOTO],
+      displayName: '小红',
+      email: 'hong@example.com',
+      consent: true,
+      dishes: [{ name: '煎饺', verdictAnswer: '💣 避雷', comment: '太油', photoUrls: [PHOTO_B] }],
+    });
+  });
+
   it('ignores the untitled "add a dish" checkbox columns', () => {
     // The 菜品N 添加 questions have no title in the form, so an export may
     // show them blank, as "Untitled …", or by their option text.
@@ -505,7 +536,59 @@ describe('importing submissions', () => {
     const stored = JSON.parse(await readFile(path.join(dir('sub4'), 'submission.json'), 'utf8'));
     expect(stored.consent).toBe(false);
     const [empty] = await run([sub({ submissionId: 'empty' })]);
-    expect(empty!.blockers.join()).toMatch(/neither review text, dishes, nor photos/);
+    expect(empty!.blockers.join()).toMatch(
+      /neither a valid rating, review text, dishes, nor photos/,
+    );
+  });
+
+  it('accepts a rating-only submission, but not an invalid rating alone', async () => {
+    const { run } = await setup();
+    const [ratingOnly] = await run([
+      sub({ submissionId: 'rating-only', ratingAnswer: '🤤 人上人' }),
+    ]);
+    expect(ratingOnly!.blockers).toEqual([]);
+    expect(ratingOnly!.rating).toBeDefined();
+    // The review text is optional now: no warning for leaving it out.
+    expect(ratingOnly!.notes.join('\n')).not.toMatch(/review text|no overall rating/);
+    const [invalid] = await run([sub({ submissionId: 'bad-rating', ratingAnswer: '还行吧' })]);
+    expect(invalid!.rating).toBeUndefined();
+    expect(invalid!.blockers.join()).toMatch(/neither a valid rating/);
+    expect(invalid!.notes.join('\n')).toMatch(/"还行吧" is not one of the five levels/);
+  });
+
+  it('keeps older text-only submissions without a rating', async () => {
+    const { run } = await setup();
+    const [old] = await run(submissionsFromCsv(csv(ROWS.textOnly)));
+    expect(old!.blockers).toEqual([]);
+    expect(old!.notes.join('\n')).toMatch(/no overall rating \(optional in older form versions\)/);
+  });
+
+  it('flags promotion, undisclosed ties, and near-identical reviews for the editor', async () => {
+    const { run } = await setup();
+    const promo = '新店开业全场八折，欢迎大家光临，关注公众号领优惠码！牛肉面真的很好吃。';
+    const reports = await run([
+      sub({ submissionId: 'promo', review: promo, ratingAnswer: '🥵 夯' }),
+      sub({ submissionId: 'copy', review: `${promo} `, ratingAnswer: '🥵 夯' }),
+      sub({
+        submissionId: 'owner',
+        review: '我是这家店的老板，我们的面都是手工做的。',
+        ratingAnswer: '🥵 夯',
+      }),
+      sub({
+        submissionId: 'plain',
+        review: '汤头浓郁，面条筋道，就是排队有点久。',
+        ratingAnswer: '🤤 人上人',
+      }),
+    ]);
+    const notes = (id: string) =>
+      reports.find((r) => r.submission.submissionId === id)!.notes.join('\n');
+    expect(notes('promo')).toMatch(/reads like promotion/);
+    expect(notes('promo')).toMatch(/nearly identical to submission copy/);
+    expect(notes('copy')).toMatch(/nearly identical to submission promo/);
+    expect(notes('owner')).toMatch(/relationship with the restaurant/);
+    expect(notes('plain')).not.toMatch(/review check/);
+    // Hints never block a draft on their own.
+    expect(reports.every((r) => r.blockers.length === 0)).toBe(true);
   });
 
   it('skips a completed duplicate without network requests or new files', async () => {

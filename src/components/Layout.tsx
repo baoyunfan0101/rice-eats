@@ -17,11 +17,11 @@ export function Layout({ children }: { children: ReactNode }) {
           <Link
             href={browseHref()}
             className="flex items-center gap-2 rounded-lg"
-            aria-label="Rice吃啥 首页"
+            aria-label="Rice Eats 首页"
           >
             <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="size-8" />
             <span className="text-xl font-black tracking-tight">
-              Rice<span className="text-chili-600">吃啥</span>
+              Rice <span className="text-chili-600">Eats</span>
             </span>
           </Link>
           <p className="hidden text-sm text-muted sm:block">莱斯大学周边的社区美食指南</p>
@@ -43,7 +43,8 @@ export function Layout({ children }: { children: ReactNode }) {
       <footer className="border-t border-line bg-white/60">
         <div className="mx-auto max-w-6xl space-y-1 px-4 py-6 text-xs leading-6 text-muted">
           <p>
-            Rice吃啥 是独立的社区项目，与莱斯大学（Rice University）无关，也不是莱斯大学的官方服务。
+            Rice Eats 是独立的社区项目，与莱斯大学（Rice
+            University）无关，也不是莱斯大学的官方服务。
           </p>
           <p>
             网站代码以 MIT 许可开源；点评、照片等内容的版权归各自作者所有，不适用 MIT 许可。

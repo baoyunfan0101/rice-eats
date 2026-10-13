@@ -26,7 +26,7 @@ export function BrowsePage({ params }: { params: URLSearchParams }) {
   const content = useContentIndex(attempt);
 
   useEffect(() => {
-    document.title = 'Rice吃啥 · 莱斯大学周边美食指南';
+    document.title = 'Rice Eats · 莱斯大学周边美食指南';
   }, []);
 
   if (content.status === 'loading') return <Loading />;
