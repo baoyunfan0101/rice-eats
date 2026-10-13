@@ -1,8 +1,12 @@
 // Restaurant discovery for the submission page: nearby and name searches
 // through a POI (point of interest) provider. Components only see the
-// provider-independent RestaurantCandidate; the Geoapify Places API is the
-// current provider (docs/submissions.md). The browser key is public by
-// nature and restricted to the site's domain in the Geoapify dashboard.
+// provider-independent RestaurantCandidate (docs/submissions.md).
+//
+// The Geoapify Places API is the main provider; its browser key is public by
+// nature and restricted to the site's domain in the Geoapify dashboard. The
+// free OpenStreetMap Overpass API (no key) is the fallback when there is no
+// key, the Geoapify credits are used up, or a Geoapify request fails. Both
+// serve OpenStreetMap data, so they find the same restaurants.
 
 import { isValidLatLng, type LatLngValue } from '../../shared/submission';
 
@@ -37,7 +41,7 @@ export type PoiSearch = (
   limit?: number;
 };
 
-export type PoiErrorKind = 'not-configured' | 'quota' | 'network' | 'failed';
+export type PoiErrorKind = 'quota' | 'network' | 'failed';
 
 export class PoiError extends Error {
   constructor(
@@ -49,7 +53,16 @@ export class PoiError extends Error {
 }
 
 export const POI_PROVIDER = 'geoapify';
-export const POI_ATTRIBUTION = 'Powered by Geoapify · © OpenStreetMap contributors';
+export const OSM_PROVIDER = 'osm';
+export const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
+const OSM_AMENITIES = ['restaurant', 'fast_food', 'cafe', 'food_court'];
+
+/** Data attribution for the providers in use. */
+export function poiAttribution(): string {
+  return poiApiKey()
+    ? 'Powered by Geoapify · © OpenStreetMap contributors'
+    : '© OpenStreetMap contributors';
+}
 const ENDPOINT = 'https://api.geoapify.com/v2/places';
 const CATEGORIES = [
   'catering.restaurant',
@@ -158,40 +171,188 @@ export function distanceMeters(a: LatLngValue, b: LatLngValue): number {
   return 2 * 6371000 * Math.asin(Math.sqrt(h));
 }
 
-const cache = new Map<string, Promise<RestaurantCandidate[]>>();
+const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
 
-export function clearPoiCache() {
-  cache.clear();
+/** Fetches and maps HTTP and network failures to PoiError (aborts pass through). */
+async function request(url: string, init: RequestInit): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (e) {
+    if (isAbort(e)) throw e;
+    throw new PoiError('network', 'network error');
+  }
+  if (response.status === 401 || response.status === 403 || response.status === 429) {
+    throw new PoiError('quota', `HTTP ${response.status}`);
+  }
+  if (!response.ok) throw new PoiError('failed', `HTTP ${response.status}`);
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// OpenStreetMap Overpass (fallback)
+
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Builds the Overpass QL query: named restaurants in a rectangle or circle, with centers for areas. */
+export function overpassQuery(search: PoiSearch): string {
+  const amenity = `["amenity"~"^(${OSM_AMENITIES.join('|')})$"]`;
+  const name = search.name?.trim();
+  const named = name ? `["name"~${JSON.stringify(escapeRegex(name))},i]` : '["name"]';
+  const area = search.bounds
+    ? `(${[search.bounds.south, search.bounds.west, search.bounds.north, search.bounds.east]
+        .map((v) => v.toFixed(6))
+        .join(',')})`
+    : `(around:${Math.round(search.radiusMeters)},${search.center.lat.toFixed(6)},${search.center.lng.toFixed(6)})`;
+  return `[out:json][timeout:20];nwr${amenity}${named}${area};out center ${search.limit ?? LIMIT};`;
+}
+
+interface OverpassElement {
+  type?: unknown;
+  id?: unknown;
+  lat?: unknown;
+  lon?: unknown;
+  center?: { lat?: unknown; lon?: unknown };
+  tags?: Record<string, unknown>;
+}
+
+/** Turns an Overpass response into candidates, like normalizeGeoapify. */
+export function normalizeOverpass(body: unknown, center?: LatLngValue): RestaurantCandidate[] {
+  const elements = (body as { elements?: unknown })?.elements;
+  if (!Array.isArray(elements)) return [];
+  const seen = new Set<string>();
+  const candidates: RestaurantCandidate[] = [];
+  for (const el of elements as OverpassElement[]) {
+    const tags = el?.tags ?? {};
+    const name = text(tags.name);
+    const type = text(el?.type);
+    const id = typeof el?.id === 'number' || typeof el?.id === 'string' ? String(el.id) : undefined;
+    const point = el?.center ?? el;
+    const location = { lat: point?.lat as number, lng: point?.lon as number };
+    if (!name || !type || !id || !isValidLatLng(location)) continue;
+    const poiId = `${type}/${id}`;
+    const key = `${OSM_PROVIDER}:${poiId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const street = text(tags['addr:street']);
+    const number = text(tags['addr:housenumber']);
+    const address =
+      text(tags['addr:full']) ?? (street ? (number ? `${number} ${street}` : street) : undefined);
+    const distance = center ? distanceMeters(center, location) : undefined;
+    candidates.push({
+      key,
+      provider: OSM_PROVIDER,
+      poiId,
+      name,
+      ...(address ? { address } : {}),
+      location,
+      ...(distance !== undefined ? { distance } : {}),
+    });
+  }
+  return candidates.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
 }
 
 /**
- * Searches restaurants around a point. Results are cached for the session
- * (same rounded center, radius, and name), and failed requests are not
- * cached. Pass an AbortSignal to cancel superseded searches.
+ * The public Overpass server allows only a couple of requests at a time per
+ * visitor and answers 429 beyond that, so requests wait for a free slot.
+ */
+const OVERPASS_SLOTS = 2;
+let overpassActive = 0;
+const overpassWaiting: (() => void)[] = [];
+
+async function withOverpassSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (overpassActive >= OVERPASS_SLOTS) {
+    await new Promise<void>((resolve) => overpassWaiting.push(resolve));
+  }
+  overpassActive++;
+  try {
+    return await run();
+  } finally {
+    overpassActive--;
+    overpassWaiting.shift()?.();
+  }
+}
+
+/** Delay before retrying a failed Overpass request (shortened in tests). */
+let overpassRetryMs = 1500;
+export function setOverpassRetryDelay(ms: number) {
+  overpassRetryMs = ms;
+}
+
+async function fromOverpass(search: PoiSearch, signal?: AbortSignal) {
+  const post = () =>
+    request(OVERPASS_ENDPOINT, {
+      method: 'POST',
+      // A form body keeps this a simple CORS request (no preflight).
+      body: new URLSearchParams({ data: overpassQuery(search) }),
+      signal,
+    });
+  const body = await withOverpassSlot(async () => {
+    try {
+      return await post();
+    } catch (e) {
+      // A busy server answers 504 now and then; one retry usually succeeds.
+      if (!(e instanceof PoiError) || e.kind === 'quota' || signal?.aborted) throw e;
+      await new Promise((resolve) => setTimeout(resolve, overpassRetryMs));
+      return post();
+    }
+  });
+  return normalizeOverpass(body, search.center);
+}
+
+// ---------------------------------------------------------------------------
+// Searching with fallback and caching
+
+const cache = new Map<string, Promise<RestaurantCandidate[]>>();
+
+const searchKey = (search: PoiSearch) =>
+  JSON.stringify([
+    search.bounds ?? [
+      search.center.lat.toFixed(6),
+      search.center.lng.toFixed(6),
+      search.radiusMeters,
+    ],
+    search.name?.trim() ?? '',
+    search.limit ?? LIMIT,
+  ]);
+
+/** Whether searches currently go to Overpass (no key, or Geoapify refused it). */
+const usingOverpass = () => !poiApiKey() || geoapifyRefused;
+/** Set when Geoapify refuses the key (credits used up or key rejected) this session. */
+let geoapifyRefused = false;
+
+export function clearPoiCache() {
+  cache.clear();
+  geoapifyRefused = false;
+}
+
+/**
+ * Searches restaurants in an area: through Geoapify when a key is set and has
+ * not been refused this session, otherwise (or when that request fails)
+ * through Overpass. Results are cached for the session per search, and failed
+ * searches are not cached. Pass an AbortSignal to cancel superseded searches.
  */
 export async function searchRestaurants(
   search: PoiSearch,
   signal?: AbortSignal,
 ): Promise<RestaurantCandidate[]> {
-  const apiKey = poiApiKey();
-  if (!apiKey) throw new PoiError('not-configured', 'POI search is not configured');
-  const url = geoapifyUrl(search, apiKey);
-  const cacheKey = url.replace(/&apiKey=[^&]*/, '');
+  const cacheKey = searchKey(search);
   let promise = cache.get(cacheKey);
   if (!promise) {
     promise = (async () => {
-      let response: Response;
-      try {
-        response = await fetch(url, { signal });
-      } catch (e) {
-        if ((e as Error).name === 'AbortError') throw e;
-        throw new PoiError('network', 'network error');
+      const apiKey = poiApiKey();
+      if (apiKey && !geoapifyRefused) {
+        try {
+          return normalizeGeoapify(
+            await request(geoapifyUrl(search, apiKey), { signal }),
+            search.center,
+          );
+        } catch (e) {
+          if (isAbort(e)) throw e;
+          if (e instanceof PoiError && e.kind === 'quota') geoapifyRefused = true;
+        }
       }
-      if (response.status === 401 || response.status === 403 || response.status === 429) {
-        throw new PoiError('quota', `HTTP ${response.status}`);
-      }
-      if (!response.ok) throw new PoiError('failed', `HTTP ${response.status}`);
-      return normalizeGeoapify(await response.json(), search.center);
+      return fromOverpass(search, signal);
     })();
     promise.catch(() => cache.delete(cacheKey));
     cache.set(cacheKey, promise);
@@ -225,14 +386,58 @@ export function tilesFor(bounds: Bounds): Bounds[] | undefined {
 export async function restaurantsInArea(bounds: Bounds): Promise<RestaurantCandidate[]> {
   const tiles = tilesFor(bounds);
   if (!tiles) return [];
+  if (usingOverpass()) prefetchOverpassTiles(tiles);
   // Tiles are not cancelled when the map moves on: they stay useful in the
   // cache, and callers ignore results for an area that is no longer shown.
   const lists = await Promise.all(
     tiles.map((tile) => searchRestaurants({ bounds: tile, limit: TILE_LIMIT })),
   );
-  const byKey = new Map<string, RestaurantCandidate>();
-  for (const c of lists.flat()) if (!byKey.has(c.key)) byKey.set(c.key, c);
-  return [...byKey.values()];
+  // Tiles loaded before and after a fallback come from different providers;
+  // the same restaurant then has two keys, so also merge by name and place.
+  const merged: RestaurantCandidate[] = [];
+  const keys = new Set<string>();
+  const same = (a: RestaurantCandidate, b: RestaurantCandidate) =>
+    a.name.toLowerCase() === b.name.toLowerCase() && distanceMeters(a.location, b.location) < 50;
+  for (const c of lists.flat()) {
+    if (keys.has(c.key) || merged.some((m) => m.provider !== c.provider && same(m, c))) continue;
+    keys.add(c.key);
+    merged.push(c);
+  }
+  return merged;
+}
+
+/** Places per combined Overpass request (Overpass has no per-result cost). */
+const OVERPASS_AREA_LIMIT = 1000;
+
+/**
+ * Loads the uncached tiles of an area from Overpass in one request (one
+ * request per tile would exceed its per-visitor limit) and caches each tile's
+ * share of the result, so later views reuse tiles as with Geoapify.
+ */
+function prefetchOverpassTiles(tiles: Bounds[]) {
+  const missing = tiles.filter((t) => !cache.has(searchKey({ bounds: t, limit: TILE_LIMIT })));
+  if (missing.length === 0) return;
+  const box: Bounds = {
+    south: Math.min(...missing.map((t) => t.south)),
+    west: Math.min(...missing.map((t) => t.west)),
+    north: Math.max(...missing.map((t) => t.north)),
+    east: Math.max(...missing.map((t) => t.east)),
+  };
+  const all = fromOverpass({ bounds: box, limit: OVERPASS_AREA_LIMIT });
+  for (const tile of missing) {
+    const key = searchKey({ bounds: tile, limit: TILE_LIMIT });
+    const share = all.then((list) =>
+      list.filter(
+        (c) =>
+          c.location.lat >= tile.south &&
+          c.location.lat < tile.north &&
+          c.location.lng >= tile.west &&
+          c.location.lng < tile.east,
+      ),
+    );
+    share.catch(() => cache.delete(key));
+    cache.set(key, share);
+  }
 }
 
 /** Short Chinese description of a distance, e.g. "120 米", "1.2 公里". */

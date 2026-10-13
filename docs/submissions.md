@@ -37,9 +37,22 @@ Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notificat
     missing, or search is unavailable, "手动添加餐厅" takes a name, an optional
     address, and a map marker; a name alone is allowed and is marked for
     location verification.
+  - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
+    (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
+    the rest of the session), or a Geoapify request fails, the same search
+    goes to the free OpenStreetMap
+    [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) (no key;
+    named `amenity` restaurant, fast_food, cafe, or food_court within the tile
+    or around the map center). Geoapify itself serves OpenStreetMap data, so
+    both find the same places; Overpass addresses are sparser (street and
+    number when tagged). Such selections send `poi_provider=osm` and
+    `poi_id=<node|way|relation>/<id>`. The public Overpass server has
+    fair-use limits (roughly 10,000 requests a day) and may answer 429 when
+    busy; then the page shows an error and manual entry still works.
   - Arriving from a restaurant page skips the selection (with "更换餐厅" to
-    choose another). The page shows Geoapify's attribution and a short note
-    that the map area and name searches are sent to Geoapify.
+    choose another). The page shows the data attribution (Geoapify and
+    OpenStreetMap, or OpenStreetMap alone without a key) and a short note that
+    the map area and name searches are sent to these services.
 - **Tally**: collects the text, photos, rating, credit, contact email, and
   consent. Free-plan features only.
 - **Gmail** (`hello.riceeats@gmail.com`): receives a notification per
@@ -50,8 +63,8 @@ Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notificat
 
 The shared contract (hidden-field names, question titles, rating options, the
 form setting) is defined once in `shared/submission.ts`. Components only see a
-provider-independent `RestaurantCandidate`; Geoapify is one implementation in
-`src/lib/poi.ts`.
+provider-independent `RestaurantCandidate`; Geoapify and the Overpass
+fallback are implemented in `src/lib/poi.ts`.
 
 ## Maintainer setup (one time)
 
@@ -71,7 +84,7 @@ access to them. Menu names may differ slightly in Tally's editor.
    |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                        |
    |                    | `restaurant_lng`        | Longitude, as above.                                                                                     |
    |                    | `restaurant_address`    | Address, when known.                                                                                     |
-   |                    | `poi_provider`          | `geoapify` for a place from the search.                                                                  |
+   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                              |
    |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                 |
    |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                          |
    |                    | `source`                | `site` or `restaurant-page`.                                                                             |
@@ -157,10 +170,10 @@ access to them. Menu names may differ slightly in Tally's editor.
     Variables > `GEOAPIFY_API_KEY`; the deploy workflow passes it to the
     build as `VITE_GEOAPIFY_API_KEY`. For local development put
     `VITE_GEOAPIFY_API_KEY=<key>` in `.env.local` (git-ignored). Never commit
-    a key or use an unrestricted one. Without a key the site still builds,
-    hides the search, and offers manual entry. Watch the free quota in the
-    Geoapify dashboard; when it is exhausted the page says search is
-    unavailable and manual entry keeps working.
+    a key or use an unrestricted one. Without a key the site still builds and
+    the map uses the free OpenStreetMap Overpass fallback. Watch the free
+    quota in the Geoapify dashboard; when it is exhausted the page switches to
+    Overpass for the rest of the visit.
 13. **Verify end to end** with the checklist below.
 
 ## Handling submissions

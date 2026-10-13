@@ -4,9 +4,8 @@ import type { LatLngValue } from '../../shared/submission';
 import {
   DISCOVERY_MIN_ZOOM,
   distanceText,
-  POI_ATTRIBUTION,
+  poiAttribution,
   PoiError,
-  poiApiKey,
   restaurantsInArea,
   searchRestaurants,
   tilesFor,
@@ -54,7 +53,6 @@ function errorMessage(e: unknown): string {
  * and a manual entry cover places the map does not show.
  */
 export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) => void }) {
-  const configured = Boolean(poiApiKey());
   const [view, setView] = useState(START);
   const [area, setArea] = useState<MapArea>();
   const [discovery, setDiscovery] = useState<Discovery>({ status: 'idle' });
@@ -69,7 +67,7 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
 
   // Map discovery: once the map has settled, load the restaurants in view.
   useEffect(() => {
-    if (!configured || !area || tooWide) return;
+    if (!area || tooWide) return;
     const seq = ++discoverySeq.current;
     const timer = setTimeout(() => {
       setDiscovery((d) => ({
@@ -91,7 +89,7 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
       );
     }, SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [area, configured, tooWide]);
+  }, [area, tooWide]);
 
   // Name search: wait until typing pauses, then search around the map center.
   const nameCenter = useRef<LatLngValue>(RICE_CENTER);
@@ -100,7 +98,7 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
   }, [area]);
   useEffect(() => {
     const name = query.trim();
-    if (!configured || !name) return;
+    if (!name) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setNamed({ status: 'loading' });
@@ -118,7 +116,7 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, configured]);
+  }, [query]);
 
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) {
@@ -169,27 +167,20 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
         <h2 id="pick-title" className="text-lg font-bold">
           选择餐厅
         </h2>
-        {configured && (
-          <button
-            type="button"
-            onClick={useMyLocation}
-            disabled={locating === 'locating'}
-            className="inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600 disabled:opacity-60"
-          >
-            {locating === 'locating' ? '正在定位…' : '使用当前位置'}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={useMyLocation}
+          disabled={locating === 'locating'}
+          className="inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600 disabled:opacity-60"
+        >
+          {locating === 'locating' ? '正在定位…' : '使用当前位置'}
+        </button>
       </div>
       {(locating === 'denied' || locating === 'unavailable') && (
         <p role="status" className="text-sm text-chili-700">
           {locating === 'denied'
             ? '没有获得定位权限。可以直接拖动地图找到餐厅。'
             : '暂时无法获取当前位置。可以直接拖动地图找到餐厅。'}
-        </p>
-      )}
-      {!configured && (
-        <p role="status" className="rounded-xl bg-white p-3 text-sm text-muted">
-          附近餐厅搜索暂不可用，请用下面的「手动添加餐厅」。
         </p>
       )}
 
@@ -203,27 +194,25 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
           onSelect={(c) => onSelected(fromCandidate(c))}
         />
       </Suspense>
-      {configured && !searching && (
+      {!searching && (
         <DiscoveryStatus discovery={discovery} visible={discovered.length} tooWide={tooWide} />
       )}
 
-      {configured && (
-        <div className="space-y-2">
-          <label className="block">
-            <span className="text-sm font-semibold">按名字搜索</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="地图上没找到？输入餐厅名字"
-              className="mt-1 min-h-11 w-full rounded-xl border border-line bg-white px-3"
-            />
-          </label>
-          {searching && (
-            <NameResultList results={named} onSelect={(c) => onSelected(fromCandidate(c))} />
-          )}
-        </div>
-      )}
+      <div className="space-y-2">
+        <label className="block">
+          <span className="text-sm font-semibold">按名字搜索</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="地图上没找到？输入餐厅名字"
+            className="mt-1 min-h-11 w-full rounded-xl border border-line bg-white px-3"
+          />
+        </label>
+        {searching && (
+          <NameResultList results={named} onSelect={(c) => onSelected(fromCandidate(c))} />
+        )}
+      </div>
 
       <div className="space-y-1 border-t border-line pt-4 text-sm">
         <p>
@@ -236,12 +225,10 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
             手动添加餐厅
           </button>
         </p>
-        {configured && (
-          <p className="text-xs leading-5 text-muted">
-            地图区域和名字搜索会发送给 Geoapify 来查找餐厅；你的设备位置不会随投稿提交。
-            {POI_ATTRIBUTION}
-          </p>
-        )}
+        <p className="text-xs leading-5 text-muted">
+          地图区域和名字搜索会发送给地图数据服务（Geoapify 或 OpenStreetMap
+          Overpass）来查找餐厅；你的设备位置不会随投稿提交。{poiAttribution()}
+        </p>
       </div>
     </section>
   );

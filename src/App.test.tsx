@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { ContentIndex, RestaurantDetail, RestaurantSummary } from '../shared/content/model';
 import { clearContentCache } from './lib/content';
-import { clearPoiCache } from './lib/poi';
+import { clearPoiCache, OVERPASS_ENDPOINT, setOverpassRetryDelay } from './lib/poi';
 
 // Leaflet does not run in jsdom: the picker map is a stub whose button is a
 // tap on the map at a fixed point, and whose markers are plain buttons.
@@ -365,13 +365,17 @@ describe('submissions', () => {
     expect(document.title).toBe('投稿 · Rice吃啥');
   });
 
-  it('keeps manual entry working without a POI key', async () => {
+  it('keeps manual entry working when restaurant search fails', async () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
+    clearPoiCache();
+    setOverpassRetryDelay(0);
     const user = userEvent.setup();
     visit('submit/');
-    expect(await screen.findByText(/附近餐厅搜索暂不可用/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '使用当前位置' })).not.toBeInTheDocument();
+    // No key: the map asks OpenStreetMap, which this test's network refuses.
+    expect(await screen.findByText(/餐厅搜索出错了/)).toBeInTheDocument();
+    expect(screen.getByText(/© OpenStreetMap contributors/)).toBeInTheDocument();
+    expect(screen.queryByText(/Powered by Geoapify/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
     const next = screen.getByRole('button', { name: '下一步' });
     expect(next).toBeDisabled();
@@ -446,17 +450,39 @@ describe('submissions', () => {
     let geolocation: { getCurrentPosition: ReturnType<typeof vi.fn> };
     let places: URL[];
     let placesStatus = 200;
+    let overpass: string[];
+    let overpassStatus = 200;
 
     beforeEach(() => {
       vi.stubEnv('VITE_TALLY_FORM', FORM);
       vi.stubEnv('VITE_GEOAPIFY_API_KEY', 'test-key');
       clearPoiCache();
+      setOverpassRetryDelay(0);
       places = [];
       placesStatus = 200;
+      overpass = [];
+      overpassStatus = 200;
       const indexFetch = vi.mocked(fetch);
       vi.stubGlobal(
         'fetch',
         vi.fn(async (url: string, init?: RequestInit) => {
+          if (url === OVERPASS_ENDPOINT) {
+            const query = new URLSearchParams(String(init?.body)).get('data')!;
+            overpass.push(query);
+            if (overpassStatus !== 200) return new Response('', { status: overpassStatus });
+            const box = /\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/.exec(query);
+            const [s, w, n, e] = box ? box.slice(1).map(Number) : [-90, -180, 90, 180];
+            const elements = PLACES.filter(
+              (p) => p.lat >= s! && p.lat < n! && p.lon >= w! && p.lon < e!,
+            ).map((p, i) => ({
+              type: 'node',
+              id: 100 + i,
+              lat: p.lat,
+              lon: p.lon,
+              tags: { name: p.name, 'addr:street': p.address_line2 },
+            }));
+            return Response.json({ elements });
+          }
           if (!url.startsWith('https://api.geoapify.com/')) return indexFetch(url, init);
           const u = new URL(url);
           places.push(u);
@@ -570,8 +596,31 @@ describe('submissions', () => {
       expect(screen.getByRole('heading', { name: '确认餐厅' })).toBeInTheDocument();
     });
 
+    it('falls back to OpenStreetMap when Geoapify is out of credits', async () => {
+      placesStatus = 429;
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
+      await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+      expect(formParams()).toMatchObject({
+        restaurant_name: 'Noodle Corner',
+        restaurant_address: '7 Pine St',
+        poi_provider: 'osm',
+        poi_id: 'node/100',
+        selection_method: 'poi',
+      });
+      // After Geoapify refused, new areas go straight to OpenStreetMap.
+      const asked = rects().length;
+      await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      expect(await screen.findByRole('button', { name: '图钉：Taco Stop' })).toBeInTheDocument();
+      expect(rects()).toHaveLength(asked);
+      expect(overpass.length).toBeGreaterThan(asked);
+    });
+
     it('shows search errors with the manual fallback', async () => {
       placesStatus = 429;
+      overpassStatus = 429;
       visit('submit/');
       expect(await screen.findByText(/餐厅搜索暂时不可用/)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();

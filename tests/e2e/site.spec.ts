@@ -7,6 +7,10 @@ const WITH_LOCATION = 10;
 test.beforeEach(async ({ page }) => {
   // Keep tests offline and avoid loading real map tiles.
   await page.route(/tile\.openstreetmap\.org/, (route) => route.abort());
+  // The OpenStreetMap fallback is unavailable unless a test stubs it.
+  await page.route(/^https:\/\/overpass-api\.de\//, (route) =>
+    route.fulfill({ status: 429, body: '' }),
+  );
   // The fixture build points at a fake Tally form (TALLY_FORM in build:e2e);
   // a stub page stands in for it, so no test depends on a real Tally account.
   await page.route(/^https:\/\/tally\.so\//, (route) =>
@@ -276,6 +280,35 @@ test('visitors without location permission can still explore the map or search b
   await page.getByRole('button', { name: '重新选择' }).click();
   await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
   await expect(page.locator('iframe')).toHaveCount(0);
+});
+
+test('the map falls back to OpenStreetMap when Geoapify is out of credits', async ({ page }) => {
+  await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
+    route.fulfill({ status: 429, body: '' }),
+  );
+  await page.route(/^https:\/\/overpass-api\.de\//, (route) => {
+    const query = new URLSearchParams(route.request().postData() ?? '').get('data') ?? '';
+    const [s, w, n, e] = /\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/
+      .exec(query)!
+      .slice(1)
+      .map(Number) as [number, number, number, number];
+    const elements = FAKE_PLACES.filter(
+      (p) => p.lat >= s && p.lat < n && p.lon >= w && p.lon < e,
+    ).map((p, i) => ({
+      type: 'node',
+      id: 500 + i,
+      lat: p.lat,
+      lon: p.lon,
+      tags: { name: p.name },
+    }));
+    return route.fulfill({ json: { elements } });
+  });
+  await page.goto('/rice-eats/submit/');
+  await pin(page, 'Fake Noodle Bar').click();
+  await page.getByRole('button', { name: '确认餐厅' }).click();
+  const query = formQuery(page);
+  await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
+  await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
 });
 
 test('visitors can add a restaurant by hand when search fails', async ({ page }) => {
