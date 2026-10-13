@@ -9,17 +9,72 @@ import { clearPoiCache } from './lib/poi';
 
 // Leaflet does not run in jsdom: the picker map is a stub whose button is a
 // tap on the map at a fixed point, and whose markers are plain buttons.
-vi.mock('./views/PickerMap', () => ({
-  default: (props: { label: string; onMapClick?: (p: { lat: number; lng: number }) => void }) => (
-    <div aria-label={props.label}>
-      {props.onMapClick && (
-        <button type="button" onClick={() => props.onMapClick!({ lat: 29.7, lng: -95.4 })}>
-          在地图上点一下
-        </button>
-      )}
-    </div>
-  ),
-}));
+// Leaflet does not run in jsdom: the picker map is a stub. It reports the
+// area around its view (as Leaflet does once ready and after moving), shows
+// candidates as pin buttons, and offers buttons for a map tap, a pan to
+// another area, and zooming far out.
+vi.mock('./views/PickerMap', async () => {
+  const { useEffect } = await import('react');
+  type Point = { lat: number; lng: number };
+  type Area = {
+    center: Point;
+    zoom: number;
+    bounds: { south: number; west: number; north: number; east: number };
+  };
+  const areaAround = (center: Point, zoom: number): Area => ({
+    center,
+    zoom,
+    bounds: {
+      south: center.lat - 0.004,
+      north: center.lat + 0.004,
+      west: center.lng - 0.006,
+      east: center.lng + 0.006,
+    },
+  });
+  function PickerMapStub(props: {
+    label: string;
+    view: { center: Point; zoom: number };
+    candidates?: { key: string; name: string }[];
+    onMapClick?: (p: Point) => void;
+    onMove?: (area: Area) => void;
+    onSelect?: (c: unknown) => void;
+  }) {
+    const { view, onMove } = props;
+    useEffect(() => {
+      onMove?.(areaAround(view.center, view.zoom));
+      // Like Leaflet: report when ready and when the view is set.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view]);
+    return (
+      <div aria-label={props.label}>
+        {props.onMapClick && (
+          <button type="button" onClick={() => props.onMapClick!({ lat: 29.7, lng: -95.4 })}>
+            在地图上点一下
+          </button>
+        )}
+        {onMove && (
+          <>
+            <button
+              type="button"
+              onClick={() => onMove(areaAround({ lat: 29.735, lng: -95.39 }, 15))}
+            >
+              拖动地图
+            </button>
+            <button type="button" onClick={() => onMove(areaAround(view.center, 11))}>
+              缩小地图
+            </button>
+          </>
+        )}
+        {props.candidates?.map((c) => (
+          <button key={c.key} type="button" onClick={() => props.onSelect?.(c)}>
+            图钉：{c.name}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return { default: PickerMapStub };
+});
 
 /** Hidden fields passed to the form (from the direct link). */
 const formParams = () =>
@@ -302,8 +357,9 @@ describe('submissions', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/不会立即出现在网站上，也不保证一定发布/)).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    // No introductory paragraphs: the form itself explains review and privacy.
+    expect(screen.queryByText(/不会立即出现在网站上/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
     // The form loads only after a restaurant is confirmed.
     expect(document.querySelector('iframe')).toBeNull();
     expect(document.title).toBe('投稿 · Rice吃啥');
@@ -363,8 +419,32 @@ describe('submissions', () => {
 
   describe('with POI search', () => {
     const DEVICE = { latitude: 29.7111, longitude: -95.3999 };
+    /** Fake places: one near Rice, one in the area the stub pans to. */
+    const PLACES = [
+      {
+        place_id: 'p-noodle',
+        name: 'Noodle Corner',
+        address_line2: '7 Pine St',
+        lat: 29.7183,
+        lon: -95.4012,
+      },
+      {
+        place_id: 'p-taco',
+        name: 'Taco Stop',
+        address_line2: '9 Oak St',
+        lat: 29.7352,
+        lon: -95.3897,
+      },
+      {
+        place_id: 'p-home',
+        name: 'Home Cafe',
+        address_line2: '1 Elm St',
+        lat: 29.7113,
+        lon: -95.4,
+      },
+    ];
     let geolocation: { getCurrentPosition: ReturnType<typeof vi.fn> };
-    let places: string[];
+    let places: URL[];
     let placesStatus = 200;
 
     beforeEach(() => {
@@ -378,23 +458,23 @@ describe('submissions', () => {
         'fetch',
         vi.fn(async (url: string, init?: RequestInit) => {
           if (!url.startsWith('https://api.geoapify.com/')) return indexFetch(url, init);
-          places.push(url);
+          const u = new URL(url);
+          places.push(u);
           if (placesStatus !== 200) return new Response('', { status: placesStatus });
-          const name = new URL(url).searchParams.get('name');
-          return Response.json({
-            features: [
-              {
-                properties: {
-                  place_id: 'p-noodle',
-                  name: name ? `${name} Noodles` : 'Noodle Corner',
-                  address_line2: '7 Pine St',
-                  lat: 29.7123,
-                  lon: -95.4012,
-                  distance: 140,
-                },
-              },
-            ],
-          });
+          const name = u.searchParams.get('name');
+          const filter = u.searchParams.get('filter')!;
+          let matches = PLACES;
+          if (filter.startsWith('rect:')) {
+            const [w, s, e, n] = filter.slice(5).split(',').map(Number) as [
+              number,
+              number,
+              number,
+              number,
+            ];
+            matches = PLACES.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
+          }
+          if (name) matches = [{ ...PLACES[0]!, name: `${name} Noodles` }];
+          return Response.json({ features: matches.map((properties) => ({ properties })) });
         }),
       );
       geolocation = {
@@ -405,25 +485,26 @@ describe('submissions', () => {
       vi.stubGlobal('navigator', { ...navigator, geolocation });
     });
 
-    it('searches near the current location only after a click and never submits the device position', async () => {
+    const rects = () => places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
+
+    it('shows restaurants around Rice as pins on load and submits the chosen one', async () => {
       const user = userEvent.setup();
       visit('submit/');
-      await screen.findByRole('heading', { name: '第一步：选择餐厅' });
+      const pin = await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      expect(screen.getByText('地图上有 1 家餐厅，点图钉选择。')).toBeInTheDocument();
+      // The location is never requested without a click.
       expect(geolocation.getCurrentPosition).not.toHaveBeenCalled();
-      expect(places).toEqual([]);
-      await user.click(screen.getByRole('button', { name: '使用当前位置' }));
-      const list = await screen.findByRole('list', { name: '附近的餐厅' });
-      expect(new URL(places[0]!).searchParams.get('filter')).toBe(
-        'circle:-95.399900,29.711100,300',
-      );
-      expect(within(list).getByText('140 米')).toBeInTheDocument();
+      // The visible area is loaded as cached tiles covering Rice University.
+      expect(rects().length).toBeGreaterThan(0);
+      expect(rects().every((u) => u.searchParams.get('limit') === '100')).toBe(true);
       expect(screen.getByText(/Powered by Geoapify/)).toBeInTheDocument();
-      await user.click(within(list).getByRole('button', { name: /Noodle Corner/ }));
+      expect(screen.queryByRole('button', { name: '搜索地图中心附近' })).not.toBeInTheDocument();
+      await user.click(pin);
       expect(screen.getByText('7 Pine St')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: '确认餐厅' }));
       expect(formParams()).toEqual({
         restaurant_name: 'Noodle Corner',
-        restaurant_lat: '29.712300',
+        restaurant_lat: '29.718300',
         restaurant_lng: '-95.401200',
         restaurant_address: '7 Pine St',
         poi_provider: 'geoapify',
@@ -431,12 +512,37 @@ describe('submissions', () => {
         selection_method: 'poi',
         source: 'site',
       });
-      expect(
-        screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href'),
-      ).not.toContain('29.7111');
     });
 
-    it('explains a denied location permission and still allows other searches', async () => {
+    it('updates the pins when the map moves, reusing loaded tiles', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      expect(await screen.findByRole('button', { name: '图钉：Taco Stop' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '图钉：Noodle Corner' })).not.toBeInTheDocument();
+      const loaded = rects().length;
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      await screen.findByText('地图上有 1 家餐厅，点图钉选择。');
+      expect(rects().length).toBe(loaded); // cached
+      await user.click(screen.getByRole('button', { name: '缩小地图' }));
+      expect(await screen.findByText('放大地图就能看到附近的餐厅。')).toBeInTheDocument();
+      expect(rects().length).toBe(loaded);
+    });
+
+    it('moves the map to the current location and never submits the device position', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+      await user.click(await screen.findByRole('button', { name: '图钉：Home Cafe' }));
+      await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+      const params = formParams();
+      expect(params.restaurant_lat).toBe('29.711300');
+      expect(JSON.stringify(params)).not.toContain('29.7111');
+    });
+
+    it('explains a denied location permission and keeps the map usable', async () => {
       geolocation.getCurrentPosition.mockImplementation(
         (_ok: PositionCallback, fail: PositionErrorCallback) =>
           fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
@@ -445,34 +551,28 @@ describe('submissions', () => {
       visit('submit/');
       await user.click(await screen.findByRole('button', { name: '使用当前位置' }));
       expect(screen.getByText(/没有获得定位权限/)).toBeInTheDocument();
-      await user.click(await screen.findByRole('button', { name: '在地图上点一下' }));
-      expect(await screen.findByRole('list', { name: '附近的餐厅' })).toBeInTheDocument();
-      expect(new URL(places[0]!).searchParams.get('filter')).toBe(
-        'circle:-95.400000,29.700000,300',
-      );
+      expect(
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' }),
+      ).toBeInTheDocument();
     });
 
-    it('expands the search radius and searches by name', async () => {
+    it('searches by name', async () => {
       const user = userEvent.setup();
       visit('submit/');
-      await user.click(await screen.findByRole('button', { name: '搜索地图中心附近' }));
-      await user.click(await screen.findByRole('button', { name: '扩大搜索范围到 1.0 公里' }));
-      await screen.findByRole('list', { name: '附近的餐厅' });
-      expect(places.map((u) => new URL(u).searchParams.get('filter')?.split(',')[2])).toEqual([
-        '300',
-        '1000',
-      ]);
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
       await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
-      expect(await screen.findByRole('button', { name: /Pho Noodles/ })).toBeInTheDocument();
-      // Debounced: one request for the whole query.
-      expect(places.filter((u) => new URL(u).searchParams.has('name'))).toHaveLength(1);
+      const list = await screen.findByRole('list', { name: '搜索结果' });
+      // Debounced: one request for the whole query, around the map center.
+      const byName = places.filter((u) => u.searchParams.has('name'));
+      expect(byName).toHaveLength(1);
+      expect(byName[0]!.searchParams.get('filter')).toBe('circle:-95.401800,29.717400,5000');
+      await user.click(within(list).getByRole('button', { name: /Pho Noodles/ }));
+      expect(screen.getByRole('heading', { name: '确认餐厅' })).toBeInTheDocument();
     });
 
     it('shows search errors with the manual fallback', async () => {
       placesStatus = 429;
-      const user = userEvent.setup();
       visit('submit/');
-      await user.click(await screen.findByRole('button', { name: '搜索地图中心附近' }));
       expect(await screen.findByText(/餐厅搜索暂时不可用/)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
     });
@@ -480,10 +580,9 @@ describe('submissions', () => {
     it('lets the contributor go back from the confirmation', async () => {
       const user = userEvent.setup();
       visit('submit/');
-      await user.click(await screen.findByRole('button', { name: '搜索地图中心附近' }));
-      await user.click(await screen.findByRole('button', { name: /Noodle Corner/ }));
+      await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
       await user.click(screen.getByRole('button', { name: '重新选择' }));
-      expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
       expect(document.querySelector('iframe')).toBeNull();
     });
   });
@@ -515,7 +614,7 @@ describe('submissions', () => {
       `${BASE}r/bayou-bbq/`,
     );
     await user.click(screen.getByRole('button', { name: '更换餐厅' }));
-    expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
     expect(document.querySelector('iframe')).toBeNull();
   });
 
@@ -525,7 +624,7 @@ describe('submissions', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain('r-fake99');
   });
 
@@ -533,7 +632,7 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     failIndex = true;
     visit('submit/?restaurant=bayou-bbq');
-    expect(await screen.findByRole('heading', { name: '第一步：选择餐厅' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
   });
 });

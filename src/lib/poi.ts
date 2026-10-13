@@ -18,12 +18,24 @@ export interface RestaurantCandidate {
   distance?: number;
 }
 
-export interface PoiSearch {
-  center: LatLngValue;
-  radiusMeters: number;
+/** A map area in degrees. */
+export interface Bounds {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
+/** Places in a circle (name search) or a rectangle (map discovery). */
+export type PoiSearch = (
+  | { center: LatLngValue; radiusMeters: number; bounds?: undefined }
+  | { bounds: Bounds; center?: undefined; radiusMeters?: undefined }
+) & {
   /** Optional name filter. */
   name?: string;
-}
+  /** Maximum number of places (Geoapify allows up to 500; every 20 cost one credit). */
+  limit?: number;
+};
 
 export type PoiErrorKind = 'not-configured' | 'quota' | 'network' | 'failed';
 
@@ -47,20 +59,41 @@ const CATEGORIES = [
 ];
 const LIMIT = 30;
 
+/**
+ * Map discovery loads fixed tiles of TILE_DEGREES (about 1 km) covering the
+ * visible area, so panning reuses cached tiles instead of searching again.
+ * TILE_LIMIT places per tile is plenty around Rice and caps the cost of a
+ * tile at 5 credits.
+ */
+export const TILE_DEGREES = 0.01;
+export const TILE_LIMIT = 100;
+/** Below this zoom the visible area needs too many tiles; the page asks to zoom in. */
+export const DISCOVERY_MIN_ZOOM = 14;
+export const MAX_TILES = 30;
+
 export function poiApiKey(): string | undefined {
   return import.meta.env.VITE_GEOAPIFY_API_KEY?.trim() || undefined;
 }
 
 /** Builds the Geoapify request URL (lon/lat order, as the API expects). */
 export function geoapifyUrl(search: PoiSearch, apiKey: string): string {
-  const { lat, lng } = search.center;
-  const params = new URLSearchParams({
-    categories: CATEGORIES.join(','),
-    filter: `circle:${lng.toFixed(6)},${lat.toFixed(6)},${Math.round(search.radiusMeters)}`,
-    bias: `proximity:${lng.toFixed(6)},${lat.toFixed(6)}`,
-    limit: String(LIMIT),
-    apiKey,
-  });
+  const params = new URLSearchParams({ categories: CATEGORIES.join(',') });
+  if (search.bounds) {
+    const b = search.bounds;
+    params.set(
+      'filter',
+      `rect:${b.west.toFixed(6)},${b.south.toFixed(6)},${b.east.toFixed(6)},${b.north.toFixed(6)}`,
+    );
+  } else {
+    const { lat, lng } = search.center;
+    params.set(
+      'filter',
+      `circle:${lng.toFixed(6)},${lat.toFixed(6)},${Math.round(search.radiusMeters)}`,
+    );
+    params.set('bias', `proximity:${lng.toFixed(6)},${lat.toFixed(6)}`);
+  }
+  params.set('limit', String(search.limit ?? LIMIT));
+  params.set('apiKey', apiKey);
   if (search.name?.trim()) params.set('name', search.name.trim());
   return `${ENDPOINT}?${params}`;
 }
@@ -164,6 +197,42 @@ export async function searchRestaurants(
     cache.set(cacheKey, promise);
   }
   return promise;
+}
+
+/** The fixed tiles covering an area, or undefined when there would be more than MAX_TILES. */
+export function tilesFor(bounds: Bounds): Bounds[] | undefined {
+  const t = TILE_DEGREES;
+  // Rounding before flooring keeps float noise (e.g. 29.72 / 0.01) on the right tile.
+  const index = (v: number) => Math.floor(Math.round((v / t) * 1e6) / 1e6);
+  const [s, n] = [index(bounds.south), index(bounds.north)];
+  const [w, e] = [index(bounds.west), index(bounds.east)];
+  if ((n - s + 1) * (e - w + 1) > MAX_TILES) return undefined;
+  const tiles: Bounds[] = [];
+  for (let y = s; y <= n; y++) {
+    for (let x = w; x <= e; x++) {
+      const f = (i: number) => Number((i * t).toFixed(6));
+      tiles.push({ south: f(y), north: f(y + 1), west: f(x), east: f(x + 1) });
+    }
+  }
+  return tiles;
+}
+
+/**
+ * Restaurants in the visible map area, loaded tile by tile (each tile cached
+ * for the session) and merged. Returns [] when the area needs more than
+ * MAX_TILES tiles. Rejects like searchRestaurants; tiles that loaded stay cached.
+ */
+export async function restaurantsInArea(bounds: Bounds): Promise<RestaurantCandidate[]> {
+  const tiles = tilesFor(bounds);
+  if (!tiles) return [];
+  // Tiles are not cancelled when the map moves on: they stay useful in the
+  // cache, and callers ignore results for an area that is no longer shown.
+  const lists = await Promise.all(
+    tiles.map((tile) => searchRestaurants({ bounds: tile, limit: TILE_LIMIT })),
+  );
+  const byKey = new Map<string, RestaurantCandidate>();
+  for (const c of lists.flat()) if (!byKey.has(c.key)) byKey.set(c.key, c);
+  return [...byKey.values()];
 }
 
 /** Short Chinese description of a distance, e.g. "120 米", "1.2 公里". */

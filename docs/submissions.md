@@ -16,20 +16,30 @@ Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notificat
   direct link to the Tally-hosted form as a fallback). The form loads only on
   that page, and the website never writes to the database.
 - **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
-  `src/lib/poi.ts`): "使用当前位置" (the browser asks for location only after
-  that click), tapping the map, or a name search finds nearby places through
-  the [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)
-  (restaurants, fast food, cafes, food courts; 300 m around the point, which
-  the contributor can widen to 1 km and 3 km). The device position is only a
-  search center and is never submitted; the location sent is the chosen
-  place's (or the contributor's map marker). If the place is missing, or
-  search is unavailable, "手动添加餐厅" takes a name, an optional address, and
-  a map marker; a name alone is allowed and is marked for location
-  verification. Arriving from a restaurant page skips the search (with
-  "更换餐厅" to choose another). Results are cached for the session, superseded
-  requests are cancelled, and name searches wait until typing pauses. The page
-  shows Geoapify's attribution and a short note that the search position is
-  sent to Geoapify.
+  `src/views/PickerMap.tsx`, `src/lib/poi.ts`) is map-first. The map opens on
+  Rice University and shows the restaurants in view (restaurants, fast food,
+  cafes, food courts from the
+  [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)) as pins;
+  clicking a pin selects that restaurant. Panning or zooming updates the pins
+  once the map settles. "使用当前位置" only moves the map (the browser asks
+  for location after that click, never on load); discovery then works as for
+  any other area. The device position is never submitted; the location sent
+  is the chosen place's (or the contributor's map marker).
+  - Discovery loads fixed tiles of 0.01° (about 1 km) covering the visible
+    area, up to 100 places per tile, each cached for the session, so panning
+    back and forth reuses them and coverage does not depend on a small result
+    limit. Geoapify charges one credit per 20 places returned, so a first view
+    costs at most a few dozen credits and usually far less. Below zoom 14, or
+    when the view would need more than 30 tiles, the page asks the contributor
+    to zoom in instead of searching.
+  - A name search ("按名字搜索", within 5 km of the map center, debounced and
+    cancelled when superseded) finds a specific restaurant. If the place is
+    missing, or search is unavailable, "手动添加餐厅" takes a name, an optional
+    address, and a map marker; a name alone is allowed and is marked for
+    location verification.
+  - Arriving from a restaurant page skips the selection (with "更换餐厅" to
+    choose another). The page shows Geoapify's attribution and a short note
+    that the map area and name searches are sent to Geoapify.
 - **Tally**: collects the text, photos, rating, credit, contact email, and
   consent. Free-plan features only.
 - **Gmail** (`hello.riceeats@gmail.com`): receives a notification per
@@ -318,11 +328,13 @@ Automated tests use a stub instead of Tally, so the live integration must be
 checked by hand once the form exists:
 
 1. Open https://baoyunfan0101.github.io/rice-eats/ and use the "投稿" link.
-   Use "使用当前位置" (allow the permission), pick a nearby restaurant,
-   confirm it, and submit a text-only test response.
-2. Search a restaurant by name, or tap the map, and submit a photo-only test
-   response. Then deny the location permission once and check that the
-   message appears and map search still works.
+   Check that pins appear around Rice University without any action, click
+   one, confirm it, and submit a text-only test response.
+2. Use "使用当前位置" (allow the permission) and check that the map moves and
+   the pins update; pan the map elsewhere and check again. Search a
+   restaurant by name and submit a photo-only test response. Then deny the
+   location permission once and check that the message appears and the map
+   still works.
 3. Add a restaurant by hand (name and marker) and submit a test response.
 4. On a restaurant page, use "补充点评或照片" and submit a test response.
 5. In Tally, confirm the responses recorded `restaurant_name`,

@@ -3,9 +3,12 @@ import {
   clearPoiCache,
   distanceText,
   geoapifyUrl,
+  MAX_TILES,
   normalizeGeoapify,
   PoiError,
+  restaurantsInArea,
   searchRestaurants,
+  tilesFor,
 } from './poi';
 
 const center = { lat: 29.717, lng: -95.402 };
@@ -22,6 +25,18 @@ describe('Geoapify requests', () => {
       limit: '30',
       apiKey: 'k1',
     });
+  });
+
+  it('searches a rectangle with a larger limit for map tiles', () => {
+    const url = new URL(
+      geoapifyUrl(
+        { bounds: { south: 29.71, west: -95.41, north: 29.72, east: -95.4 }, limit: 100 },
+        'k1',
+      ),
+    );
+    expect(url.searchParams.get('filter')).toBe('rect:-95.410000,29.710000,-95.400000,29.720000');
+    expect(url.searchParams.get('bias')).toBeNull();
+    expect(url.searchParams.get('limit')).toBe('100');
   });
 
   it('adds a trimmed name filter', () => {
@@ -78,6 +93,32 @@ describe('normalizing places', () => {
   });
 });
 
+describe('map tiles', () => {
+  it('covers an area with fixed tiles, aligned so panning reuses them', () => {
+    const tiles = tilesFor({ south: 29.7134, west: -95.4078, north: 29.7214, east: -95.3958 })!;
+    expect(tiles).toHaveLength(4);
+    expect(tiles[0]).toEqual({ south: 29.71, north: 29.72, west: -95.41, east: -95.4 });
+    expect(tiles.at(-1)).toEqual({ south: 29.72, north: 29.73, west: -95.4, east: -95.39 });
+    // A slightly moved view inside the same tiles needs the same tiles.
+    expect(tilesFor({ south: 29.7135, west: -95.4077, north: 29.7215, east: -95.3959 })).toEqual(
+      tiles,
+    );
+  });
+
+  it('refuses areas that would need too many tiles', () => {
+    expect(tilesFor({ south: 29.6, west: -95.6, north: 29.8, east: -95.2 })).toBeUndefined();
+    const side = Math.floor(Math.sqrt(MAX_TILES));
+    expect(
+      tilesFor({
+        south: 0.0001,
+        west: 0.0001,
+        north: side / 100 - 0.0001,
+        east: side / 100 - 0.0001,
+      }),
+    ).toHaveLength(side * side);
+  });
+});
+
 describe('searching', () => {
   const fetchMock = vi.fn<typeof fetch>();
   beforeEach(() => {
@@ -125,6 +166,26 @@ describe('searching', () => {
     fetchMock.mockResolvedValue(Response.json({ features: [] }));
     await expect(searchRestaurants({ center, radiusMeters: 300 })).resolves.toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('merges the tiles of an area and caches each tile', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const filter = new URL(String(input)).searchParams.get('filter')!;
+      const [w, south] = filter.slice(5).split(',').map(Number) as [number, number];
+      return Response.json({
+        features: [
+          feature({ place_id: 'shared', name: 'Shared', lat: 29.715, lon: -95.405 }),
+          feature({ place_id: `t${w}${south}`, name: 'Tile', lat: south + 0.005, lon: w + 0.005 }),
+        ],
+      });
+    });
+    const bounds = { south: 29.712, west: -95.408, north: 29.722, east: -95.398 };
+    const first = await restaurantsInArea(bounds);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(first.filter((c) => c.poiId === 'shared')).toHaveLength(1);
+    expect(first).toHaveLength(5);
+    await restaurantsInArea(bounds);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('reports network errors and passes cancellation through', async () => {
