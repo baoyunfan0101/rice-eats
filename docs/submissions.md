@@ -66,17 +66,17 @@ access to them. Menu names may differ slightly in Tally's editor.
    |                    | `selection_method`     | `existing`, `poi`, or `manual`.                                                                         |
    |                    | `source`               | `site` or `restaurant-page`.                                                                            |
    | Text               |                        | "餐厅：@restaurant_name" (a field reference), then the intro: manual review, no guarantee.              |
+   | Multiple choice    | `总体评级`             | Optional, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
    | Long answer        | `你的点评`             | **Required.** Placeholder: "随便写，口味、环境、推荐或踩雷的菜都可以。"                                 |
-   | Text               |                        | "这里传环境、菜单等不属于某道菜的照片；某道菜的照片请传在下面对应的菜品里。"                            |
+   | Text               |                        | "可以上传环境、菜单等照片。想单独点评某道菜的话，可以在下面添加这道菜，并上传它的照片。"                |
    | File upload        | `照片`                 | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.            |
-   | Text               |                        | "推荐或避雷的菜（选填，最多 5 道），一道一道添加。"                                                     |
+   | Text               |                        | "想单独推荐或避雷某道菜？点「＋ 添加一道菜」，一道一道地加（选填）。"                                   |
    | Checkboxes         | `菜品1 添加`           | Optional, one unchecked option `＋ 添加一道菜`.                                                         |
    | Short answer       | `菜品1 名称`           | **Required** (only while shown).                                                                        |
    | Multiple choice    | `菜品1 评价`           | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.            |
    | File upload        | `菜品1 照片`           | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                     |
    | Short answer       | `菜品1 点评`           | Optional; one sentence about the dish.                                                                  |
    | (same five blocks) | `菜品2 …` to `菜品5 …` | Same settings, with the option `＋ 再添加一道菜` (step 4).                                              |
-   | Multiple choice    | `总体评级`             | Optional, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
    | Short answer       | `署名`                 | Optional. Placeholder: "采用后会显示在网站上；可写「匿名」"                                             |
    | Email              | `联系邮箱`             | Optional. Placeholder: "只用于和你沟通，不会公开"                                                       |
    | Checkboxes         | `发布授权`             | Required, one unchecked option whose text starts with `我同意` (consent text below).                    |
