@@ -106,13 +106,6 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
         >
           {name ? `为「${name}」投稿` : '投稿：分享你的用餐体验'}
         </h1>
-        <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-muted">
-          <li>
-            可以点评已收录的餐厅，也可以推荐还没收录的餐厅；写几句点评、上传照片，或两者都有。
-          </li>
-          <li>不需要注册账号。署名和联系邮箱都是选填，邮箱只用于和你沟通，不会公开。</li>
-          <li>投稿会先经过人工审核，不会立即出现在网站上，也不保证一定发布。</li>
-        </ul>
       </header>
 
       {step.kind === 'select' && (

@@ -16,20 +16,56 @@ Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notificat
   direct link to the Tally-hosted form as a fallback). The form loads only on
   that page, and the website never writes to the database.
 - **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
-  `src/lib/poi.ts`): "使用当前位置" (the browser asks for location only after
-  that click), tapping the map, or a name search finds nearby places through
-  the [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)
-  (restaurants, fast food, cafes, food courts; 300 m around the point, which
-  the contributor can widen to 1 km and 3 km). The device position is only a
-  search center and is never submitted; the location sent is the chosen
-  place's (or the contributor's map marker). If the place is missing, or
-  search is unavailable, "手动添加餐厅" takes a name, an optional address, and
-  a map marker; a name alone is allowed and is marked for location
-  verification. Arriving from a restaurant page skips the search (with
-  "更换餐厅" to choose another). Results are cached for the session, superseded
-  requests are cancelled, and name searches wait until typing pauses. The page
-  shows Geoapify's attribution and a short note that the search position is
-  sent to Geoapify.
+  `src/views/PickerMap.tsx`, `src/lib/poi.ts`) is map-first. The map opens on
+  Rice University and shows the restaurants in view (restaurants, fast food,
+  cafes, food courts from the
+  [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)) as pins;
+  clicking a pin selects that restaurant. Panning or zooming updates the pins
+  once the map settles. "使用当前位置" only moves the map (the browser asks
+  for location after that click, never on load); discovery then works as for
+  any other area. The device position is never submitted; the location sent
+  is the chosen place's (or the contributor's map marker).
+  - Discovery loads fixed tiles of 0.01° (about 1 km) covering the visible
+    area, each cached for the session, so panning back and forth reuses them.
+    A Geoapify tile asks for up to 500 places (Geoapify's maximum); credits
+    are charged per place returned (one per 20), not per limit, so a first
+    view costs at most a few dozen credits and usually far less. If a tile (or
+    an Overpass batch, up to 2,000 places) reaches its limit, the page says
+    some restaurants may be missing and suggests zooming in or searching by
+    name. Below zoom 14, or when the view would need more than 30 tiles, the
+    page asks the contributor to zoom in instead of searching.
+  - Each tile loads independently: restaurants from tiles that loaded stay on
+    the map when others fail, the page says part of the area did not load,
+    and "重试" (or moving the map) loads only the failed tiles again (failures
+    are not cached). When nothing loads, the previous pins stay with an error
+    and "重试". Results for an area the map has already left are ignored.
+  - A name search ("按名字搜索") finds a specific restaurant within 5 km of the
+    map center, snapped to a ~2 km grid: moving the map to another cell
+    searches again, and results are only shown for the query and area they
+    were made for, so late answers never replace newer ones. If the place is
+    missing, or search is unavailable, "手动添加餐厅" takes a name, an optional
+    address, and a map marker; a name alone is allowed and is marked for
+    location verification.
+  - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
+    (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
+    the rest of the session), or a Geoapify request fails, the search goes to
+    the free OpenStreetMap
+    [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) (no key;
+    named `amenity` restaurant, fast_food, cafe, or food_court within the tile
+    or around the map center). Geoapify itself serves OpenStreetMap data, so
+    both find the same places; Overpass addresses are sparser (street and
+    number when tagged). Such selections send `poi_provider=osm` and
+    `poi_id=<node|way|relation>/<id>`. To respect the public server's
+    fair-use limits (about two concurrent requests per visitor, roughly 10,000
+    a day), all tiles of a view that need Overpass (every tile without a key,
+    or the tiles Geoapify could not load) are fetched in one request for their
+    bounding box and split back into tiles, at most two Overpass requests run
+    at once, and a busy answer (504) is retried once. If Overpass still
+    fails, the page shows an error with "重试", and manual entry still works.
+  - Arriving from a restaurant page skips the selection (with "更换餐厅" to
+    choose another). The page shows the data attribution (Geoapify and
+    OpenStreetMap, or OpenStreetMap alone without a key) and a short note that
+    the map area and name searches are sent to these services.
 - **Tally**: collects the text, photos, rating, credit, contact email, and
   consent. Free-plan features only.
 - **Gmail** (`hello.riceeats@gmail.com`): receives a notification per
@@ -40,8 +76,8 @@ Rice Eats website (choose + confirm restaurant) -> Tally form -> Gmail notificat
 
 The shared contract (hidden-field names, question titles, rating options, the
 form setting) is defined once in `shared/submission.ts`. Components only see a
-provider-independent `RestaurantCandidate`; Geoapify is one implementation in
-`src/lib/poi.ts`.
+provider-independent `RestaurantCandidate`; Geoapify and the Overpass
+fallback are implemented in `src/lib/poi.ts`.
 
 ## Maintainer setup (one time)
 
@@ -61,7 +97,7 @@ access to them. Menu names may differ slightly in Tally's editor.
    |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                        |
    |                    | `restaurant_lng`        | Longitude, as above.                                                                                     |
    |                    | `restaurant_address`    | Address, when known.                                                                                     |
-   |                    | `poi_provider`          | `geoapify` for a place from the search.                                                                  |
+   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                              |
    |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                 |
    |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                          |
    |                    | `source`                | `site` or `restaurant-page`.                                                                             |
@@ -147,10 +183,10 @@ access to them. Menu names may differ slightly in Tally's editor.
     Variables > `GEOAPIFY_API_KEY`; the deploy workflow passes it to the
     build as `VITE_GEOAPIFY_API_KEY`. For local development put
     `VITE_GEOAPIFY_API_KEY=<key>` in `.env.local` (git-ignored). Never commit
-    a key or use an unrestricted one. Without a key the site still builds,
-    hides the search, and offers manual entry. Watch the free quota in the
-    Geoapify dashboard; when it is exhausted the page says search is
-    unavailable and manual entry keeps working.
+    a key or use an unrestricted one. Without a key the site still builds and
+    the map uses the free OpenStreetMap Overpass fallback. Watch the free
+    quota in the Geoapify dashboard; when it is exhausted the page switches to
+    Overpass for the rest of the visit.
 13. **Verify end to end** with the checklist below.
 
 ## Handling submissions
@@ -318,11 +354,13 @@ Automated tests use a stub instead of Tally, so the live integration must be
 checked by hand once the form exists:
 
 1. Open https://baoyunfan0101.github.io/rice-eats/ and use the "投稿" link.
-   Use "使用当前位置" (allow the permission), pick a nearby restaurant,
-   confirm it, and submit a text-only test response.
-2. Search a restaurant by name, or tap the map, and submit a photo-only test
-   response. Then deny the location permission once and check that the
-   message appears and map search still works.
+   Check that pins appear around Rice University without any action, click
+   one, confirm it, and submit a text-only test response.
+2. Use "使用当前位置" (allow the permission) and check that the map moves and
+   the pins update; pan the map elsewhere and check again. Search a
+   restaurant by name and submit a photo-only test response. Then deny the
+   location permission once and check that the message appears and the map
+   still works.
 3. Add a restaurant by hand (name and marker) and submit a test response.
 4. On a restaurant page, use "补充点评或照片" and submit a test response.
 5. In Tally, confirm the responses recorded `restaurant_name`,

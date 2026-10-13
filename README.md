@@ -15,7 +15,7 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 - **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
 - **Static**: no backend, database, accounts, or paid services. Hosted on GitHub Pages.
-- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page. Contributors first pick the restaurant (near their location, by tapping the map, by name search through the Geoapify Places API, or by adding it by hand) and confirm it; the form receives that restaurant as hidden fields. Contributors can list dishes with a verdict and that dish's own photos.
+- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page. Contributors first pick the restaurant on a map that shows nearby restaurants as pins (from the Geoapify Places API, starting at Rice University), by name search, or by adding it by hand, and confirm it; the form receives that restaurant as hidden fields. Contributors can list dishes with a verdict and that dish's own photos.
 - **Content workflow**: contributors send ordinary text and photos; an Agent Skill turns them into validated drafts, and nothing is published without maintainer review.
 
 ## Technology
@@ -97,7 +97,7 @@ Repository settings this relies on:
 - **Settings → Pages → Source: GitHub Actions** (configured).
 - **Settings → Rules → Rulesets → "Protect main"**: changes to `main` go through pull requests, the `check` CI job must pass, force pushes and branch deletion are blocked, and nobody can bypass it.
 
-The site is served from `/rice-eats/`. To build for another path, set `BASE_PATH` (for example `BASE_PATH=/ npm run build`). Map tiles come from OpenStreetMap, whose [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) allows light use with attribution; to use another provider, set `VITE_TILE_URL` and `VITE_TILE_ATTRIBUTION` at build time. Nearby restaurant search on the submission page uses the [Geoapify Places API](https://www.geoapify.com/places-api/) with the browser key in `VITE_GEOAPIFY_API_KEY` (in `.env.local` locally, and the `GEOAPIFY_API_KEY` repository variable for GitHub Pages; see [docs/submissions.md](docs/submissions.md)). Without a key the site still builds and contributors add restaurants by hand.
+The site is served from `/rice-eats/`. To build for another path, set `BASE_PATH` (for example `BASE_PATH=/ npm run build`). Map tiles come from OpenStreetMap, whose [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) allows light use with attribution; to use another provider, set `VITE_TILE_URL` and `VITE_TILE_ATTRIBUTION` at build time. Nearby restaurant search on the submission page uses the [Geoapify Places API](https://www.geoapify.com/places-api/) with the browser key in `VITE_GEOAPIFY_API_KEY` (in `.env.local` locally, and the `GEOAPIFY_API_KEY` repository variable for GitHub Pages; see [docs/submissions.md](docs/submissions.md)). When there is no key, the credits run out, or Geoapify fails, the page falls back to the free OpenStreetMap Overpass API.
 
 ## License
 

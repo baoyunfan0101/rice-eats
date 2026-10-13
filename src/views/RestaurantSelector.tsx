@@ -1,92 +1,152 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { RICE_CENTER } from '../../shared/content/model';
 import type { LatLngValue } from '../../shared/submission';
 import {
+  DISCOVERY_MIN_ZOOM,
   distanceText,
-  POI_ATTRIBUTION,
+  poiAttribution,
   PoiError,
-  poiApiKey,
+  restaurantsInArea,
   searchRestaurants,
+  tilesFor,
   type RestaurantCandidate,
 } from '../lib/poi';
+import type { MapArea } from './PickerMap';
 import type { Selection } from './submitTypes';
 
 // Leaflet is only downloaded when a map is shown.
 const PickerMap = lazy(() => import('./PickerMap'));
 
-const RADII = [300, 1000, 3000];
+const START = { center: RICE_CENTER, zoom: 15 };
 /** Name searches cover the area around the map center. */
 const NAME_RADIUS = 5000;
+/**
+ * Name searches use the map center snapped to this grid (about 2 km), so they
+ * follow the map without re-running for every small pan (and repeat searches
+ * hit the cache).
+ */
+const NAME_GRID = 0.02;
+/** Wait for the map (or typing) to settle before searching. */
+const SETTLE_MS = 400;
 
-type Results =
+type Discovery =
   | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ready'; candidates: RestaurantCandidate[] }
-  | { status: 'error'; message: string };
+  | { status: 'loading'; candidates: RestaurantCandidate[] }
+  | {
+      status: 'ready';
+      candidates: RestaurantCandidate[];
+      /** Tiles of the area that failed to load (the rest are shown). */
+      failed: number;
+      truncated: boolean;
+    }
+  /** Nothing in the area loaded; the previous pins stay. */
+  | { status: 'error'; message: string; candidates: RestaurantCandidate[] };
+
+/** Name search results, tagged with the query and area they belong to. */
+type NameResults =
+  | { status: 'idle' }
+  | { status: 'loading'; for: string }
+  | { status: 'ready'; for: string; candidates: RestaurantCandidate[] }
+  | { status: 'error'; for: string; message: string };
 
 type Locating = 'idle' | 'locating' | 'denied' | 'unavailable';
 
+function errorMessage(e: unknown): string {
+  const kind = e instanceof PoiError ? e.kind : 'failed';
+  return kind === 'quota'
+    ? '餐厅搜索暂时不可用（服务额度已用完或被拒绝）。'
+    : kind === 'network'
+      ? '网络连接失败，没能加载附近的餐厅。'
+      : '餐厅搜索出错了。';
+}
+
 /**
- * Restaurant discovery: current location, a point on the map, or a name
- * search, with a manual entry when the place is not found. Searches run only
- * after a deliberate action (button, map tap, or a paused name query).
+ * Map-first restaurant discovery: the map opens on Rice University and shows
+ * the restaurants in view as pins, updating as the map is panned or zoomed
+ * (including after "使用当前位置", which only moves the map). A name search
+ * and a manual entry cover places the map does not show.
  */
 export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) => void }) {
-  const configured = Boolean(poiApiKey());
-  const [view, setView] = useState({ center: RICE_CENTER, zoom: 15 });
-  const mapCenter = useRef<LatLngValue>(RICE_CENTER);
-  const [area, setArea] = useState<{ center: LatLngValue; radiusMeters: number }>();
+  const [view, setView] = useState(START);
+  const [area, setArea] = useState<MapArea>();
+  const [discovery, setDiscovery] = useState<Discovery>({ status: 'idle' });
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Results>({ status: 'idle' });
+  const [named, setNamed] = useState<NameResults>({ status: 'idle' });
   const [locating, setLocating] = useState<Locating>('idle');
   const [manual, setManual] = useState(false);
-  const abort = useRef<AbortController | undefined>(undefined);
+  const discoverySeq = useRef(0);
+  /** Bumped by "重试" to load the current area again (failed tiles are not cached). */
+  const [attempt, setAttempt] = useState(0);
 
-  const run = useCallback(
-    async (center: LatLngValue, radiusMeters: number, name?: string) => {
-      if (!configured) return;
-      abort.current?.abort();
-      const controller = new AbortController();
-      abort.current = controller;
-      setArea({ center, radiusMeters });
-      setResults({ status: 'loading' });
-      try {
-        const candidates = await searchRestaurants(
-          { center, radiusMeters, name },
-          controller.signal,
-        );
-        if (!controller.signal.aborted) setResults({ status: 'ready', candidates });
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        const kind = e instanceof PoiError ? e.kind : 'failed';
-        setResults({
-          status: 'error',
-          message:
-            kind === 'quota'
-              ? '餐厅搜索暂时不可用（服务额度已用完或被拒绝）。'
-              : kind === 'network'
-                ? '网络连接失败，没能搜索附近餐厅。'
-                : '餐厅搜索出错了。',
-        });
-      }
-    },
-    [configured],
-  );
+  // An area too large to search (zoomed far out) shows a hint instead.
+  const tooWide = !!area && (area.zoom < DISCOVERY_MIN_ZOOM || !tilesFor(area.bounds));
 
-  useEffect(() => () => abort.current?.abort(), []);
-
-  // Name search: wait until typing pauses, then search around the map center.
+  // Map discovery: once the map has settled, load the restaurants in view.
   useEffect(() => {
-    const name = query.trim();
-    if (!name) return;
-    const timer = setTimeout(() => void run(mapCenter.current, NAME_RADIUS, name), 400);
+    if (!area || tooWide) return;
+    const seq = ++discoverySeq.current;
+    const timer = setTimeout(() => {
+      setDiscovery((d) => ({
+        status: 'loading',
+        candidates: 'candidates' in d ? d.candidates : [],
+      }));
+      void restaurantsInArea(area.bounds).then((result) => {
+        // Results for an area the map has left are ignored.
+        if (seq !== discoverySeq.current) return;
+        if (result.total > 0 && result.failed === result.total) {
+          setDiscovery((d) => ({
+            status: 'error',
+            message: errorMessage(result.error),
+            candidates: 'candidates' in d ? d.candidates : [],
+          }));
+        } else {
+          setDiscovery({
+            status: 'ready',
+            candidates: result.candidates,
+            failed: result.failed,
+            truncated: result.truncated,
+          });
+        }
+      });
+    }, SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [query, run]);
+  }, [area, tooWide, attempt]);
 
-  const searchAt = (center: LatLngValue, radius = RADII[0]!) => {
-    setQuery('');
-    void run(center, radius);
-  };
+  // Name search: wait until typing pauses, then search around the map center
+  // (snapped to NAME_GRID). Moving the map to another cell searches again;
+  // results are only shown for the query and cell they were made for.
+  const snap = (v: number) => Number((Math.round(v / NAME_GRID) * NAME_GRID).toFixed(6));
+  const nameLat = snap(area?.center.lat ?? RICE_CENTER.lat);
+  const nameLng = snap(area?.center.lng ?? RICE_CENTER.lng);
+  const name = query.trim();
+  const nameKey = `${name}|${nameLat},${nameLng}`;
+  useEffect(() => {
+    if (!name) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setNamed({ status: 'loading', for: nameKey });
+      searchRestaurants(
+        { center: { lat: nameLat, lng: nameLng }, radiusMeters: NAME_RADIUS, name },
+        controller.signal,
+      ).then(
+        (candidates) => {
+          if (!controller.signal.aborted) setNamed({ status: 'ready', for: nameKey, candidates });
+        },
+        (e: unknown) => {
+          if (!controller.signal.aborted) {
+            setNamed({ status: 'error', for: nameKey, message: errorMessage(e) });
+          }
+        },
+      );
+    }, SETTLE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [name, nameLat, nameLng, nameKey]);
+  // Results of an older query or area count as still loading.
+  const current: NameResults =
+    named.status === 'idle' || named.for === nameKey ? named : { status: 'loading', for: nameKey };
 
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) {
@@ -96,106 +156,102 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
     setLocating('locating');
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        // The device position is only used as a search center; it is never
-        // submitted as the restaurant's location.
-        const center = { lat: position.coords.latitude, lng: position.coords.longitude };
+        // The device position only moves the map; it is never submitted as
+        // the restaurant's location. Discovery follows the map as usual.
         setLocating('idle');
-        setView({ center, zoom: 16 });
-        searchAt(center);
+        setView({
+          center: { lat: position.coords.latitude, lng: position.coords.longitude },
+          zoom: 16,
+        });
       },
       (error) => setLocating(error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable'),
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
     );
   };
 
-  const nextRadius = area && RADII.find((r) => r > area.radiusMeters);
-
   if (manual) {
     return (
       <ManualEntry
-        start={view}
+        start={area ? { center: area.center, zoom: area.zoom } : view}
         onCancel={() => setManual(false)}
         onDone={(selection) => onSelected(selection)}
       />
     );
   }
 
+  const searching = query.trim() !== '';
+  // Tiles reach beyond the visible area; show (and count) what is in view.
+  const inView = (c: RestaurantCandidate) =>
+    !area ||
+    (c.location.lat >= area.bounds.south &&
+      c.location.lat <= area.bounds.north &&
+      c.location.lng >= area.bounds.west &&
+      c.location.lng <= area.bounds.east);
+  const discovered =
+    !tooWide && 'candidates' in discovery ? discovery.candidates.filter(inView) : [];
+  const pins = searching ? (current.status === 'ready' ? current.candidates : []) : discovered;
+
   return (
     <section aria-labelledby="pick-title" className="space-y-4">
-      <div className="space-y-1">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="pick-title" className="text-lg font-bold">
-          第一步：选择餐厅
+          选择餐厅
         </h2>
-        <p className="text-sm text-muted">
-          用当前位置或在地图上点一下，查找附近的餐厅；也可以按名字搜索。
-        </p>
+        <button
+          type="button"
+          onClick={useMyLocation}
+          disabled={locating === 'locating'}
+          className="inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600 disabled:opacity-60"
+        >
+          {locating === 'locating' ? '正在定位…' : '使用当前位置'}
+        </button>
       </div>
-
-      {configured ? (
-        <>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={useMyLocation}
-              disabled={locating === 'locating'}
-              className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700 disabled:opacity-60"
-            >
-              {locating === 'locating' ? '正在定位…' : '使用当前位置'}
-            </button>
-            <button
-              type="button"
-              onClick={() => searchAt(mapCenter.current)}
-              className="inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600"
-            >
-              搜索地图中心附近
-            </button>
-          </div>
-          {(locating === 'denied' || locating === 'unavailable') && (
-            <p role="status" className="text-sm text-chili-700">
-              {locating === 'denied'
-                ? '没有获得定位权限。可以在地图上点选位置，或按名字搜索。'
-                : '暂时无法获取当前位置。可以在地图上点选位置，或按名字搜索。'}
-            </p>
-          )}
-          <label className="block">
-            <span className="text-sm font-semibold">按名字搜索</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="餐厅名字（会在地图当前区域附近搜索）"
-              className="mt-1 min-h-11 w-full rounded-xl border border-line bg-white px-3"
-            />
-          </label>
-        </>
-      ) : (
-        <p role="status" className="rounded-xl bg-white p-3 text-sm text-muted">
-          附近餐厅搜索暂不可用，请用下面的「手动添加餐厅」。
+      {(locating === 'denied' || locating === 'unavailable') && (
+        <p role="status" className="text-sm text-chili-700">
+          {locating === 'denied'
+            ? '没有获得定位权限。可以直接拖动地图找到餐厅。'
+            : '暂时无法获取当前位置。可以直接拖动地图找到餐厅。'}
         </p>
       )}
 
-      <Suspense fallback={<div className="h-72 rounded-2xl bg-line sm:h-96" />}>
+      <Suspense fallback={<div className="h-80 rounded-2xl bg-line sm:h-[28rem]" />}>
         <PickerMap
-          label="选择餐厅位置的地图"
+          label="附近餐厅地图"
+          className="h-80 sm:h-[28rem]"
           view={view}
-          searchArea={area}
-          candidates={results.status === 'ready' ? results.candidates : []}
-          onMove={(center) => (mapCenter.current = center)}
-          onMapClick={configured ? (point) => searchAt(point) : undefined}
+          candidates={pins}
+          onMove={setArea}
           onSelect={(c) => onSelected(fromCandidate(c))}
         />
       </Suspense>
+      {!searching && (
+        <DiscoveryStatus
+          discovery={discovery}
+          visible={discovered.length}
+          tooWide={tooWide}
+          onRetry={() => setAttempt((n) => n + 1)}
+        />
+      )}
 
-      <Results
-        results={results}
-        nextRadius={nextRadius}
-        onExpand={() => area && nextRadius && void run(area.center, nextRadius)}
-        onSelect={(c) => onSelected(fromCandidate(c))}
-      />
+      <div className="space-y-2">
+        <label className="block">
+          <span className="text-sm font-semibold">按名字搜索</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="地图上没找到？输入餐厅名字"
+            className="mt-1 min-h-11 w-full rounded-xl border border-line bg-white px-3"
+          />
+        </label>
+        {searching && (
+          <NameResultList results={current} onSelect={(c) => onSelected(fromCandidate(c))} />
+        )}
+      </div>
 
       <div className="space-y-1 border-t border-line pt-4 text-sm">
         <p>
-          找不到这家餐厅？
+          还是找不到？
           <button
             type="button"
             onClick={() => setManual(true)}
@@ -204,15 +260,65 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
             手动添加餐厅
           </button>
         </p>
-        {configured && (
-          <p className="text-xs leading-5 text-muted">
-            使用定位或地图搜索时，搜索位置会发送给 Geoapify
-            来查找附近餐厅；你的设备位置不会随投稿提交。
-            {POI_ATTRIBUTION}
-          </p>
-        )}
+        <p className="text-xs leading-5 text-muted">
+          地图区域和名字搜索会发送给地图数据服务（Geoapify 或 OpenStreetMap
+          Overpass）来查找餐厅；你的设备位置不会随投稿提交。{poiAttribution()}
+        </p>
       </div>
     </section>
+  );
+}
+
+function DiscoveryStatus({
+  discovery,
+  visible,
+  tooWide,
+  onRetry,
+}: {
+  discovery: Discovery;
+  visible: number;
+  tooWide: boolean;
+  onRetry: () => void;
+}) {
+  const retry = (
+    <button type="button" onClick={onRetry} className="ml-1 font-semibold text-chili-700 underline">
+      重试
+    </button>
+  );
+  let text: string | undefined;
+  let warning: ReactNode;
+  if (tooWide) text = '放大地图就能看到附近的餐厅。';
+  else if (discovery.status === 'loading') text = '正在加载附近的餐厅…';
+  else if (discovery.status === 'error') {
+    text = `${discovery.message}可以重试、拖动地图，或按名字搜索、手动添加。`;
+  } else if (discovery.status === 'ready') {
+    text =
+      visible === 0
+        ? '这片区域没有找到餐厅，可以拖动地图看看别处。'
+        : `地图上有 ${visible} 家餐厅，点图钉选择。`;
+    if (discovery.failed > 0) warning = '部分区域没能加载，地图上的餐厅可能不全。';
+    else if (discovery.truncated) {
+      warning = '这一带餐厅很多，地图上可能没有全部显示；放大地图或按名字搜索可以找到更多。';
+    }
+  }
+  const failed =
+    !tooWide &&
+    (discovery.status === 'error' || (discovery.status === 'ready' && discovery.failed > 0));
+  return (
+    <div role="status" className="space-y-1 text-sm">
+      {text && (
+        <p className={!tooWide && discovery.status === 'error' ? 'text-chili-700' : 'text-muted'}>
+          {text}
+          {discovery.status === 'error' && !tooWide && retry}
+        </p>
+      )}
+      {warning && (
+        <p className="text-chili-700">
+          {warning}
+          {failed && retry}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -226,70 +332,58 @@ function fromCandidate(c: RestaurantCandidate): Selection {
   };
 }
 
-function Results({
+function NameResultList({
   results,
-  nextRadius,
-  onExpand,
   onSelect,
 }: {
-  results: Results;
-  nextRadius?: number;
-  onExpand: () => void;
+  results: NameResults;
   onSelect: (c: RestaurantCandidate) => void;
 }) {
   if (results.status === 'idle') return null;
   if (results.status === 'loading') {
     return (
       <p role="status" className="text-sm text-muted">
-        正在搜索附近的餐厅…
+        正在搜索…
       </p>
     );
   }
   if (results.status === 'error') {
     return (
       <p role="status" className="text-sm text-chili-700">
-        {results.message}可以换个位置再试，或手动添加餐厅。
+        {results.message}可以换个名字再试，或手动添加餐厅。
       </p>
     );
   }
-  const expand = nextRadius && (
-    <button type="button" onClick={onExpand} className="font-semibold text-chili-700 underline">
-      扩大搜索范围到 {distanceText(nextRadius)}
-    </button>
-  );
   if (results.candidates.length === 0) {
     return (
       <p role="status" className="text-sm text-muted">
-        这里附近没有找到餐厅。{expand ?? '可以换个位置，'}或手动添加餐厅。
+        地图附近没有找到这个名字的餐厅，可以换个写法，或手动添加餐厅。
       </p>
     );
   }
   return (
-    <div className="space-y-2">
-      <ul
-        aria-label="附近的餐厅"
-        className="divide-y divide-line rounded-2xl border border-line bg-white"
-      >
-        {results.candidates.map((c) => (
-          <li key={c.key}>
-            <button
-              type="button"
-              onClick={() => onSelect(c)}
-              className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-chili-50"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block font-semibold">{c.name}</span>
-                {c.address && <span className="block text-sm text-muted">{c.address}</span>}
-              </span>
-              {c.distance !== undefined && (
-                <span className="shrink-0 text-sm text-muted">{distanceText(c.distance)}</span>
-              )}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {expand && <p className="text-sm">不在列表里？{expand}</p>}
-    </div>
+    <ul
+      aria-label="搜索结果"
+      className="divide-y divide-line rounded-2xl border border-line bg-white"
+    >
+      {results.candidates.map((c) => (
+        <li key={c.key}>
+          <button
+            type="button"
+            onClick={() => onSelect(c)}
+            className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-chili-50"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold">{c.name}</span>
+              {c.address && <span className="block text-sm text-muted">{c.address}</span>}
+            </span>
+            {c.distance !== undefined && (
+              <span className="shrink-0 text-sm text-muted">{distanceText(c.distance)}</span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -321,7 +415,6 @@ function ManualEntry({
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="中文、英文都可以"
           className="mt-1 min-h-11 w-full rounded-xl border border-line bg-white px-3"
         />
       </label>

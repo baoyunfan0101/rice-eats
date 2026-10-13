@@ -7,6 +7,10 @@ const WITH_LOCATION = 10;
 test.beforeEach(async ({ page }) => {
   // Keep tests offline and avoid loading real map tiles.
   await page.route(/tile\.openstreetmap\.org/, (route) => route.abort());
+  // The OpenStreetMap fallback is unavailable unless a test stubs it.
+  await page.route(/^https:\/\/overpass-api\.de\//, (route) =>
+    route.fulfill({ status: 429, body: '' }),
+  );
   // The fixture build points at a fake Tally form (TALLY_FORM in build:e2e);
   // a stub page stands in for it, so no test depends on a real Tally account.
   await page.route(/^https:\/\/tally\.so\//, (route) =>
@@ -166,58 +170,70 @@ test('keyboard users can reach search, views, and restaurants', async ({ page },
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('河粉花园（虚构示例）');
 });
 
-/** A fake Geoapify Places API: one restaurant near the search center (or named after the query). */
+/** Fake restaurants for the Geoapify stub: one near Rice, one farther north-east. */
+const FAKE_PLACES = [
+  {
+    place_id: 'e2e-place',
+    name: 'Fake Noodle Bar',
+    address_line2: '1 Fake St',
+    lat: 29.7184,
+    lon: -95.4018,
+  },
+  {
+    place_id: 'e2e-taco',
+    name: 'Fake Taco Stop',
+    address_line2: '2 Fake St',
+    lat: 29.7352,
+    lon: -95.3897,
+  },
+];
+
+/** A fake Geoapify Places API: the fake places inside a rectangle, or one named after the query. */
 async function fakePlaces(page: Page) {
   const requests: URL[] = [];
   await page.route(/^https:\/\/api\.geoapify\.com\//, (route) => {
     const url = new URL(route.request().url());
     requests.push(url);
-    const [lng, lat] = url.searchParams
-      .get('filter')!
-      .replace('circle:', '')
-      .split(',')
-      .map(Number);
+    const filter = url.searchParams.get('filter')!;
     const name = url.searchParams.get('name');
-    return route.fulfill({
-      json: {
-        features: [
-          {
-            properties: {
-              place_id: 'e2e-place',
-              name: name ? `${name} Kitchen` : 'Fake Noodle Bar',
-              address_line2: '1 Fake St',
-              lat: lat! + 0.001,
-              lon: lng!,
-            },
-          },
-        ],
-      },
-    });
+    let places = FAKE_PLACES;
+    if (name) places = [{ ...FAKE_PLACES[0]!, place_id: 'e2e-named', name: `${name} Kitchen` }];
+    else if (filter.startsWith('rect:')) {
+      const [w, s, e, n] = filter.slice(5).split(',').map(Number) as [
+        number,
+        number,
+        number,
+        number,
+      ];
+      places = FAKE_PLACES.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
+    }
+    return route.fulfill({ json: { features: places.map((properties) => ({ properties })) } });
   });
   return requests;
 }
 
+const pin = (page: Page, name: string) => page.locator(`.leaflet-marker-icon[title="${name}"]`);
+
 const formQuery = (page: Page) =>
   page.frameLocator('iframe[title="Rice吃啥 投稿表单"]').locator('#query');
 
-test('visitors choose a restaurant near their location before the form loads', async ({
+test('visitors pick a restaurant from the map around Rice before the form loads', async ({
   page,
-  context,
 }) => {
   const places = await fakePlaces(page);
-  await context.grantPermissions(['geolocation']);
-  await context.setGeolocation({ latitude: 29.7174, longitude: -95.4018 });
   const response = await page.goto('/rice-eats/submit/');
   expect(response?.status()).toBe(200);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('投稿：分享你的用餐体验');
+  await expect(page.getByText(/不会立即出现在网站上/)).toHaveCount(0);
   await expect(page.locator('iframe')).toHaveCount(0);
-  expect(places).toEqual([]); // nothing is searched before a deliberate action
+  await expect(page.getByRole('button', { name: '搜索地图中心附近' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: '使用当前位置' }).click();
-  const list = page.getByRole('list', { name: '附近的餐厅' });
-  await list.getByRole('button', { name: /Fake Noodle Bar/ }).click();
-  expect(places[0]!.searchParams.get('filter')).toBe('circle:-95.401800,29.717400,300');
-  expect(places[0]!.searchParams.get('categories')).toContain('catering.restaurant');
+  // Restaurants around Rice load as pins without any action.
+  await expect(page.getByText('地图上有 1 家餐厅，点图钉选择。')).toBeVisible();
+  const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
+  expect(rects.length).toBeGreaterThan(0);
+  expect(rects[0]!.searchParams.get('categories')).toContain('catering.restaurant');
+  await pin(page, 'Fake Noodle Bar').click();
 
   await expect(page.getByRole('heading', { name: '确认餐厅' })).toBeVisible();
   await page.getByRole('button', { name: '确认餐厅' }).click();
@@ -227,32 +243,72 @@ test('visitors choose a restaurant near their location before the form loads', a
   await expect(query).toContainText('restaurant_lat=29.718400&restaurant_lng=-95.401800');
   await expect(query).toContainText('poi_provider=geoapify&poi_id=e2e-place');
   await expect(query).toContainText('selection_method=poi&source=site');
-  // The device position itself is never submitted.
-  await expect(query).not.toContainText('29.717400');
 });
 
-test('visitors without location permission can tap the map or search by name', async ({ page }) => {
-  const places = await fakePlaces(page);
+test('the current location moves the map and the pins follow', async ({ page, context }) => {
+  await fakePlaces(page);
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({ latitude: 29.7352, longitude: -95.3895 });
+  await page.goto('/rice-eats/submit/');
+  await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
+  await page.getByRole('button', { name: '使用当前位置' }).click();
+  await expect(pin(page, 'Fake Taco Stop')).toBeVisible();
+  await expect(pin(page, 'Fake Noodle Bar')).toHaveCount(0);
+  await pin(page, 'Fake Taco Stop').click();
+  await page.getByRole('button', { name: '确认餐厅' }).click();
+  const query = formQuery(page);
+  await expect(query).toContainText('restaurant_lat=29.735200');
+  // The device position itself is never submitted.
+  await expect(query).not.toContainText('29.735200&restaurant_lng=-95.389500');
+  await expect(query).not.toContainText('-95.389500');
+});
+
+test('visitors without location permission can still explore the map or search by name', async ({
+  page,
+}) => {
+  await fakePlaces(page);
   await page.goto('/rice-eats/submit/');
   await page.getByRole('button', { name: '使用当前位置' }).click();
   await expect(page.getByText(/没有获得定位权限|暂时无法获取当前位置/)).toBeVisible();
-
-  await page
-    .getByRole('region', { name: '选择餐厅位置的地图' })
-    .click({ position: { x: 120, y: 90 } });
-  await expect(page.getByRole('list', { name: '附近的餐厅' })).toBeVisible();
-  expect(places[0]!.searchParams.get('filter')).toMatch(/^circle:-95\.\d+,29\.\d+,300$/);
-  await page.getByRole('button', { name: /扩大搜索范围到 1\.0 公里/ }).click();
-  await expect.poll(() => places.at(-1)!.searchParams.get('filter')).toMatch(/,1000$/);
+  await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
 
   await page.getByRole('searchbox', { name: '按名字搜索' }).fill('Dumpling');
   await page
-    .getByRole('list', { name: '附近的餐厅' })
+    .getByRole('list', { name: '搜索结果' })
     .getByRole('button', { name: /Dumpling Kitchen/ })
     .click();
   await page.getByRole('button', { name: '重新选择' }).click();
-  await expect(page.getByRole('heading', { name: '第一步：选择餐厅' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
   await expect(page.locator('iframe')).toHaveCount(0);
+});
+
+test('the map falls back to OpenStreetMap when Geoapify is out of credits', async ({ page }) => {
+  await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
+    route.fulfill({ status: 429, body: '' }),
+  );
+  await page.route(/^https:\/\/overpass-api\.de\//, (route) => {
+    const query = new URLSearchParams(route.request().postData() ?? '').get('data') ?? '';
+    const [s, w, n, e] = /\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/
+      .exec(query)!
+      .slice(1)
+      .map(Number) as [number, number, number, number];
+    const elements = FAKE_PLACES.filter(
+      (p) => p.lat >= s && p.lat < n && p.lon >= w && p.lon < e,
+    ).map((p, i) => ({
+      type: 'node',
+      id: 500 + i,
+      lat: p.lat,
+      lon: p.lon,
+      tags: { name: p.name },
+    }));
+    return route.fulfill({ json: { elements } });
+  });
+  await page.goto('/rice-eats/submit/');
+  await pin(page, 'Fake Noodle Bar').click();
+  await page.getByRole('button', { name: '确认餐厅' }).click();
+  const query = formQuery(page);
+  await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
+  await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
 });
 
 test('visitors can add a restaurant by hand when search fails', async ({ page }) => {
@@ -260,7 +316,6 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
     route.fulfill({ status: 429, body: '' }),
   );
   await page.goto('/rice-eats/submit/');
-  await page.getByRole('button', { name: '搜索地图中心附近' }).click();
   await expect(page.getByText(/餐厅搜索暂时不可用/)).toBeVisible();
 
   await page.getByRole('button', { name: '手动添加餐厅' }).click();
@@ -313,7 +368,7 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   );
 
   await page.getByRole('button', { name: '更换餐厅' }).click();
-  await expect(page.getByRole('heading', { name: '第一步：选择餐厅' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
   await page.getByRole('link', { name: '投稿', exact: true }).click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);
   await expect(page.locator('iframe')).toHaveCount(0);
