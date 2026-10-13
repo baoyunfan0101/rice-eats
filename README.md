@@ -15,7 +15,7 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 - **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
 - **Static**: no backend, database, accounts, or paid services. Hosted on GitHub Pages.
-- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page. Contributors first pick the restaurant on a map that shows nearby restaurants as pins (from the Geoapify Places API, starting at Rice University), by name search, or by adding it by hand, and confirm it; the form receives that restaurant as hidden fields. Contributors can list dishes with a verdict and that dish's own photos.
+- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page. Contributing takes two steps: first pick the restaurant on a map that shows nearby restaurants as named pins (from the Geoapify Places API, with a free OpenStreetMap fallback, starting at Rice University), by name search, or by adding it by hand; the selection is confirmed in place on the map. Then fill in the review; the form receives that restaurant as hidden fields. Contributors can list dishes with a verdict and that dish's own photos.
 - **Content workflow**: contributors send ordinary text and photos; an Agent Skill turns them into validated drafts, and nothing is published without maintainer review.
 
 ## Technology

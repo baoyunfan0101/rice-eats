@@ -212,6 +212,7 @@ async function fakePlaces(page: Page) {
   return requests;
 }
 
+const NEXT = '下一步：填写点评 →';
 const pin = (page: Page, name: string) => page.locator(`.leaflet-marker-icon[title="${name}"]`);
 
 const formQuery = (page: Page) =>
@@ -233,11 +234,21 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
   expect(rects.length).toBeGreaterThan(0);
   expect(rects[0]!.searchParams.get('categories')).toContain('catering.restaurant');
+  await expect(page.getByText('第一步 · 选择餐厅')).toBeVisible();
+  // Names are on the map without clicking.
+  await expect(pin(page, 'Fake Noodle Bar').locator('.poi-label')).toHaveText('Fake Noodle Bar');
   await pin(page, 'Fake Noodle Bar').click();
 
-  await expect(page.getByRole('heading', { name: '确认餐厅' })).toBeVisible();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  // Selected in place: highlighted pin and details below the map, no confirmation page.
+  await expect(pin(page, 'Fake Noodle Bar')).toHaveClass(/is-selected/);
+  const selected = page.getByRole('region', { name: '已选餐厅' });
+  await expect(selected).toContainText('Fake Noodle Bar');
+  await expect(selected).toContainText('1 Fake St');
+  await expect(page.getByRole('button', { name: '确认餐厅' })).toHaveCount(0);
+  await page.getByRole('button', { name: NEXT }).click();
+  await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('为「Fake Noodle Bar」投稿');
+  await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('restaurant_lat=29.718400&restaurant_lng=-95.401800');
@@ -255,7 +266,7 @@ test('the current location moves the map and the pins follow', async ({ page, co
   await expect(pin(page, 'Fake Taco Stop')).toBeVisible();
   await expect(pin(page, 'Fake Noodle Bar')).toHaveCount(0);
   await pin(page, 'Fake Taco Stop').click();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_lat=29.735200');
   // The device position itself is never submitted.
@@ -273,12 +284,14 @@ test('visitors without location permission can still explore the map or search b
   await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
 
   await page.getByRole('searchbox', { name: '按名字搜索' }).fill('Dumpling');
-  await page
+  const result = page
     .getByRole('list', { name: '搜索结果' })
-    .getByRole('button', { name: /Dumpling Kitchen/ })
-    .click();
-  await page.getByRole('button', { name: '重新选择' }).click();
-  await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
+    .getByRole('button', { name: /Dumpling Kitchen/ });
+  // Distances are in miles.
+  await expect(result).toContainText(/\d mi$/);
+  await result.click();
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('Dumpling Kitchen');
+  await expect(pin(page, 'Dumpling Kitchen')).toHaveClass(/is-selected/);
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 
@@ -305,7 +318,7 @@ test('the map falls back to OpenStreetMap when Geoapify is out of credits', asyn
   });
   await page.goto('/rice-eats/submit/');
   await pin(page, 'Fake Noodle Bar').click();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
@@ -326,7 +339,7 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
     .click({ position: { x: 150, y: 100 } });
   await expect(page.getByText('已标出位置，可以再点一下修改。')).toBeVisible();
   await page.getByRole('button', { name: '下一步' }).click();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   const query = formQuery(page);
   await expect(query).toContainText(
     'restaurant_name=%E6%96%B0%E5%BC%80%E7%9A%84%E9%9D%A2%E9%A6%86',
@@ -342,7 +355,7 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   await page.getByLabel(/我不确定具体位置/).check();
   await page.getByRole('button', { name: '下一步' }).click();
   await expect(page.getByText(/没有位置信息/)).toBeVisible();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   await expect(query).toContainText(
     'restaurant_name=Mystery+Diner&selection_method=manual&source=site',
   );
@@ -362,13 +375,13 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await expect(query).toContainText('restaurant_id=fixture-sichuan-house');
   await expect(query).toContainText('restaurant_lat=29.705300&restaurant_lng=-95.546500');
   await expect(query).toContainText('selection_method=existing&source=restaurant-page');
-  await expect(page.getByRole('link', { name: /在新窗口打开投稿表单/ })).toHaveAttribute(
-    'href',
-    /^https:\/\/tally\.so\/r\/e2eForm\?restaurant_id=fixture-sichuan-house&/,
-  );
+  await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
+  // The fallback link only appears when the form does not load.
+  await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
 
   await page.getByRole('button', { name: '更换餐厅' }).click();
-  await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
+  await expect(page.getByText('第一步 · 选择餐厅')).toBeVisible();
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('蜀味小馆');
   await page.getByRole('link', { name: '投稿', exact: true }).click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);
   await expect(page.locator('iframe')).toHaveCount(0);
@@ -386,7 +399,7 @@ test('the form does not load on other pages', async ({ page }) => {
   expect(requests).toEqual([]);
 });
 
-test('keyboard users can reach the submission entry and fallback link', async ({
+test('keyboard users can reach the submission entry and the step controls', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'keyboard navigation is a desktop concern');
@@ -409,13 +422,9 @@ test('keyboard users can reach the submission entry and fallback link', async ({
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
     '为「蜀味小馆（虚构示例）」投稿',
   );
-  const fallback = page.getByRole('link', { name: /在新窗口打开投稿表单/ });
-  for (
-    let i = 0;
-    i < 10 && !(await fallback.evaluate((el) => el === document.activeElement));
-    i++
-  ) {
+  const change = page.getByRole('button', { name: '更换餐厅' });
+  for (let i = 0; i < 10 && !(await change.evaluate((el) => el === document.activeElement)); i++) {
     await page.keyboard.press('Tab');
   }
-  await expect(fallback).toBeFocused();
+  await expect(change).toBeFocused();
 });

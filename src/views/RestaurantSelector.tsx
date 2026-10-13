@@ -60,14 +60,50 @@ function errorMessage(e: unknown): string {
       : '餐厅搜索出错了。';
 }
 
+export interface MapView {
+  center: LatLngValue;
+  zoom: number;
+}
+
+/** Key of a selection's pin: matches the candidate it came from. */
+export function selectionKey(s: Selection): string {
+  if (s.poi) return `${s.poi.provider}:${s.poi.id}`;
+  if (s.restaurantId) return `existing:${s.restaurantId}`;
+  return 'manual';
+}
+
+/** Zoom used when the map focuses on a selected restaurant. */
+const FOCUS_ZOOM = 16;
+
 /**
- * Map-first restaurant discovery: the map opens on Rice University and shows
- * the restaurants in view as pins, updating as the map is panned or zoomed
- * (including after "使用当前位置", which only moves the map). A name search
- * and a manual entry cover places the map does not show.
+ * Step 1, map-first restaurant selection: the map opens on Rice University
+ * (or the selected restaurant) and shows the restaurants in view as named
+ * pins, updating as the map is panned or zoomed (including after
+ * "使用当前位置", which only moves the map). Choosing a pin, a search result,
+ * or a manual entry selects it in place: the map focuses on it, it is shown
+ * below the map, and "下一步" continues to the form. A name search and a
+ * manual entry cover places the map does not show.
  */
-export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) => void }) {
-  const [view, setView] = useState(START);
+export function RestaurantSelector({
+  selection,
+  startView,
+  onSelect,
+  onNext,
+  onViewChange,
+}: {
+  selection?: Selection;
+  /** Where the map was when the contributor last left this step. */
+  startView?: MapView;
+  onSelect: (s: Selection) => void;
+  onNext: () => void;
+  onViewChange?: (v: MapView) => void;
+}) {
+  const [view, setView] = useState<MapView>(
+    () =>
+      (selection?.location && { center: selection.location, zoom: FOCUS_ZOOM }) ??
+      startView ??
+      START,
+  );
   const [area, setArea] = useState<MapArea>();
   const [discovery, setDiscovery] = useState<Discovery>({ status: 'idle' });
   const [query, setQuery] = useState('');
@@ -169,12 +205,23 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
     );
   };
 
+  /** Selects a restaurant in place and brings it into focus on the map. */
+  const choose = (s: Selection) => {
+    onSelect(s);
+    if (s.location) {
+      setView({ center: s.location, zoom: Math.max(area?.zoom ?? FOCUS_ZOOM, FOCUS_ZOOM) });
+    }
+  };
+
   if (manual) {
     return (
       <ManualEntry
         start={area ? { center: area.center, zoom: area.zoom } : view}
         onCancel={() => setManual(false)}
-        onDone={(selection) => onSelected(selection)}
+        onDone={(s) => {
+          setManual(false);
+          choose(s);
+        }}
       />
     );
   }
@@ -189,14 +236,29 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
       c.location.lng <= area.bounds.east);
   const discovered =
     !tooWide && 'candidates' in discovery ? discovery.candidates.filter(inView) : [];
-  const pins = searching ? (current.status === 'ready' ? current.candidates : []) : discovered;
+  const listed = searching ? (current.status === 'ready' ? current.candidates : []) : discovered;
+  // The selected restaurant always has a pin, even when it came from a search
+  // or a manual entry, or is out of the listed results.
+  const selectedKey = selection ? selectionKey(selection) : undefined;
+  const pins =
+    selection?.location && !listed.some((c) => c.key === selectedKey)
+      ? [
+          ...listed,
+          {
+            key: selectedKey!,
+            provider: selection.poi?.provider ?? selection.method,
+            poiId: selection.poi?.id ?? '',
+            name: selection.name,
+            location: selection.location,
+            ...(selection.address ? { address: selection.address } : {}),
+          },
+        ]
+      : listed;
 
   return (
-    <section aria-labelledby="pick-title" className="space-y-4">
+    <section aria-label="选择餐厅" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="pick-title" className="text-lg font-bold">
-          选择餐厅
-        </h2>
+        <p className="text-sm text-muted">点地图上的餐厅来选择，也可以按名字搜索。</p>
         <button
           type="button"
           onClick={useMyLocation}
@@ -220,10 +282,18 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
           className="h-80 sm:h-[28rem]"
           view={view}
           candidates={pins}
-          onMove={setArea}
-          onSelect={(c) => onSelected(fromCandidate(c))}
+          selectedKey={selectedKey}
+          onMove={(a) => {
+            setArea(a);
+            onViewChange?.({ center: a.center, zoom: a.zoom });
+          }}
+          onSelect={(c) => {
+            // The selected pin itself keeps its selection (e.g. an existing restaurant).
+            if (c.key !== selectedKey) choose(fromCandidate(c));
+          }}
         />
       </Suspense>
+      {selection && <SelectedRestaurant selection={selection} onNext={onNext} />}
       {!searching && (
         <DiscoveryStatus
           discovery={discovery}
@@ -245,7 +315,11 @@ export function RestaurantSelector({ onSelected }: { onSelected: (s: Selection) 
           />
         </label>
         {searching && (
-          <NameResultList results={current} onSelect={(c) => onSelected(fromCandidate(c))} />
+          <NameResultList
+            results={current}
+            selectedKey={selectedKey}
+            onSelect={(c) => choose(fromCandidate(c))}
+          />
         )}
       </div>
 
@@ -332,11 +406,44 @@ function fromCandidate(c: RestaurantCandidate): Selection {
   };
 }
 
+function SelectedRestaurant({
+  selection: s,
+  onNext,
+}: {
+  selection: Selection;
+  onNext: () => void;
+}) {
+  return (
+    <section
+      aria-label="已选餐厅"
+      className="flex flex-wrap items-end justify-between gap-3 rounded-2xl border-2 border-chili-600 bg-white p-4"
+    >
+      <div className="min-w-0 space-y-0.5">
+        <p className="text-xs font-semibold text-chili-700">已选餐厅</p>
+        <p className="text-lg leading-snug font-bold">{s.name}</p>
+        {s.address && <p className="text-sm text-muted">{s.address}</p>}
+        {!s.location && (
+          <p className="text-sm text-chili-700">没有位置信息，审核时会再核实餐厅的位置。</p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onNext}
+        className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-5 text-sm font-semibold text-white hover:bg-chili-700"
+      >
+        下一步：填写点评 →
+      </button>
+    </section>
+  );
+}
+
 function NameResultList({
   results,
+  selectedKey,
   onSelect,
 }: {
   results: NameResults;
+  selectedKey?: string;
   onSelect: (c: RestaurantCandidate) => void;
 }) {
   if (results.status === 'idle') return null;
@@ -371,7 +478,8 @@ function NameResultList({
           <button
             type="button"
             onClick={() => onSelect(c)}
-            className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-chili-50"
+            aria-pressed={c.key === selectedKey}
+            className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-chili-50 aria-pressed:bg-chili-50"
           >
             <span className="min-w-0 flex-1">
               <span className="block font-semibold">{c.name}</span>
