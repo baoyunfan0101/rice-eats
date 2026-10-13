@@ -130,7 +130,7 @@ one:
   different dish;
 - **rating**: already mapped to 1-5 from the form's five options, or none;
   never infer dish verdicts from it;
-- **credit and consent**: the display name, whether a contact email exists
+- **credit and consent**: the display name (credit a blank one as 匿名, as the form promises), whether a contact email exists
   (the email stays private: pass it only to `content:contributor -- add
 --email`), and consent. A `BLOCKED` submission (no consent, or neither text
   nor photos, or photos only and none retrieved) gets no draft; report it to
