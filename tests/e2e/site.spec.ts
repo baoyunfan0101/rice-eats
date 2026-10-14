@@ -150,6 +150,78 @@ test('distance sorting asks for the location only when chosen', async ({ page, c
   expect(page.url()).not.toMatch(/29\.70|95\.54|lat|lng/);
 });
 
+test('distance sorting follows the last choice whatever order locations answer in', async ({
+  page,
+}) => {
+  // A geolocation whose requests answer only when the test says so.
+  await page.addInitScript(() => {
+    const requests: { ok: PositionCallback; fail: PositionErrorCallback }[] = [];
+    Object.assign(window, {
+      __locations: {
+        count: () => requests.length,
+        succeed: (i: number, latitude: number, longitude: number) =>
+          requests[i]!.ok({ coords: { latitude, longitude } } as GeolocationPosition),
+        deny: (i: number) =>
+          requests[i]!.fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+      },
+    });
+    Object.defineProperty(navigator, 'geolocation', {
+      value: {
+        getCurrentPosition: (ok: PositionCallback, fail: PositionErrorCallback) =>
+          requests.push({ ok, fail }),
+      },
+    });
+  });
+  type Locations = {
+    count: () => number;
+    succeed: (i: number, lat: number, lng: number) => void;
+    deny: (i: number) => void;
+  };
+  const locations = {
+    count: () =>
+      page.evaluate(() => (window as unknown as { __locations: Locations }).__locations.count()),
+    succeed: (i: number, lat: number, lng: number) =>
+      page.evaluate(
+        ([i, lat, lng]) =>
+          (window as unknown as { __locations: Locations }).__locations.succeed(i!, lat!, lng!),
+        [i, lat, lng],
+      ),
+    deny: (i: number) =>
+      page.evaluate(
+        (i) => (window as unknown as { __locations: Locations }).__locations.deny(i),
+        i,
+      ),
+  };
+  await page.goto('/rice-eats/?sort=name');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  await page.waitForTimeout(500);
+  const offset = await mapOffset(page);
+  const sort = page.getByLabel('排序');
+
+  // Distance (A), name, distance again (B); then A fails late and B succeeds.
+  await sort.selectOption('distance');
+  await sort.selectOption('name');
+  await sort.selectOption('distance');
+  expect(await locations.count()).toBe(2);
+  await locations.deny(0);
+  await expect(sort).toHaveValue('distance');
+  await expect(page.getByText(/没有获得定位权限/)).toHaveCount(0);
+  await locations.succeed(1, 29.7053, -95.5465); // at the Sichuan fixture
+  await expect.poll(async () => (await listNames(page))[0]).toBe('蜀味小馆（虚构示例）');
+
+  // Distance (C), then price: C succeeding late changes nothing.
+  await sort.selectOption('price-asc');
+  const byPrice = await listNames(page);
+  await sort.selectOption('distance');
+  await sort.selectOption('price-asc');
+  await locations.succeed(2, 29.75, -95.36);
+  await expect(sort).toHaveValue('price-asc');
+  expect(await listNames(page)).toEqual(byPrice);
+  // The map never moved, and the location never reached the URL.
+  expect(await mapOffset(page)).toBe(offset);
+  expect(page.url()).toMatch(/\?sort=price-asc$/);
+});
+
 test('using the map never changes the explorer', async ({ page }) => {
   await page.goto('/rice-eats/?tag=group&sort=name');
   await expect(markers(page)).toHaveCount(3);

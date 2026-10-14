@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ContentIndex, LatLng } from '../../shared/content/model';
 import { RATINGS } from '../../shared/content/vocabulary';
 import { BottomSheet, type SheetState } from '../components/BottomSheet';
@@ -107,7 +107,19 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
     }
   });
 
+  // The last sort the visitor chose wins: every choice starts a new
+  // generation, and a location answer (success or failure) from an older one
+  // changes nothing. The browser cannot cancel getCurrentPosition, so stale
+  // callbacks are ignored instead; unmounting makes them all stale too.
+  const sortGeneration = useRef(0);
+  useEffect(
+    () => () => {
+      sortGeneration.current++;
+    },
+    [],
+  );
   const onSort = (next: Sort) => {
+    const generation = ++sortGeneration.current;
     if (next !== 'distance') {
       setDistanceSort(false);
       setLocating('idle');
@@ -121,12 +133,15 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
     }
     setLocating('locating');
     setDistanceSort(true);
+    const current = () => generation === sortGeneration.current;
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        if (!current()) return;
         setOrigin({ lat: position.coords.latitude, lng: position.coords.longitude });
         setLocating('idle');
       },
       (error) => {
+        if (!current()) return;
         // Back to the previous sort (the one in the URL).
         setDistanceSort(false);
         setLocating(error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable');

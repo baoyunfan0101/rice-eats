@@ -437,6 +437,140 @@ describe('browsing', () => {
     expect(names(list())).toEqual(['河粉花园', 'Bayou BBQ', 'Food Truck']);
   });
 
+  describe('distance sorting with location answers out of order', () => {
+    /** A geolocation whose requests answer only when (and how) the test says. */
+    const controlledLocation = () => {
+      const requests: { ok: PositionCallback; fail: PositionErrorCallback }[] = [];
+      const getCurrentPosition = vi.fn((ok: PositionCallback, fail: PositionErrorCallback) =>
+        requests.push({ ok, fail }),
+      );
+      vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+      return {
+        requests,
+        succeed: (i: number, latitude: number, longitude = -95.39) =>
+          act(() => requests[i]!.ok({ coords: { latitude, longitude } } as GeolocationPosition)),
+        deny: (i: number) =>
+          act(() =>
+            requests[i]!.fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+          ),
+      };
+    };
+    const sortBox = () => screen.getByLabelText('排序');
+    const bayouLine = () => within(list()).getByText(/^美式烧烤 · 人均 \$28/).textContent;
+    // Bayou BBQ is at 29.74, -95.39: 0.1 mi from 29.741, about 4.1 mi from 29.8.
+    const NEAR = 29.741;
+    const FAR = 29.8;
+    const start = async (url = '') => {
+      visit(url);
+      await screen.findByRole('region', { name: '餐厅地图' });
+      return userEvent.setup();
+    };
+
+    it('sorts by distance once the location arrives', async () => {
+      const location = controlledLocation();
+      const user = await start('?sort=name');
+      await user.selectOptions(sortBox(), 'distance');
+      expect(sortBox()).toHaveValue('distance');
+      location.succeed(0, NEAR);
+      expect(names(list())[0]).toBe('Bayou BBQ');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 0.1 mi');
+    });
+
+    it('keeps a later rating sort when an older location succeeds', async () => {
+      const location = controlledLocation();
+      const user = await start('?sort=name');
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'rating');
+      location.succeed(0, NEAR);
+      expect(sortBox()).toHaveValue('rating');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28');
+      expect(window.location.search).toBe('');
+    });
+
+    it('keeps a later price sort, with no stale error, when an older location fails', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'price-asc');
+      location.deny(0);
+      expect(sortBox()).toHaveValue('price-asc');
+      expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+      expect(names(list())).toEqual(['河粉花园', 'Bayou BBQ', 'Food Truck']);
+    });
+
+    it('does not let an older failure cancel a newer distance sort', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'name');
+      await user.selectOptions(sortBox(), 'distance');
+      location.deny(0);
+      expect(sortBox()).toHaveValue('distance');
+      expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+      expect(sortBox().querySelector('option[value=distance]')).toHaveTextContent('正在获取位置…');
+      location.succeed(1, FAR);
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+    });
+
+    it('uses the newer location whichever answers last', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'name');
+      await user.selectOptions(sortBox(), 'distance');
+      // Older first, then newer.
+      location.succeed(0, NEAR);
+      location.succeed(1, FAR);
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+      // Newer first, then older (a third and fourth request).
+      await user.selectOptions(sortBox(), 'rating');
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'name');
+      await user.selectOptions(sortBox(), 'distance');
+      location.succeed(3, FAR);
+      location.succeed(2, NEAR);
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+    });
+
+    it('returns to the previous sort with a message when the current request fails', async () => {
+      const location = controlledLocation();
+      const user = await start('?sort=price-desc');
+      await user.selectOptions(sortBox(), 'distance');
+      location.deny(0);
+      expect(sortBox()).toHaveValue('price-desc');
+      expect(screen.getByText(/没有获得定位权限，无法按距离排序/)).toBeInTheDocument();
+      // Choosing another sort clears the message.
+      await user.selectOptions(sortBox(), 'name');
+      expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+    });
+
+    it('ignores answers after leaving the page', async () => {
+      const location = controlledLocation();
+      const errors = vi.spyOn(console, 'error');
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.click(screen.getByRole('link', { name: 'Bayou BBQ' }));
+      await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' });
+      location.succeed(0, NEAR);
+      location.deny(0);
+      expect(errors).not.toHaveBeenCalled();
+      expect(window.location.search).toBe('');
+    });
+
+    it('never changes the map while switching sorts', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      const fits = map().getAttribute('data-fits');
+      const pinsBefore = pins();
+      await user.selectOptions(sortBox(), 'distance');
+      location.succeed(0, NEAR);
+      await user.selectOptions(sortBox(), 'price-desc');
+      await user.selectOptions(sortBox(), 'rating');
+      expect(map().getAttribute('data-fits')).toBe(fits);
+      expect(pins()).toEqual(pinsBefore);
+    });
+  });
+
   it('keeps the explorer as it is when the map is used', async () => {
     const user = userEvent.setup();
     visit('?tag=group&sort=name');
