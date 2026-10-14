@@ -145,10 +145,10 @@
   @apply pointer-events-none appearance-none bg-transparent;
 }
 .price-thumb::-webkit-slider-thumb {
-  @apply pointer-events-auto size-6 cursor-pointer appearance-none rounded-full border-2 border-white bg-chili-600 shadow;
+  @apply pointer-events-auto size-5 cursor-pointer appearance-none rounded-full border-2 border-white bg-chili-600 shadow;
 }
 .price-thumb::-moz-range-thumb {
-  @apply pointer-events-auto size-6 cursor-pointer rounded-full border-2 border-white bg-chili-600 shadow;
+  @apply pointer-events-auto size-5 cursor-pointer rounded-full border-2 border-white bg-chili-600 shadow;
 }
 .price-thumb::-webkit-slider-runnable-track,
 .price-thumb::-moz-range-track {

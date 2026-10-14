@@ -181,7 +181,7 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
         // Keep the field and results above the on-screen keyboard.
         if (!wide && sheet !== 'expanded') setSheet('expanded');
       }}
-      footer={<FooterNotes className="px-4 py-6" />}
+      footer={<FooterNotes className="px-3 py-4" />}
     />
   );
   const map = (
@@ -204,7 +204,7 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
         <div className="flex min-h-0 flex-1">
           <section
             aria-label="餐厅探索"
-            className="flex min-h-0 w-[38%] max-w-[32rem] min-w-[20rem] flex-col border-r border-line bg-paper pt-3"
+            className="flex min-h-0 w-[38%] max-w-[32rem] min-w-[20rem] flex-col border-r border-line bg-paper pt-2"
           >
             {explorer}
           </section>

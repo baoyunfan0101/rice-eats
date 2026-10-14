@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 export type SheetState = 'collapsed' | 'half' | 'expanded';
 
 /** Visible height of the collapsed sheet: the handle and the search field. */
-export const COLLAPSED_HEIGHT = 128;
+export const COLLAPSED_HEIGHT = 70;
 /** The expanded sheet leaves this much of the map visible above it. */
 const EXPANDED_GAP = 56;
 
@@ -23,10 +23,12 @@ const LABELS: Record<SheetState, string> = {
 
 /**
  * A mobile bottom sheet over the map, in three states (collapsed, half,
- * expanded). It is dragged by its top bar only, so scrolling the list inside
- * never fights the drag; the handle is also a button (cycling the states) and
- * the bar has explicit buttons, so no gesture is required. `onHeight` reports
- * the visible height so the map can keep its contents clear of the sheet.
+ * expanded), dragged up and down. The drag starts on the handle or on any
+ * part of the content marked `data-sheet-drag` (the explorer's search and
+ * filter bar) that is not a control, so scrolling the list never fights the
+ * drag. The handle is also a button that cycles the states, for keyboards and
+ * screen readers. `onHeight` reports the visible height so the map can keep
+ * its contents clear of the sheet.
  */
 export function BottomSheet({
   state,
@@ -61,29 +63,55 @@ export function BottomSheet({
   }, [height, resting, drag, onHeight]);
 
   const expandedHeight = sheetHeight('expanded', height);
+  const cycle = () =>
+    onState(state === 'collapsed' ? 'half' : state === 'half' ? 'expanded' : 'half');
+  /** A press that becomes a drag once it moves; a tap on the handle cycles the states. */
+  const pressed = useRef<{ y: number; id: number; handle: boolean }>(undefined);
   const onPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as Element).closest('button, input, select, a')) return;
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    const target = e.target as Element;
+    if (!target.closest('[data-sheet-drag]')) return;
+    if (target.closest('input, select, a, button:not([data-sheet-handle])')) return;
+    // Capture now, so the drag continues when the finger leaves the sheet.
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    pressed.current = {
+      y: e.clientY,
+      id: e.pointerId,
+      handle: !!target.closest('[data-sheet-handle]'),
+    };
     samples.current = [{ y: e.clientY, t: e.timeStamp }];
-    setDrag({ startY: e.clientY, startHeight: resting, height: resting });
   };
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!drag) return;
+    const press = pressed.current;
+    if (!press || press.id !== e.pointerId) return;
     samples.current = [...samples.current.slice(-4), { y: e.clientY, t: e.timeStamp }];
-    const next = drag.startHeight + (drag.startY - e.clientY);
-    setDrag({ ...drag, height: Math.min(Math.max(next, COLLAPSED_HEIGHT), expandedHeight) });
+    if (!drag && Math.abs(e.clientY - press.y) < 4) return;
+    const next = resting + (press.y - e.clientY);
+    setDrag({
+      startY: press.y,
+      startHeight: resting,
+      height: Math.min(Math.max(next, COLLAPSED_HEIGHT), expandedHeight),
+    });
   };
   const onPointerUp = () => {
-    if (!drag) return;
+    const press = pressed.current;
+    pressed.current = undefined;
+    if (!drag) {
+      if (press?.handle) cycle();
+      return;
+    }
     const s = samples.current;
     const first = s[0]!;
     const last = s[s.length - 1]!;
-    // Upward velocity in px/ms: a flick moves one state in its direction.
+    // Upward velocity in px/ms.
     const velocity = last.t > first.t ? (first.y - last.y) / (last.t - first.t) : 0;
     let target: SheetState;
     if (Math.abs(velocity) > 0.5) {
-      const i = STATES.indexOf(state);
-      target = STATES[Math.min(Math.max(i + (velocity > 0 ? 1 : -1), 0), 2)]!;
+      // A flick goes to the next state past where the sheet was let go.
+      const heights = STATES.map((st) => [st, sheetHeight(st, height)] as const);
+      target =
+        velocity > 0
+          ? (heights.find(([, h]) => h > drag.height)?.[0] ?? 'expanded')
+          : ([...heights].reverse().find(([, h]) => h < drag.height)?.[0] ?? 'collapsed');
     } else {
       target = STATES.reduce((best, s2) =>
         Math.abs(sheetHeight(s2, height) - drag.height) <
@@ -96,51 +124,33 @@ export function BottomSheet({
     onState(target);
   };
 
-  const cycle = () =>
-    onState(state === 'collapsed' ? 'half' : state === 'half' ? 'expanded' : 'half');
   return (
     <div
       ref={container}
       role="region"
       aria-label="餐厅列表面板"
       data-state={state}
-      className="absolute inset-x-0 bottom-0 z-[1100] flex flex-col overflow-hidden rounded-t-2xl bg-paper shadow-[0_-4px_24px_rgba(0,0,0,0.18)] motion-safe:transition-[height] motion-safe:duration-200 data-dragging:transition-none"
       data-dragging={drag ? '' : undefined}
+      className="absolute inset-x-0 bottom-0 z-[1100] flex flex-col overflow-hidden rounded-t-2xl bg-paper shadow-[0_-4px_24px_rgba(0,0,0,0.18)] motion-safe:transition-[height] motion-safe:duration-200 data-dragging:transition-none"
       style={{ height: visible || undefined, paddingBottom: 'env(safe-area-inset-bottom)' }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
-      <div
-        className="flex shrink-0 touch-none items-center justify-between gap-2 px-4 pt-2 pb-1 select-none"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        <span className="w-16" />
+      <div data-sheet-drag className="flex shrink-0 touch-none justify-center pt-1.5 select-none">
         <button
           type="button"
-          onClick={cycle}
+          data-sheet-handle
+          // Pointer taps are handled with the drag; this covers keyboards and screen readers.
+          onClick={(e) => {
+            if (e.detail === 0) cycle();
+          }}
           aria-label={`${LABELS[state]}，点按${state === 'expanded' ? '半展开' : '展开'}`}
-          className="flex h-6 w-16 items-center justify-center"
+          className="flex h-4 w-20 items-start justify-center"
         >
-          <span aria-hidden="true" className="h-1.5 w-10 rounded-full bg-muted/50" />
+          <span aria-hidden="true" className="h-1 w-9 rounded-full bg-muted/50" />
         </button>
-        {state === 'collapsed' ? (
-          <button
-            type="button"
-            onClick={() => onState('half')}
-            className="w-16 text-right text-sm font-semibold text-chili-700"
-          >
-            展开
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onState('collapsed')}
-            className="w-16 text-right text-sm font-semibold text-chili-700"
-          >
-            看地图
-          </button>
-        )}
       </div>
       <div className="min-h-0 flex-1">{children}</div>
     </div>

@@ -76,7 +76,11 @@ export function Explorer({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 space-y-2 border-b border-line px-4 pt-1 pb-3">
+      {/* On phones the bottom sheet is dragged by this bar too (its non-control parts). */}
+      <div
+        data-sheet-drag
+        className="shrink-0 touch-pan-x space-y-1.5 border-b border-line px-3 pt-0.5 pb-2"
+      >
         <SearchBox
           value={state.query}
           onChange={(query) => onChange({ query }, { replace: true })}
@@ -95,19 +99,19 @@ export function Explorer({
             onClose={() => setPanel(undefined)}
           />
         )}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1">
-          <p className="text-sm text-muted" aria-live="polite">
+        <div className="flex items-center justify-between gap-2 px-3 pt-2 pb-0.5">
+          <p className="text-xs text-muted" aria-live="polite">
             {filtered ? `找到 ${results.length} 家 / 共 ${total} 家` : `共 ${total} 家`}
           </p>
           <div className="flex items-center gap-1">
-            <label htmlFor={sortId} className="text-sm text-muted">
+            <label htmlFor={sortId} className="text-xs text-muted">
               排序
             </label>
             <select
               id={sortId}
               value={sort}
               onChange={(e) => onSort(e.target.value as Sort)}
-              className="h-9 rounded-full border border-line bg-white pr-8 pl-3 text-sm hover:border-chili-600"
+              className="h-8 rounded-full border border-line bg-white pr-7 pl-2.5 text-sm hover:border-chili-600"
             >
               {(Object.keys(SORT_LABELS) as Sort[]).map((s) => (
                 <option key={s} value={s}>
@@ -118,7 +122,7 @@ export function Explorer({
           </div>
         </div>
         {(locating === 'denied' || locating === 'unavailable') && (
-          <p role="status" className="px-4 pb-1 text-sm text-chili-700">
+          <p role="status" className="px-3 pb-1 text-xs text-chili-700">
             {locating === 'denied'
               ? '没有获得定位权限，无法按距离排序，已改回之前的排序。'
               : '暂时无法获取当前位置，无法按距离排序，已改回之前的排序。'}
@@ -141,7 +145,7 @@ export function Explorer({
             </button>
           </div>
         ) : (
-          <ul aria-label="餐厅列表" className="divide-y divide-line px-2 pb-2">
+          <ul aria-label="餐厅列表" className="divide-y divide-line px-1.5 pb-2">
             {results.map((r) => (
               <RestaurantCard
                 key={r.id}
@@ -173,7 +177,7 @@ function SearchBox({
       <span className="sr-only">搜索餐厅名称</span>
       <svg
         viewBox="0 0 20 20"
-        className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted"
+        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted"
         aria-hidden="true"
       >
         <path
@@ -188,7 +192,7 @@ function SearchBox({
         onFocus={onFocus}
         placeholder="搜索餐厅名称"
         enterKeyHint="search"
-        className="h-11 w-full rounded-full border border-line bg-white pr-4 pl-10 text-base placeholder:text-muted/80 hover:border-chili-600"
+        className="h-10 w-full rounded-full border border-line bg-white pr-4 pl-9 text-base placeholder:text-muted/80 hover:border-chili-600"
       />
     </label>
   );
@@ -213,7 +217,11 @@ function FilterButtons({
     ['price', '人均', price],
   ];
   return (
-    <div className="flex flex-wrap items-center gap-2" role="group" aria-label="筛选">
+    <div
+      className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 [scrollbar-width:none]"
+      role="group"
+      aria-label="筛选"
+    >
       {buttons.map(([id, label, value]) => {
         const active = typeof value === 'number' ? value > 0 : value !== '';
         const text = id === 'price' && active ? value : active ? `${label} (${value})` : label;
@@ -225,7 +233,7 @@ function FilterButtons({
             aria-controls="filter-panel"
             data-active={active ? '' : undefined}
             onClick={() => onPanel(panel === id ? undefined : id)}
-            className="inline-flex h-9 items-center gap-1 rounded-full border border-line bg-white px-3 text-sm font-semibold hover:border-chili-600 aria-expanded:border-ink data-active:border-chili-600 data-active:bg-chili-50 data-active:text-chili-700"
+            className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-full border border-line bg-white px-2.5 text-[13px] font-semibold hover:border-chili-600 aria-expanded:border-ink data-active:border-chili-600 data-active:bg-chili-50 data-active:text-chili-700"
           >
             {text}
             <span aria-hidden="true" className="text-xs">
@@ -241,7 +249,7 @@ function FilterButtons({
             onPanel(undefined);
             onChange(clearFilters(state));
           }}
-          className="h-9 rounded-full px-2 text-sm font-semibold text-chili-700 hover:bg-chili-50"
+          className="h-8 shrink-0 rounded-full px-1.5 text-[13px] font-semibold text-chili-700 hover:bg-chili-50"
         >
           清除全部
         </button>
@@ -328,16 +336,15 @@ function FilterPanel({
     <section
       id="filter-panel"
       aria-label={PANEL_TITLES[panel]}
-      className="mx-4 mt-3 space-y-3 rounded-2xl border border-line bg-white p-4 shadow-sm"
+      className="mx-3 mt-2 space-y-2 rounded-xl border border-line bg-white p-3 shadow-sm"
     >
-      <h2 className="text-sm font-bold">{PANEL_TITLES[panel]}</h2>
-      {body}
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center gap-2">
+        <h2 className="flex-1 text-xs font-bold text-muted">{PANEL_TITLES[panel]}</h2>
         {active && (
           <button
             type="button"
             onClick={() => onChange(reset)}
-            className="h-9 rounded-full px-3 text-sm font-semibold text-chili-700 hover:bg-chili-50"
+            className="h-7 rounded-full px-2 text-xs font-semibold text-chili-700 hover:bg-chili-50"
           >
             重置
           </button>
@@ -345,11 +352,12 @@ function FilterPanel({
         <button
           type="button"
           onClick={onClose}
-          className="h-9 rounded-full bg-ink px-4 text-sm font-semibold text-white"
+          className="h-7 rounded-full bg-ink px-3 text-xs font-semibold text-white"
         >
           完成
         </button>
       </div>
+      {body}
     </section>
   );
 }
@@ -363,16 +371,16 @@ function Chips<T extends string | number>({
   selected: T[];
   onToggle: (value: T) => void;
 }) {
-  if (options.length === 0) return <p className="text-sm text-muted">暂无可选项。</p>;
+  if (options.length === 0) return <p className="text-xs text-muted">暂无可选项。</p>;
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-1.5">
       {options.map(([value, text]) => (
         <button
           key={value}
           type="button"
           aria-pressed={selected.includes(value)}
           onClick={() => onToggle(value)}
-          className="min-h-9 rounded-full border border-line px-3 text-sm hover:border-chili-600 aria-pressed:border-chili-600 aria-pressed:bg-chili-600 aria-pressed:text-white"
+          className="min-h-8 rounded-full border border-line px-2.5 text-[13px] hover:border-chili-600 aria-pressed:border-chili-600 aria-pressed:bg-chili-600 aria-pressed:text-white"
         >
           {text}
         </button>
@@ -382,134 +390,71 @@ function Chips<T extends string | number>({
 }
 
 /**
- * The price range: a two-handle slider ($0 to $100+, where $100+ means no
- * upper limit) and two number fields that accept any amount. Both ends are
- * optional; an invalid range (minimum above maximum) is never applied.
+ * The price range: a two-handle slider from $0 to $100+ (the top end means no
+ * upper limit, so a higher price is never excluded by the slider). Each
+ * handle carries its value; the handles cannot cross, so the range is always
+ * valid.
  */
 function PriceRange({ state, onChange }: { state: BrowseState; onChange: Change }) {
-  const min = state.priceMin;
-  const max = state.priceMax;
-  const [draft, setDraft] = useState({ min: min?.toString() ?? '', max: max?.toString() ?? '' });
-  // Follow changes made elsewhere (the slider, reset, a new URL).
-  const [synced, setSynced] = useState({ min, max });
-  if (synced.min !== min || synced.max !== max) {
-    setSynced({ min, max });
-    setDraft({ min: min?.toString() ?? '', max: max?.toString() ?? '' });
-  }
-  const parse = (text: string) => {
-    if (text.trim() === '') return undefined;
-    const n = Number(text);
-    return Number.isFinite(n) && n >= 0 ? n : NaN;
-  };
-  const draftMin = parse(draft.min);
-  const draftMax = parse(draft.max);
-  const error =
-    Number.isNaN(draftMin) || Number.isNaN(draftMax)
-      ? '请输入有效的金额。'
-      : draftMin !== undefined && draftMax !== undefined && draftMin > draftMax
-        ? '最低价不能高于最高价。'
-        : undefined;
-  const commit = (next: { min: string; max: string }) => {
-    setDraft(next);
-    const a = parse(next.min);
-    const b = parse(next.max);
-    if (Number.isNaN(a) || Number.isNaN(b) || (a !== undefined && b !== undefined && a > b)) return;
-    onChange({ priceMin: a, priceMax: b }, { replace: true });
-  };
-
-  const lowValue = Math.min(min ?? 0, PRICE_SLIDER_MAX);
-  const highValue = max === undefined ? PRICE_SLIDER_MAX : Math.min(max, PRICE_SLIDER_MAX);
-  const field =
-    'h-10 w-full min-w-0 rounded-xl border border-line bg-white pl-6 pr-2 text-base aria-invalid:border-chili-600';
+  const low = Math.min(state.priceMin ?? 0, PRICE_SLIDER_MAX);
+  const high =
+    state.priceMax === undefined ? PRICE_SLIDER_MAX : Math.min(state.priceMax, PRICE_SLIDER_MAX);
+  const text = (v: number) => (v >= PRICE_SLIDER_MAX ? `$${PRICE_SLIDER_MAX}+` : `$${v}`);
+  // Thumb centers (the thumbs are 20px wide): keeps the value tags on their thumbs.
+  const at = (v: number) =>
+    `calc(${(v / PRICE_SLIDER_MAX) * 100}% + ${10 - (v / PRICE_SLIDER_MAX) * 20}px)`;
+  const close = high - low < PRICE_SLIDER_MAX * 0.2;
+  const tag =
+    'absolute top-0 -translate-x-1/2 rounded bg-ink px-1.5 text-[11px] leading-5 font-semibold whitespace-nowrap text-white';
   return (
-    <div className="space-y-3">
-      <div className="relative h-8">
-        <div className="absolute top-1/2 right-2 left-2 h-1 -translate-y-1/2 rounded bg-line" />
-        <div
-          className="absolute top-1/2 h-1 -translate-y-1/2 rounded bg-chili-600"
-          style={{
-            left: `calc(${(lowValue / PRICE_SLIDER_MAX) * 100}% * 0.96 + 2%)`,
-            right: `calc(${100 - (highValue / PRICE_SLIDER_MAX) * 100}% * 0.96 + 2%)`,
-          }}
-        />
-        <input
-          type="range"
-          aria-label="最低人均"
-          min={0}
-          max={PRICE_SLIDER_MAX}
-          step={PRICE_STEP}
-          value={lowValue}
-          onChange={(e) => {
-            const value = Math.min(Number(e.target.value), highValue);
-            onChange({ priceMin: value > 0 ? value : undefined }, { replace: true });
-          }}
-          className="price-thumb absolute inset-0 w-full"
-        />
-        <input
-          type="range"
-          aria-label="最高人均"
-          aria-valuetext={highValue >= PRICE_SLIDER_MAX ? '不限' : `$${highValue}`}
-          min={0}
-          max={PRICE_SLIDER_MAX}
-          step={PRICE_STEP}
-          value={highValue}
-          onChange={(e) => {
-            const value = Math.max(Number(e.target.value), lowValue);
-            onChange(
-              { priceMax: value >= PRICE_SLIDER_MAX ? undefined : value },
-              { replace: true },
-            );
-          }}
-          className="price-thumb absolute inset-0 w-full"
-        />
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <span
-            aria-hidden="true"
-            className="absolute top-1/2 left-2.5 -translate-y-1/2 text-muted"
-          >
-            $
-          </span>
-          <input
-            inputMode="decimal"
-            aria-label="最低价（美元）"
-            value={draft.min}
-            placeholder="不限"
-            aria-invalid={error ? true : undefined}
-            onChange={(e) => commit({ ...draft, min: e.target.value })}
-            className={field}
-          />
-        </div>
-        <span aria-hidden="true">–</span>
-        <div className="relative min-w-0 flex-1">
-          <span
-            aria-hidden="true"
-            className="absolute top-1/2 left-2.5 -translate-y-1/2 text-muted"
-          >
-            $
-          </span>
-          <input
-            inputMode="decimal"
-            aria-label="最高价（美元）"
-            value={draft.max}
-            placeholder="不限"
-            aria-invalid={error ? true : undefined}
-            onChange={(e) => commit({ ...draft, max: e.target.value })}
-            className={field}
-          />
-        </div>
-      </div>
-      {error ? (
-        <p role="alert" className="text-sm text-chili-700">
-          {error}
-        </p>
+    <div className="relative h-12">
+      {close ? (
+        <span aria-hidden="true" className={tag} style={{ left: at((low + high) / 2) }}>
+          {low === high ? text(low) : `${text(low)}–${text(high).slice(1)}`}
+        </span>
       ) : (
-        <p className="text-xs text-muted">
-          留空表示不限；滑块拉到最右是「${PRICE_SLIDER_MAX}
-          +」（不设上限）。设置价格范围后，未标注人均的餐厅不会显示。
-        </p>
+        <>
+          <span aria-hidden="true" className={tag} style={{ left: at(low) }}>
+            {text(low)}
+          </span>
+          <span aria-hidden="true" className={tag} style={{ left: at(high) }}>
+            {text(high)}
+          </span>
+        </>
       )}
+      <div className="absolute right-2.5 bottom-[9px] left-2.5 h-1 rounded bg-line" />
+      <div
+        className="absolute bottom-[9px] h-1 rounded bg-chili-600"
+        style={{ left: at(low), right: `calc(100% - ${at(high)})` }}
+      />
+      <input
+        type="range"
+        aria-label="最低人均"
+        aria-valuetext={text(low)}
+        min={0}
+        max={PRICE_SLIDER_MAX}
+        step={PRICE_STEP}
+        value={low}
+        onChange={(e) => {
+          const value = Math.min(Number(e.target.value), high);
+          onChange({ priceMin: value > 0 ? value : undefined }, { replace: true });
+        }}
+        className="price-thumb absolute inset-x-0 bottom-0 h-[22px] w-full"
+      />
+      <input
+        type="range"
+        aria-label="最高人均"
+        aria-valuetext={high >= PRICE_SLIDER_MAX ? '不限' : text(high)}
+        min={0}
+        max={PRICE_SLIDER_MAX}
+        step={PRICE_STEP}
+        value={high}
+        onChange={(e) => {
+          const value = Math.max(Number(e.target.value), low);
+          onChange({ priceMax: value >= PRICE_SLIDER_MAX ? undefined : value }, { replace: true });
+        }}
+        className="price-thumb absolute inset-x-0 bottom-0 h-[22px] w-full"
+      />
     </div>
   );
 }
@@ -528,15 +473,15 @@ function RestaurantCard({
   return (
     <li
       data-selected={selected ? '' : undefined}
-      className="relative flex gap-3 rounded-xl px-2 py-3 hover:bg-white data-selected:bg-white data-selected:ring-2 data-selected:ring-chili-600"
+      className="relative flex gap-2.5 rounded-xl px-1.5 py-2 hover:bg-white data-selected:bg-white data-selected:ring-2 data-selected:ring-chili-600"
     >
       <RestaurantImage
         decorative
         image={r.cover}
-        sizes="80px"
-        className="aspect-square w-20 shrink-0 rounded-lg"
+        sizes="64px"
+        className="aspect-square w-16 shrink-0 rounded-lg"
       />
-      <div className="min-w-0 flex-1 space-y-1">
+      <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <h2 className="leading-snug font-bold">
             {/* The card links to the details page; the link covers the card. */}
@@ -566,7 +511,7 @@ function RestaurantCard({
           onClick={() => onLocate(r.id)}
           aria-label={`在地图上显示${r.name}`}
           title="在地图上显示"
-          className="relative z-10 flex size-10 shrink-0 items-center justify-center self-center rounded-full border border-line bg-white text-chili-700 hover:border-chili-600"
+          className="relative z-10 flex size-9 shrink-0 items-center justify-center self-center rounded-full border border-line bg-white text-chili-700 hover:border-chili-600"
         >
           <svg viewBox="0 0 20 20" className="size-5" aria-hidden="true">
             <path

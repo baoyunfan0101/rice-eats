@@ -78,12 +78,15 @@ test('the price range and the sort work together without changing the map', asyn
   await page.goto('/rice-eats/');
   await expect(markers(page)).toHaveCount(WITH_LOCATION);
   await page.getByRole('button', { name: /^人均/ }).click();
-  // The slider (keyboard) and the typed fields both set the range.
+  // Both handles move with the keyboard; their values ride on them.
   await page.getByRole('slider', { name: '最低人均' }).focus();
   for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
   await expect(page).toHaveURL(/\?min=15$/);
-  await page.getByLabel('最高价（美元）').fill('30');
+  await page.getByRole('slider', { name: '最高人均' }).focus();
+  for (let i = 0; i < 14; i++) await page.keyboard.press('ArrowLeft');
   await expect(page).toHaveURL(/\?min=15&max=30$/);
+  // Close values share one tag.
+  await expect(page.locator('#filter-panel').getByText('$15–30')).toBeVisible();
   // Unknown prices are not in a range.
   expect(await listNames(page)).toEqual([
     '河湾烤肉（虚构示例）',
@@ -227,24 +230,38 @@ test('mobile: full-screen map with a three-state bottom sheet', async ({ page },
   await expect(sheet.getByRole('searchbox')).toBeVisible();
   await expect(sheet.getByRole('button', { name: /^标签 \(1\)/ })).toBeVisible();
 
-  // Drag the top bar up: expanded.
-  const top = (await sheet.boundingBox())!;
-  await page.mouse.move(top.x + 40, top.y + 12);
-  await page.mouse.down();
-  await page.mouse.move(top.x + 40, top.y - 250, { steps: 8 });
-  await page.mouse.up();
+  // Drag the handle up: expanded.
+  const handle = (await sheet.getByRole('button', { name: /列表半展开/ }).boundingBox())!;
+  const drag = async (x: number, y: number, dy: number) => {
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y + dy, { steps: 8 });
+    await page.mouse.up();
+  };
+  await drag(handle.x + handle.width / 2, handle.y + 4, -250);
   await expect(sheet).toHaveAttribute('data-state', 'expanded');
   // Scrolling the list inside does not move the sheet.
   await sheet.getByRole('list', { name: '餐厅列表' }).hover();
   await page.mouse.wheel(0, 300);
   await expect(sheet).toHaveAttribute('data-state', 'expanded');
 
-  // Buttons work without gestures; the filters and list survive every state.
-  await sheet.getByRole('button', { name: '看地图' }).click();
+  // Dragging down from the bar's empty space (beside the filter buttons)
+  // collapses it; the filters and list survive every state.
+  const bar = (await sheet.getByRole('group', { name: '筛选' }).boundingBox())!;
+  const bottom = page.viewportSize()!.height - 4;
+  await drag(bar.x + bar.width - 8, bar.y + bar.height / 2, bottom - (bar.y + bar.height / 2));
   await expect(sheet).toHaveAttribute('data-state', 'collapsed');
   // Leaflet still fills its container and the pins stay usable.
   expect((await map.boundingBox())!.height).toBeGreaterThan(400);
-  await sheet.getByRole('button', { name: '展开', exact: true }).click();
+  const collapsed = (await sheet.getByRole('button', { name: /列表已收起/ }).boundingBox())!;
+  await drag(collapsed.x + collapsed.width / 2, collapsed.y + 4, -200);
+  await expect(sheet).toHaveAttribute('data-state', 'half');
+  // No extra buttons beside the handle.
+  await expect(sheet.getByRole('button', { name: '看地图' })).toHaveCount(0);
+  // Tapping the handle (a button for keyboards too) also changes the state.
+  await sheet.getByRole('button', { name: /列表半展开/ }).click();
+  await expect(sheet).toHaveAttribute('data-state', 'expanded');
+  await sheet.getByRole('button', { name: /列表已展开/ }).click();
   await expect(sheet).toHaveAttribute('data-state', 'half');
   await expect(page).toHaveURL(/\?tag=group$/);
   expect(await listNames(page)).toHaveLength(3);

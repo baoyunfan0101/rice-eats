@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
@@ -308,7 +308,7 @@ describe('browsing', () => {
     expect(names(list())).toHaveLength(3);
   });
 
-  it('filters by rating and by a typed price range, refusing an inverted range', async () => {
+  it('filters by rating and by a price range whose handles cannot cross', async () => {
     const user = userEvent.setup();
     visit('');
     await screen.findByRole('region', { name: '餐厅地图' });
@@ -317,19 +317,22 @@ describe('browsing', () => {
     await user.click(screen.getByRole('button', { name: /^评级/ }));
     await user.click(screen.getByRole('button', { name: '重置' }));
     await user.click(screen.getByRole('button', { name: /^人均/ }));
-    await user.type(screen.getByLabelText('最低价（美元）'), '20');
+    const low = screen.getByRole('slider', { name: '最低人均' });
+    const high = screen.getByRole('slider', { name: '最高人均' });
+    // The top end means no upper limit.
+    expect(high).toHaveAttribute('aria-valuetext', '不限');
+    fireEvent.change(low, { target: { value: '20' } });
     expect(window.location.search).toBe('?min=20');
     expect(names(list())).toEqual(['Bayou BBQ']);
-    await user.type(screen.getByLabelText('最高价（美元）'), '10');
-    expect(screen.getByRole('alert')).toHaveTextContent('最低价不能高于最高价');
-    // The invalid range was not applied.
-    expect(window.location.search).toBe('?min=20');
-    expect(names(list())).toEqual(['Bayou BBQ']);
-    await user.clear(screen.getByLabelText('最高价（美元）'));
-    await user.type(screen.getByLabelText('最高价（美元）'), '30');
+    // The upper handle stops at the lower one.
+    fireEvent.change(high, { target: { value: '10' } });
+    expect(window.location.search).toBe('?min=20&max=20');
+    fireEvent.change(high, { target: { value: '30' } });
     expect(window.location.search).toBe('?min=20&max=30');
     expect(names(list())).toEqual(['Bayou BBQ']);
     expect(screen.getByRole('button', { name: /^\$20–30/ })).toBeInTheDocument();
+    fireEvent.change(high, { target: { value: '100' } });
+    expect(window.location.search).toBe('?min=20');
   });
 
   it('restores state from a shared or older URL and handles no results', async () => {
@@ -467,12 +470,12 @@ describe('browsing', () => {
     // Half-expanded by default, with search, filters, and the list.
     expect(sheet).toHaveAttribute('data-state', 'half');
     expect(within(sheet).getByRole('searchbox')).toBeInTheDocument();
-    await user.click(within(sheet).getByRole('button', { name: '看地图' }));
-    expect(sheet).toHaveAttribute('data-state', 'collapsed');
-    await user.click(within(sheet).getByRole('button', { name: /列表已收起/ }));
-    expect(sheet).toHaveAttribute('data-state', 'half');
+    // No extra buttons: the handle (also a button for keyboards) cycles the states.
+    expect(within(sheet).queryByRole('button', { name: '看地图' })).not.toBeInTheDocument();
     await user.click(within(sheet).getByRole('button', { name: /列表半展开/ }));
     expect(sheet).toHaveAttribute('data-state', 'expanded');
+    await user.click(within(sheet).getByRole('button', { name: /列表已展开/ }));
+    expect(sheet).toHaveAttribute('data-state', 'half');
     // The filters survive every state.
     expect(names(list())).toEqual(['Bayou BBQ']);
     expect(window.location.search).toBe('?tag=group');
