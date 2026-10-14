@@ -78,6 +78,16 @@ vi.mock('./views/PickerMap', async () => {
             >
               放大地图
             </button>
+            {/* A small pan: overlaps the Rice area (Noodle Corner stays in view) and needs one new tile column. */}
+            <button
+              type="button"
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround({ lat: 29.7215, lng: -95.405 }, 15));
+              }}
+            >
+              稍微移动地图
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -1146,6 +1156,66 @@ describe('submissions', () => {
 
       const AREA_A = /^rect:-95\.39\d*,29\.73/;
       const requestedA = () => places.some((u) => AREA_A.test(u.searchParams.get('filter') ?? ''));
+
+      // The small pan's area needs the new tile column west of -95.41.
+      const AREA_B = /^rect:-95\.42/;
+
+      it('shows loading, not the old count, while an overlapping area loads', async () => {
+        const user = userEvent.setup();
+        let release!: () => void;
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        await searchName(user, 'e');
+        expect(header()).toHaveTextContent('名称包含「e」的餐厅：2 家');
+        const requests = places.length;
+        holdArea = { match: AREA_B, until: new Promise((r) => (release = r)) };
+        await user.click(screen.getByRole('button', { name: '稍微移动地图' }));
+        // Noodle Corner (cached) is still in view, but the new area is not loaded:
+        // no count, during the pause and while its request is pending.
+        expect(screen.getByRole('button', { name: '图钉：Noodle Corner' })).toBeInTheDocument();
+        expect(header()).toHaveTextContent(/^名称包含「e」的餐厅$/);
+        expect(screen.getByText('正在加载地图范围内的餐厅…')).toBeInTheDocument();
+        await waitFor(() =>
+          expect(places.some((u) => AREA_B.test(u.searchParams.get('filter')!))).toBe(true),
+        );
+        expect(header()).toHaveTextContent(/^名称包含「e」的餐厅$/);
+        expect(screen.queryByRole('list', { name: '地图上的餐厅' })).not.toBeInTheDocument();
+        await act(async () => release());
+        // Loaded: the new area's real count (East Deli is out of view now).
+        await waitFor(() => expect(header()).toHaveTextContent('名称包含「e」的餐厅：1 家'));
+        expect(names()).toEqual(['Noodle Corner']);
+        // Only the new tile column was requested; typing sent nothing.
+        expect(
+          places.slice(requests).every((u) => AREA_B.test(u.searchParams.get('filter')!)),
+        ).toBe(true);
+        // Too wide: no count; back in, the count returns.
+        await user.click(screen.getByRole('button', { name: '缩小地图' }));
+        expect(screen.getByText('地图范围太大，放大地图后才能按名称查找。')).toBeInTheDocument();
+        expect(header()).toHaveTextContent(/^名称包含「e」的餐厅$/);
+        await user.click(screen.getByRole('button', { name: '稍微移动地图' }));
+        await waitFor(() => expect(header()).toHaveTextContent('名称包含「e」的餐厅：1 家'));
+      });
+
+      it('shows the error, not the old count, when an overlapping area fails', async () => {
+        const user = userEvent.setup();
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        await searchName(user, 'noodle');
+        expect(header()).toHaveTextContent('名称包含「noodle」的餐厅：1 家');
+        // Every tile of the new area has to load (none cached), and all fail.
+        clearPoiCache();
+        placesStatus = 500;
+        overpassStatus = 500;
+        await user.click(screen.getByRole('button', { name: '稍微移动地图' }));
+        expect(await screen.findByText(/没能加载，暂时无法按名称查找/)).toBeInTheDocument();
+        expect(header()).toHaveTextContent(/^名称包含「noodle」的餐厅$/);
+        // The cached pin may stay, but it is not offered as a result.
+        expect(screen.queryByRole('list', { name: '地图上的餐厅' })).not.toBeInTheDocument();
+        placesStatus = 200;
+        overpassStatus = 200;
+        await user.click(within(header().parentElement!).getByRole('button', { name: '重试' }));
+        await waitFor(() => expect(header()).toHaveTextContent('名称包含「noodle」的餐厅：1 家'));
+      });
 
       it("never reports the old area's result for a new area", async () => {
         const user = userEvent.setup();

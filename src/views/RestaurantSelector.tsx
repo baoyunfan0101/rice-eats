@@ -246,18 +246,19 @@ export function RestaurantSelector({
         ]
       : listed;
   const showList = searching || listOpen;
-  // What the list can say about the name search: matches only once the
-  // restaurants in view have loaded, never "none" while loading or after an error.
-  const nameState: 'results' | 'none' | 'loading' | 'error' | 'too-wide' =
-    listed.length > 0
-      ? 'results'
-      : tooWide
-        ? 'too-wide'
-        : discovery.status === 'ready'
-          ? 'none'
-          : discovery.status === 'error'
-            ? 'error'
-            : 'loading';
+  // What the list can say: a count (or "none") only once the current area's
+  // own restaurants have loaded. Restaurants still shown from an earlier area
+  // are not results for this one, so loading, an error, or a too-wide map
+  // take precedence over them.
+  const nameState: 'results' | 'none' | 'loading' | 'error' | 'too-wide' = tooWide
+    ? 'too-wide'
+    : discovery.status === 'error'
+      ? 'error'
+      : discovery.status !== 'ready'
+        ? 'loading'
+        : listed.length > 0
+          ? 'results'
+          : 'none';
 
   return (
     <div className="space-y-4">
