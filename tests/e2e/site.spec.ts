@@ -743,7 +743,7 @@ test('pin names stay readable, inside the map, and follow the map', async ({ pag
   await check();
 
   // Every restaurant in view can be read and chosen from the list.
-  await page.getByText(/按列表查看这 \d+ 家餐厅/).click();
+  await page.getByRole('button', { name: /^列表查看地图范围内的 \d+ 家餐厅/ }).click();
   const list = page.getByRole('list', { name: '地图上的餐厅' });
   await expect(list.getByRole('button')).toHaveCount(13);
   await list.getByRole('button', { name: /川味小馆 7号店/ }).click();
@@ -796,11 +796,11 @@ test('visitors locate the search area by preset or address before choosing', asy
   await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
 
   // An address: searched on Enter, the map moves there, nothing is selected.
+  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
   await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
   await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
   await expect(area.getByText('当前查找区域：2111 Norfolk St')).toBeVisible();
   await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
-  await expect(page.getByText(/搜索地图中心约 3.1 mi 范围内的餐厅/)).toBeVisible();
 });
 
 test('late address and location answers never override the latest choice', async ({ page }) => {
@@ -852,6 +852,7 @@ test('late address and location answers never override the latest choice', async
   await expect(status).toHaveText('当前查找区域：Rice University 周边');
 
   // Address search pending, location pending, then Chinatown.
+  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
   await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
   await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
   await expect(area.getByText('正在搜索地点…')).toBeVisible();
@@ -899,6 +900,7 @@ test('dragging or zooming the map by hand wins over a late address', async ({ pa
   await page.goto('/rice-eats/submit/');
   const area = page.getByRole('region', { name: '选择查找区域' });
   const status = area.getByText(/^当前查找区域：/);
+  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
   const search = area.getByRole('searchbox', { name: '输入地址或地点' });
   const map = page.getByRole('region', { name: '附近餐厅地图' });
   await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
@@ -994,15 +996,15 @@ test('visitors without location permission can still explore the map or search b
   await expect(page.getByText(/没有获得定位权限|暂时无法获取当前位置/)).toBeVisible();
   await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
 
-  await page.getByRole('searchbox', { name: '在当前区域搜索餐厅' }).fill('Dumpling');
+  // The name search (a fallback) narrows the restaurants in view.
+  await page.getByRole('button', { name: '或者：在当前区域搜索餐厅' }).click();
+  await page.getByRole('searchbox', { name: '在当前区域搜索餐厅' }).fill('noodle');
   const result = page
-    .getByRole('list', { name: '搜索结果' })
-    .getByRole('button', { name: /Dumpling Kitchen/ });
-  // Distances are in miles.
-  await expect(result).toContainText(/\d mi$/);
+    .getByRole('list', { name: '地图上的餐厅' })
+    .getByRole('button', { name: /Fake Noodle Bar/ });
   await result.click();
-  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('Dumpling Kitchen');
-  await expect(pin(page, 'Dumpling Kitchen')).toHaveClass(/is-selected/);
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('Fake Noodle Bar');
+  await expect(pin(page, 'Fake Noodle Bar')).toHaveClass(/is-selected/);
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 

@@ -30,11 +30,6 @@ function poiIcon(name: string, selected: boolean, label?: LabelPlacement): L.Div
     iconAnchor: selected ? [16, 40] : [12, 30],
   });
 }
-const manualIcon = L.divIcon({
-  className: 'map-pin is-manual',
-  html: '<span></span>',
-  iconSize: [32, 32],
-});
 
 export interface MapArea {
   center: LatLngValue;
@@ -47,8 +42,10 @@ interface Props {
   view: { center: LatLngValue; zoom: number };
   candidates?: RestaurantCandidate[];
   selectedKey?: string;
-  /** A manually placed restaurant marker. */
+  /** A manually placed restaurant marker, drawn like a selected restaurant. */
   marker?: LatLngValue;
+  /** The name beside the manual marker. */
+  markerLabel?: string;
   onMapClick?: (point: LatLngValue) => void;
   /** The visible area, reported when the map is ready and after every pan or zoom. */
   onMove?: (area: MapArea) => void;
@@ -68,6 +65,7 @@ export default function PickerMap({
   candidates = [],
   selectedKey,
   marker,
+  markerLabel = '餐厅位置',
   onMapClick,
   onMove,
   onUserMove,
@@ -91,7 +89,7 @@ export default function PickerMap({
       {marker && (
         <Marker
           position={[marker.lat, marker.lng]}
-          icon={manualIcon}
+          icon={poiIcon(markerLabel, true, { side: 'right', maxWidth: 176 })}
           title="餐厅位置"
           alt="餐厅位置"
           keyboard={false}
