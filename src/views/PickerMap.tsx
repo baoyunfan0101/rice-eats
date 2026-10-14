@@ -73,6 +73,10 @@ export default function PickerMap({
   label,
   className = 'h-72 sm:h-96',
 }: Props) {
+  const manual = useMemo(
+    () => marker && { location: marker, name: markerLabel },
+    [marker, markerLabel],
+  );
   return (
     <MapContainer
       center={[view.center.lat, view.center.lng]}
@@ -85,16 +89,12 @@ export default function PickerMap({
       <Events onMapClick={onMapClick} onMove={onMove} />
       {onUserMove && <UserMoves onUserMove={onUserMove} />}
       <FollowView view={view} />
-      <CandidateMarkers candidates={candidates} selectedKey={selectedKey} onSelect={onSelect} />
-      {marker && (
-        <Marker
-          position={[marker.lat, marker.lng]}
-          icon={poiIcon(markerLabel, true, { side: 'right', maxWidth: 176 })}
-          title="餐厅位置"
-          alt="餐厅位置"
-          keyboard={false}
-        />
-      )}
+      <CandidateMarkers
+        candidates={candidates}
+        selectedKey={selectedKey}
+        onSelect={onSelect}
+        manual={manual}
+      />
     </MapContainer>
   );
 }
@@ -120,14 +120,19 @@ function Container({ label }: { label: string }) {
  * named and on which side: the selected restaurant always, the others nearest
  * the map center first, without overlaps, covered pins, or names cut off by
  * the map edge. Pins without room keep their name as a tooltip and appear in
- * the list below the map. The layout follows pans, zooms, resizes, and new
- * candidates.
+ * the list below the map. A manual marker is laid out the same way, as a
+ * selected pin. The layout follows pans, zooms, resizes, new candidates, and
+ * a moved or renamed manual marker.
  */
 function CandidateMarkers({
   candidates,
   selectedKey,
   onSelect,
-}: Pick<Props, 'selectedKey' | 'onSelect'> & { candidates: RestaurantCandidate[] }) {
+  manual,
+}: Pick<Props, 'selectedKey' | 'onSelect'> & {
+  candidates: RestaurantCandidate[];
+  manual?: { location: LatLngValue; name: string };
+}) {
   const map = useMap();
   const [layout, setLayout] = useState(0);
   const relayout = () => setLayout((n) => n + 1);
@@ -136,16 +141,20 @@ function CandidateMarkers({
   const labels = useMemo(() => {
     void layout; // recompute when the map moves
     const size = map.getSize();
+    const pin = (key: string, location: LatLngValue, name: string, selected: boolean) => {
+      const p = map.latLngToContainerPoint([location.lat, location.lng]);
+      return { key, x: p.x, y: p.y, name, selected };
+    };
     return placeLabels(
-      candidates.map((c) => {
-        const p = map.latLngToContainerPoint([c.location.lat, c.location.lng]);
-        return { key: c.key, x: p.x, y: p.y, name: c.name, selected: c.key === selectedKey };
-      }),
+      [
+        ...candidates.map((c) => pin(c.key, c.location, c.name, c.key === selectedKey)),
+        ...(manual ? [pin(MANUAL_KEY, manual.location, manual.name, true)] : []),
+      ],
       { width: size.x, height: size.y },
     );
-  }, [candidates, selectedKey, map, layout]);
+  }, [candidates, selectedKey, manual, map, layout]);
 
-  return candidates.map((c) => {
+  const markers = candidates.map((c) => {
     const selected = c.key === selectedKey;
     const label = labels.get(c.key);
     return (
@@ -166,7 +175,24 @@ function CandidateMarkers({
       />
     );
   });
+  if (manual) {
+    markers.push(
+      <Marker
+        key={MANUAL_KEY}
+        position={[manual.location.lat, manual.location.lng]}
+        icon={poiIcon(manual.name, true, labels.get(MANUAL_KEY))}
+        zIndexOffset={1000}
+        title="餐厅位置"
+        alt="餐厅位置"
+        keyboard={false}
+      />,
+    );
+  }
+  return markers;
 }
+
+/** Layout key of the manual marker (never a candidate key, which has a provider prefix). */
+const MANUAL_KEY = 'manual:marker';
 
 function FollowView({ view }: { view: Props['view'] }) {
   const map = useMap();

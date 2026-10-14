@@ -1037,6 +1037,70 @@ test('the map falls back to OpenStreetMap when Geoapify is out of credits', asyn
   await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
 });
 
+test('the manual pin keeps its name inside the map, wherever it is', async ({ page }) => {
+  await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
+    route.fulfill({ json: { features: [] } }),
+  );
+  await page.goto('/rice-eats/submit/');
+  await page.getByRole('button', { name: '手动添加餐厅' }).click();
+  const name = page.getByLabel('餐厅名称');
+  await name.fill('面馆');
+  const map = page.getByRole('region', { name: '标出餐厅位置的地图' });
+  await map.scrollIntoViewIfNeeded();
+  const box = (await map.boundingBox())!;
+  const label = page.locator('.leaflet-marker-icon[title="餐厅位置"] .poi-label');
+  const pinTip = page.locator('.leaflet-marker-icon[title="餐厅位置"]');
+  /** The rendered label lies inside the map; returns its side. */
+  const inside = async () => {
+    const l = (await label.boundingBox())!;
+    expect(l.x).toBeGreaterThanOrEqual(box.x - 0.5);
+    expect(l.x + l.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+    expect(l.y).toBeGreaterThanOrEqual(box.y - 0.5);
+    const pin = (await pinTip.boundingBox())!;
+    return l.x >= pin.x + pin.width / 2 ? 'right' : 'left';
+  };
+  const place = async (x: number, y = box.height / 2) => {
+    await map.click({ position: { x, y } });
+    await page.waitForTimeout(300);
+  };
+
+  // In the middle: whole name on the right.
+  await place(box.width / 2);
+  await expect(label).toHaveText('面馆');
+  expect(await inside()).toBe('right');
+  // Near the right edge: on the left.
+  await place(box.width - 24);
+  expect(await inside()).toBe('left');
+  // Near the left edge (clear of the zoom buttons): on the right.
+  await place(24, box.height - 60);
+  expect(await inside()).toBe('right');
+
+  // A long name follows (truncated when needed) and stays inside, on phones too.
+  await place(box.width - 24);
+  await name.fill('一家名字非常非常长的手工拉面和川味小吃餐厅（莱斯大学附近分店）');
+  await expect(label).toHaveText(/^一家名字非常/);
+  expect(await inside()).toBe('left');
+
+  // Moving the map lays the name out again: dragged to the left edge, it flips.
+  const pin = (await pinTip.boundingBox())!;
+  const tipX = pin.x + pin.width / 2;
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - (tipX - box.x - 24), box.y + 40, { steps: 6 });
+  // Hold still before letting go, so the map does not glide on (inertia).
+  await page.waitForTimeout(400);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  expect(await inside()).toBe('right');
+  // Zooming in moves the pin away from the center; the name is laid out again
+  // and stays inside.
+  await place(box.width * 0.4);
+  expect(await inside()).toBe('right');
+  await map.getByRole('button', { name: 'Zoom in' }).click();
+  await page.waitForTimeout(600);
+  await inside();
+});
+
 test('visitors can add a restaurant by hand when search fails', async ({ page }) => {
   await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
     route.fulfill({ status: 429, body: '' }),

@@ -218,6 +218,18 @@ export function RestaurantSelector({
         ]
       : listed;
   const showList = searching || listOpen;
+  // What the list can say about the name search: matches only once the
+  // restaurants in view have loaded, never "none" while loading or after an error.
+  const nameState: 'results' | 'none' | 'loading' | 'error' | 'too-wide' =
+    listed.length > 0
+      ? 'results'
+      : tooWide
+        ? 'too-wide'
+        : discovery.status === 'ready'
+          ? 'none'
+          : discovery.status === 'error'
+            ? 'error'
+            : 'loading';
 
   return (
     <div className="space-y-4">
@@ -286,7 +298,8 @@ export function RestaurantSelector({
           </p>
         </Alternative>
 
-        {discovered.length > 0 && (
+        {/* While searching by name the list always shows, with an accurate state. */}
+        {(discovered.length > 0 || searching) && (
           <div className="rounded-xl border border-line">
             <button
               type="button"
@@ -304,15 +317,35 @@ export function RestaurantSelector({
                 <path d="M7.5 4.5 13 10l-5.5 5.5-1.1-1.1L10.8 10 6.4 5.6z" fill="currentColor" />
               </svg>
               <span className="flex-1">
-                {searching
-                  ? `名称包含「${query.trim()}」的餐厅：${listed.length} 家`
-                  : `列表查看地图范围内的 ${discovered.length} 家餐厅`}
+                {!searching
+                  ? `列表查看地图范围内的 ${discovered.length} 家餐厅`
+                  : nameState === 'results' || nameState === 'none'
+                    ? `名称包含「${query.trim()}」的餐厅：${listed.length} 家`
+                    : `名称包含「${query.trim()}」的餐厅`}
               </span>
             </button>
             {showList &&
-              (listed.length === 0 ? (
-                <p role="status" className="border-t border-line px-3 py-3 text-sm text-muted">
-                  当前地图范围内没有这个名字的餐厅。可以换个写法、拖动或缩小地图，或手动添加。
+              (nameState !== 'results' ? (
+                <p
+                  role="status"
+                  className={`border-t border-line px-3 py-3 text-sm ${nameState === 'error' ? 'text-chili-700' : 'text-muted'}`}
+                >
+                  {nameState === 'too-wide'
+                    ? '地图范围太大，放大地图后才能按名称查找。'
+                    : nameState === 'loading'
+                      ? '正在加载地图范围内的餐厅…'
+                      : nameState === 'error'
+                        ? '地图范围内的餐厅没能加载，暂时无法按名称查找。'
+                        : '当前地图范围内没有这个名字的餐厅。可以换个写法、拖动或缩小地图，或手动添加。'}
+                  {nameState === 'error' && (
+                    <button
+                      type="button"
+                      onClick={() => setAttempt((n) => n + 1)}
+                      className="ml-1 font-semibold text-chili-700 underline"
+                    >
+                      重试
+                    </button>
+                  )}
                 </p>
               ) : (
                 <CandidateList
