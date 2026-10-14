@@ -109,3 +109,33 @@
 .map-pin.is-manual span {
   @apply size-6 bg-basil-600 ring-4 ring-basil-600/30;
 }
+
+/* Restaurant pins with names on the submission map (PickerMap). */
+.poi-marker {
+  @apply relative;
+}
+.poi-marker .poi-pin {
+  @apply absolute bottom-0 left-1/2 block size-6 -translate-x-1/2 rounded-full rounded-br-none border-2 border-white bg-chili-600 shadow-md;
+  transform: translateX(-50%) translateY(-6px) rotate(45deg);
+}
+.poi-marker .poi-pin::after {
+  @apply absolute top-1/2 left-1/2 block size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white;
+  content: '';
+}
+.poi-marker .poi-label {
+  @apply absolute left-full block max-w-44 cursor-pointer truncate rounded-md border border-line bg-white/95 px-1.5 text-xs leading-5 font-semibold whitespace-nowrap text-ink shadow-sm;
+  top: 0;
+  margin-left: -2px;
+}
+.poi-marker.is-selected .poi-pin {
+  @apply size-8 bg-ink ring-4 ring-chili-600/40;
+}
+.poi-marker.is-selected .poi-label {
+  @apply border-chili-600 bg-chili-600 text-sm leading-6 text-white;
+  top: -2px;
+}
+.poi-marker .poi-label.is-left {
+  @apply right-full left-auto;
+  margin-left: 0;
+  margin-right: -2px;
+}

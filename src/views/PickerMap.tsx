@@ -1,14 +1,39 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngValue } from '../../shared/submission';
+import { placeLabels, type LabelPlacement } from '../lib/labelLayout';
 import type { Bounds, RestaurantCandidate } from '../lib/poi';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
-const icon = (className: string) =>
-  L.divIcon({ className: `map-pin ${className}`, html: '<span></span>', iconSize: [32, 32] });
-const icons = { normal: icon(''), selected: icon('is-selected'), manual: icon('is-manual') };
+const escapeHtml = (text: string) =>
+  text.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
+
+/**
+ * A pin, with the restaurant name beside it when it has a label placement
+ * (names come from POI data: escaped).
+ */
+function poiIcon(name: string, selected: boolean, label?: LabelPlacement): L.DivIcon {
+  const html = label
+    ? `<span class="poi-label${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px">${escapeHtml(name)}</span>`
+    : '';
+  return L.divIcon({
+    className: `poi-marker${selected ? ' is-selected' : ''}`,
+    html: `<span class="poi-pin" aria-hidden="true"></span>${html}`,
+    // The anchor is the tip of the pin.
+    iconSize: selected ? [32, 40] : [24, 30],
+    iconAnchor: selected ? [16, 40] : [12, 30],
+  });
+}
+const manualIcon = L.divIcon({
+  className: 'map-pin is-manual',
+  html: '<span></span>',
+  iconSize: [32, 32],
+});
 
 export interface MapArea {
   center: LatLngValue;
@@ -26,6 +51,11 @@ interface Props {
   onMapClick?: (point: LatLngValue) => void;
   /** The visible area, reported when the map is ready and after every pan or zoom. */
   onMove?: (area: MapArea) => void;
+  /**
+   * The contributor starts moving the map by hand (drag, wheel, pinch, double
+   * click, zoom buttons, or keyboard), as opposed to a programmatic setView.
+   */
+  onUserMove?: () => void;
   onSelect?: (candidate: RestaurantCandidate) => void;
   label: string;
   className?: string;
@@ -39,6 +69,7 @@ export default function PickerMap({
   marker,
   onMapClick,
   onMove,
+  onUserMove,
   onSelect,
   label,
   className = 'h-72 sm:h-96',
@@ -53,27 +84,13 @@ export default function PickerMap({
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
       {/* Events first: its handlers must be attached before FollowView moves the map. */}
       <Events onMapClick={onMapClick} onMove={onMove} />
+      {onUserMove && <UserMoves onUserMove={onUserMove} />}
       <FollowView view={view} />
-      {candidates.map((c) => (
-        <Marker
-          key={c.key}
-          position={[c.location.lat, c.location.lng]}
-          icon={c.key === selectedKey ? icons.selected : icons.normal}
-          title={c.name}
-          alt={c.name}
-          eventHandlers={{
-            click: () => onSelect?.(c),
-            keypress: (e) => {
-              const key = (e as L.LeafletKeyboardEvent).originalEvent.key;
-              if (key === 'Enter' || key === ' ') onSelect?.(c);
-            },
-          }}
-        />
-      ))}
+      <CandidateMarkers candidates={candidates} selectedKey={selectedKey} onSelect={onSelect} />
       {marker && (
         <Marker
           position={[marker.lat, marker.lng]}
-          icon={icons.manual}
+          icon={manualIcon}
           title="餐厅位置"
           alt="餐厅位置"
           keyboard={false}
@@ -99,6 +116,59 @@ function Container({ label }: { label: string }) {
   return null;
 }
 
+/**
+ * Restaurant pins with their names. `placeLabels` decides which pins are
+ * named and on which side: the selected restaurant always, the others nearest
+ * the map center first, without overlaps, covered pins, or names cut off by
+ * the map edge. Pins without room keep their name as a tooltip and appear in
+ * the list below the map. The layout follows pans, zooms, resizes, and new
+ * candidates.
+ */
+function CandidateMarkers({
+  candidates,
+  selectedKey,
+  onSelect,
+}: Pick<Props, 'selectedKey' | 'onSelect'> & { candidates: RestaurantCandidate[] }) {
+  const map = useMap();
+  const [layout, setLayout] = useState(0);
+  const relayout = () => setLayout((n) => n + 1);
+  useMapEvents({ zoomend: relayout, moveend: relayout, resize: relayout });
+
+  const labels = useMemo(() => {
+    void layout; // recompute when the map moves
+    const size = map.getSize();
+    return placeLabels(
+      candidates.map((c) => {
+        const p = map.latLngToContainerPoint([c.location.lat, c.location.lng]);
+        return { key: c.key, x: p.x, y: p.y, name: c.name, selected: c.key === selectedKey };
+      }),
+      { width: size.x, height: size.y },
+    );
+  }, [candidates, selectedKey, map, layout]);
+
+  return candidates.map((c) => {
+    const selected = c.key === selectedKey;
+    const label = labels.get(c.key);
+    return (
+      <Marker
+        key={c.key}
+        position={[c.location.lat, c.location.lng]}
+        icon={poiIcon(c.name, selected, label)}
+        zIndexOffset={selected ? 1000 : label ? 100 : 0}
+        title={c.name}
+        alt={c.name}
+        eventHandlers={{
+          click: () => onSelect?.(c),
+          keypress: (e) => {
+            const key = (e as L.LeafletKeyboardEvent).originalEvent.key;
+            if (key === 'Enter' || key === ' ') onSelect?.(c);
+          },
+        }}
+      />
+    );
+  });
+}
+
 function FollowView({ view }: { view: Props['view'] }) {
   const map = useMap();
   useEffect(() => {
@@ -116,6 +186,52 @@ const areaOf = (map: L.Map): MapArea => {
     zoom: map.getZoom(),
   };
 };
+
+/** Keys Leaflet's keyboard handler pans or zooms with. */
+const MAP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', '+', '-', '=', '_']);
+
+/**
+ * Reports the start of a move by the contributor. Leaflet's movestart,
+ * moveend, and zoomend also fire for programmatic setView calls, so they are
+ * not used: a drag is Leaflet's dragstart (never fired by setView), and a
+ * zoom or keyboard pan is recognized from the input that causes it (wheel,
+ * double click, a two-finger touch, the zoom buttons, or the map's keys).
+ */
+function UserMoves({ onUserMove }: { onUserMove: () => void }) {
+  const map = useMap();
+  const latest = useRef(onUserMove);
+  useEffect(() => {
+    latest.current = onUserMove;
+  }, [onUserMove]);
+  useEffect(() => {
+    const report = () => latest.current();
+    const container = map.getContainer();
+    const onTouch = (e: TouchEvent) => {
+      if (e.touches.length > 1) report();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (MAP_KEYS.has(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey) report();
+    };
+    const onClick = (e: MouseEvent) => {
+      if ((e.target as Element).closest('.leaflet-control-zoom')) report();
+    };
+    map.on('dragstart', report);
+    container.addEventListener('wheel', report, { passive: true });
+    container.addEventListener('dblclick', report);
+    container.addEventListener('touchstart', onTouch, { passive: true });
+    container.addEventListener('keydown', onKey);
+    container.addEventListener('click', onClick, true);
+    return () => {
+      map.off('dragstart', report);
+      container.removeEventListener('wheel', report);
+      container.removeEventListener('dblclick', report);
+      container.removeEventListener('touchstart', onTouch);
+      container.removeEventListener('keydown', onKey);
+      container.removeEventListener('click', onClick, true);
+    };
+  }, [map]);
+  return null;
+}
 
 function Events({ onMapClick, onMove }: Pick<Props, 'onMapClick' | 'onMove'>) {
   const map = useMapEvents({

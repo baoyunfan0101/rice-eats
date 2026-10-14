@@ -1,8 +1,8 @@
-# Rice吃啥 (Rice Eats)
+# Rice Eats
 
 > 项目开发中，尚未正式上线 / Under development, not yet launched
 
-Rice吃啥 是一个面向莱斯大学 (Rice University) 周边地区的社区美食指南和交互式餐厅地图，帮助大家发现休斯顿 Rice 附近值得一去的餐厅。
+Rice Eats 是一个面向莱斯大学 (Rice University) 周边地区的社区美食指南和交互式餐厅地图，帮助大家发现休斯顿 Rice 附近值得一去的餐厅。
 
 Rice Eats is a community-maintained restaurant guide and interactive food map for Rice University and the surrounding areas of Houston. The initial version of the site is in Chinese.
 
@@ -15,7 +15,7 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 - **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
 - **Static**: no backend, database, accounts, or paid services. Hosted on GitHub Pages.
-- **Public submissions**: visitors can send a review, photos, or both through a hosted Tally form (no account needed), from the header or from any restaurant page. Contributors first pick the restaurant on a map that shows nearby restaurants as pins (from the Geoapify Places API, starting at Rice University), by name search, or by adding it by hand, and confirm it; the form receives that restaurant as hidden fields. Contributors can list dishes with a verdict and that dish's own photos.
+- **Public submissions**: visitors can send a rating, a review, photos, or any mix through a hosted Tally form (no account needed), from the header or from any restaurant page. Contributing takes two steps. First, locate the search area (Rice University, Chinatown, the current location, or an address) and pick the restaurant on a map that shows nearby restaurants as named pins (from the Geoapify Places API, with a free OpenStreetMap fallback), by a name search in that area, or by adding it by hand; the selection is confirmed in place on the map. Then fill in the review; the form receives that restaurant as hidden fields. Contributors can list dishes with a verdict and that dish's own photos.
 - **Content workflow**: contributors send ordinary text and photos; an Agent Skill turns them into validated drafts, and nothing is published without maintainer review.
 
 ## Technology
@@ -107,6 +107,6 @@ Restaurant reviews, photographs, editorial content, and other contributed media 
 
 ## Disclaimer
 
-Rice吃啥 is an independent community project. It is not affiliated with, endorsed by, or an official service of Rice University.
+Rice Eats is an independent community project. It is not affiliated with, endorsed by, or an official service of Rice University.
 
 本项目为独立的社区项目，与莱斯大学无关，亦非莱斯大学官方服务。

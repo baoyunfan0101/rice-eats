@@ -172,10 +172,10 @@ export function distanceMeters(a: LatLngValue, b: LatLngValue): number {
   return 2 * 6371000 * Math.asin(Math.sqrt(h));
 }
 
-const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
+export const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
 
 /** Fetches and maps HTTP and network failures to PoiError (aborts pass through). */
-async function request(url: string, init: RequestInit): Promise<unknown> {
+export async function request(url: string, init: RequestInit): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(url, init);
@@ -543,10 +543,13 @@ export async function restaurantsInArea(bounds: Bounds): Promise<AreaResult> {
   };
 }
 
-/** Short Chinese description of a distance, e.g. "120 米", "1.2 公里". */
+/** Meters in a mile. */
+const METERS_PER_MILE = 1609.344;
+
+/** Distance for people, in miles: "0.3 mi", "1.2 mi", "12 mi" ("<0.1 mi" when very close). */
 export function distanceText(meters: number | undefined): string | undefined {
   if (meters === undefined) return undefined;
-  return meters < 1000
-    ? `${Math.max(1, Math.round(meters / 10) * 10)} 米`
-    : `${(meters / 1000).toFixed(1)} 公里`;
+  const miles = meters / METERS_PER_MILE;
+  if (miles < 0.05) return '<0.1 mi';
+  return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
 }

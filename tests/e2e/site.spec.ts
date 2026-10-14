@@ -13,10 +13,12 @@ test.beforeEach(async ({ page }) => {
   );
   // The fixture build points at a fake Tally form (TALLY_FORM in build:e2e);
   // a stub page stands in for it, so no test depends on a real Tally account.
+  // Like Tally, it tells the page once the form has rendered.
   await page.route(/^https:\/\/tally\.so\//, (route) =>
     route.fulfill({
       contentType: 'text/html',
-      body: `<!doctype html><title>stub</title><p>Stub Tally form</p><p id="query">${new URL(route.request().url()).search}</p>`,
+      body: `<!doctype html><title>stub</title><p>Stub Tally form</p><p id="query">${new URL(route.request().url()).search}</p>
+<script>parent.postMessage(JSON.stringify({ event: 'Tally.FormLoaded', payload: { formId: 'e2eForm' } }), '*');</script>`,
     }),
   );
 });
@@ -189,15 +191,33 @@ const FAKE_PLACES = [
 ];
 
 /** A fake Geoapify Places API: the fake places inside a rectangle, or one named after the query. */
-async function fakePlaces(page: Page) {
+async function fakePlaces(page: Page, fixtures = FAKE_PLACES) {
   const requests: URL[] = [];
   await page.route(/^https:\/\/api\.geoapify\.com\//, (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/v1/geocode/')) {
+      // A fake Geocoding API: one address, near Rice Village.
+      return route.fulfill({
+        json: {
+          results: [
+            {
+              place_id: 'e2e-geocode',
+              address_line1: '2111 Norfolk St',
+              address_line2: 'Houston, TX 77098, United States',
+              housenumber: '2111',
+              result_type: 'building',
+              lat: 29.7333,
+              lon: -95.4123,
+            },
+          ],
+        },
+      });
+    }
     requests.push(url);
     const filter = url.searchParams.get('filter')!;
     const name = url.searchParams.get('name');
-    let places = FAKE_PLACES;
-    if (name) places = [{ ...FAKE_PLACES[0]!, place_id: 'e2e-named', name: `${name} Kitchen` }];
+    let places = fixtures;
+    if (name) places = [{ ...fixtures[0]!, place_id: 'e2e-named', name: `${name} Kitchen` }];
     else if (filter.startsWith('rect:')) {
       const [w, s, e, n] = filter.slice(5).split(',').map(Number) as [
         number,
@@ -205,17 +225,18 @@ async function fakePlaces(page: Page) {
         number,
         number,
       ];
-      places = FAKE_PLACES.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
+      places = fixtures.filter((p) => p.lon >= w && p.lon < e && p.lat >= s && p.lat < n);
     }
     return route.fulfill({ json: { features: places.map((properties) => ({ properties })) } });
   });
   return requests;
 }
 
+const NEXT = '下一步：填写点评 →';
 const pin = (page: Page, name: string) => page.locator(`.leaflet-marker-icon[title="${name}"]`);
 
 const formQuery = (page: Page) =>
-  page.frameLocator('iframe[title="Rice吃啥 投稿表单"]').locator('#query');
+  page.frameLocator('iframe[title="Rice Eats 投稿表单"]').locator('#query');
 
 test('visitors pick a restaurant from the map around Rice before the form loads', async ({
   page,
@@ -233,16 +254,304 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
   expect(rects.length).toBeGreaterThan(0);
   expect(rects[0]!.searchParams.get('categories')).toContain('catering.restaurant');
+  await expect(page.getByText('第一步 · 选择餐厅')).toBeVisible();
+  // Names are on the map without clicking.
+  await expect(pin(page, 'Fake Noodle Bar').locator('.poi-label')).toHaveText('Fake Noodle Bar');
   await pin(page, 'Fake Noodle Bar').click();
 
-  await expect(page.getByRole('heading', { name: '确认餐厅' })).toBeVisible();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  // Selected in place: highlighted pin and details below the map, no confirmation page.
+  await expect(pin(page, 'Fake Noodle Bar')).toHaveClass(/is-selected/);
+  const selected = page.getByRole('region', { name: '已选餐厅' });
+  await expect(selected).toContainText('Fake Noodle Bar');
+  await expect(selected).toContainText('1 Fake St');
+  await expect(page.getByRole('button', { name: '确认餐厅' })).toHaveCount(0);
+  await page.getByRole('button', { name: NEXT }).click();
+  await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('为「Fake Noodle Bar」投稿');
+  await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('restaurant_lat=29.718400&restaurant_lng=-95.401800');
   await expect(query).toContainText('poi_provider=geoapify&poi_id=e2e-place');
   await expect(query).toContainText('selection_method=poi&source=site');
+});
+
+/** Label boxes of the pins on the map, and the map's box. */
+async function labelBoxes(page: Page) {
+  const map = (await page.getByRole('region', { name: '附近餐厅地图' }).boundingBox())!;
+  const labels = await page.locator('.poi-label').evaluateAll((els) =>
+    els.map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        name: el.textContent ?? '',
+        selected: !!el.closest('.is-selected'),
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+      };
+    }),
+  );
+  return { map, labels };
+}
+
+test('pin names stay readable, inside the map, and follow the map', async ({ page }) => {
+  // A dense block next to Rice, long names, and a restaurant at the map's east edge.
+  const dense = Array.from({ length: 12 }, (_, i) => ({
+    place_id: `e2e-dense-${i}`,
+    name: i % 2 ? `川味小馆 ${i}号店` : `The Long Named Neighborhood Bistro ${i}`,
+    address_line2: `${i} Dense St`,
+    lat: 29.7174 + (i % 4) * 0.0002,
+    lon: -95.4018 + Math.floor(i / 4) * 0.0003,
+  }));
+  await fakePlaces(page, [...FAKE_PLACES, ...dense]);
+  await page.goto('/rice-eats/submit/');
+  await expect(page.locator('.poi-label').first()).toBeVisible();
+  const check = async () => {
+    const { map, labels } = await labelBoxes(page);
+    expect(labels.length).toBeGreaterThan(1);
+    for (const l of labels) {
+      expect(l.left).toBeGreaterThanOrEqual(map.x - 1);
+      expect(l.right).toBeLessThanOrEqual(map.x + map.width + 1);
+    }
+    // No two names overlap.
+    for (const [i, a] of labels.entries()) {
+      for (const b of labels.slice(i + 1)) {
+        const overlap =
+          a.left < b.right - 1 &&
+          b.left < a.right - 1 &&
+          a.top < b.bottom - 1 &&
+          b.top < a.bottom - 1;
+        expect(overlap, `${a.name} / ${b.name}`).toBe(false);
+      }
+    }
+    return labels;
+  };
+  await check();
+
+  // Every restaurant in view can be read and chosen from the list.
+  await page.getByText(/按列表查看这 \d+ 家餐厅/).click();
+  const list = page.getByRole('list', { name: '地图上的餐厅' });
+  await expect(list.getByRole('button')).toHaveCount(13);
+  await list.getByRole('button', { name: /川味小馆 7号店/ }).click();
+  const selectedPin = pin(page, '川味小馆 7号店');
+  await expect(selectedPin).toHaveClass(/is-selected/);
+  // The selected name is always shown, whatever crowds it.
+  await expect(selectedPin.locator('.poi-label')).toHaveText('川味小馆 7号店');
+  await check();
+
+  // After zooming out and panning, the layout follows the map.
+  await page.getByRole('button', { name: 'Zoom out' }).click();
+  await expect(page.locator('.poi-label')).not.toHaveCount(0);
+  await page.waitForTimeout(500); // the zoom animation
+  const map = page.getByRole('region', { name: '附近餐厅地图' });
+  const box = (await map.boundingBox())!;
+  // Pan the map (with the keyboard, 80 px a step) until the selected
+  // restaurant is near its right edge.
+  const pinBox = (await selectedPin.boundingBox())!;
+  const steps = Math.floor((box.x + box.width - 14 - (pinBox.x + pinBox.width / 2)) / 80);
+  await map.focus();
+  for (let i = 0; i < steps; i++) {
+    await page.keyboard.press('ArrowLeft');
+    // Leaflet ignores arrow keys while the previous pan is animating.
+    await page.waitForTimeout(400);
+  }
+  await expect(selectedPin.locator('.poi-label')).toHaveClass(/is-left/);
+  const labels = await check();
+  expect(labels.some((l) => l.selected && l.name === '川味小馆 7号店')).toBe(true);
+});
+
+test('visitors locate the search area by preset or address before choosing', async ({ page }) => {
+  const places = await fakePlaces(page);
+  await page.goto('/rice-eats/submit/');
+  const area = page.getByRole('region', { name: '选择查找区域' });
+  await expect(area.getByText('当前查找区域：Rice University 周边')).toBeVisible();
+  await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
+
+  // Chinatown: the map moves to Bellaire Blvd and looks for restaurants there.
+  await area.getByRole('button', { name: 'Chinatown 周边' }).click();
+  await expect(area.getByText('当前查找区域：Chinatown 周边')).toBeVisible();
+  await expect
+    .poll(() =>
+      places.some((u) => {
+        const filter = u.searchParams.get('filter') ?? '';
+        const west = Number(filter.slice(5).split(',')[0]);
+        return filter.startsWith('rect:') && west < -95.55 && west > -95.58;
+      }),
+    )
+    .toBe(true);
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
+
+  // An address: searched on Enter, the map moves there, nothing is selected.
+  await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
+  await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
+  await expect(area.getByText('当前查找区域：2111 Norfolk St')).toBeVisible();
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
+  await expect(page.getByText(/搜索地图中心约 3.1 mi 范围内的餐厅/)).toBeVisible();
+});
+
+test('late address and location answers never override the latest choice', async ({ page }) => {
+  const places = await fakePlaces(page);
+  // A slow geocoder: answers only when the test releases it.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const geocodeRequests: string[] = [];
+  await page.route(/^https:\/\/api\.geoapify\.com\/v1\/geocode\//, async (route) => {
+    geocodeRequests.push(route.request().url());
+    await held;
+    await route
+      .fulfill({
+        json: {
+          results: [
+            {
+              place_id: 'e2e-late',
+              address_line1: '2111 Norfolk St',
+              address_line2: 'Houston, TX 77098',
+              lat: 29.7333,
+              lon: -95.4123,
+            },
+          ],
+        },
+      })
+      .catch(() => {}); // the page may have cancelled the request
+  });
+  // A slow device location: the test decides when it answers.
+  await page.addInitScript(() => {
+    const pending: PositionCallback[] = [];
+    Object.assign(window, {
+      __locate: () =>
+        pending.shift()?.({
+          coords: { latitude: 29.76, longitude: -95.37 },
+        } as GeolocationPosition),
+    });
+    Object.defineProperty(navigator, 'geolocation', {
+      value: { getCurrentPosition: (ok: PositionCallback) => pending.push(ok) },
+    });
+  });
+  const nominatim: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('nominatim')) nominatim.push(r.url());
+  });
+
+  await page.goto('/rice-eats/submit/');
+  const area = page.getByRole('region', { name: '选择查找区域' });
+  const status = area.getByText(/^当前查找区域：/);
+  await expect(status).toHaveText('当前查找区域：Rice University 周边');
+
+  // Address search pending, location pending, then Chinatown.
+  await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
+  await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
+  await expect(area.getByText('正在搜索地点…')).toBeVisible();
+  await area.getByRole('button', { name: '使用当前位置' }).click();
+  await area.getByRole('button', { name: 'Chinatown 周边' }).click();
+  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
+
+  // The late answers arrive out of order: the location, then the address.
+  await page.evaluate(() => (window as unknown as { __locate: () => void }).__locate());
+  release();
+  await page.waitForTimeout(1500);
+  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
+  await expect(area.getByRole('list', { name: '地点搜索结果' })).toHaveCount(0);
+  // The map really stayed at Chinatown: the last restaurant tiles requested are there.
+  const west = (u: URL) => Number(u.searchParams.get('filter')!.slice(5).split(',')[0]);
+  const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
+  expect(west(rects.at(-1)!)).toBeLessThan(-95.54);
+  expect(geocodeRequests).toHaveLength(1);
+  expect(nominatim).toEqual([]);
+});
+
+test('dragging or zooming the map by hand wins over a late address', async ({ page }) => {
+  const places = await fakePlaces(page);
+  // A slow geocoder whose answer (Sugar Land) is far from Rice.
+  let release = () => {};
+  await page.route(/^https:\/\/api\.geoapify\.com\/v1\/geocode\//, async (route) => {
+    const text = new URL(route.request().url()).searchParams.get('text');
+    if (text !== 'Slow Place') await new Promise<void>((resolve) => (release = resolve));
+    await route
+      .fulfill({
+        json: {
+          results: [
+            {
+              place_id: `e2e-${text}`,
+              address_line1: text,
+              address_line2: 'Sugar Land, TX',
+              lat: 29.62,
+              lon: -95.63,
+            },
+          ],
+        },
+      })
+      .catch(() => {});
+  });
+  await page.goto('/rice-eats/submit/');
+  const area = page.getByRole('region', { name: '选择查找区域' });
+  const status = area.getByText(/^当前查找区域：/);
+  const search = area.getByRole('searchbox', { name: '输入地址或地点' });
+  const map = page.getByRole('region', { name: '附近餐厅地图' });
+  await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
+  const west = (u: URL) => Number(u.searchParams.get('filter')!.slice(5).split(',')[0]);
+  const lastTileWest = () =>
+    west(places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:')).at(-1)!);
+  const settle = () => page.waitForTimeout(1200);
+
+  const gestures: [string, () => Promise<void>][] = [
+    [
+      'drag',
+      async () => {
+        await map.scrollIntoViewIfNeeded();
+        const box = (await map.boundingBox())!;
+        // Away from the pins (near the center), which take their own clicks.
+        await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height - 40);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height - 70, { steps: 8 });
+        await page.mouse.up();
+      },
+    ],
+    [
+      'wheel zoom',
+      async () => {
+        await map.scrollIntoViewIfNeeded();
+        const box = (await map.boundingBox())!;
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.wheel(0, -200);
+      },
+    ],
+    [
+      'zoom button',
+      async () => {
+        await map.getByRole('button', { name: 'Zoom out' }).click();
+      },
+    ],
+    [
+      'keyboard pan',
+      async () => {
+        await map.focus();
+        await page.keyboard.press('ArrowRight');
+      },
+    ],
+  ];
+  for (const [name, gesture] of gestures) {
+    await search.fill(`Late ${name}`);
+    await search.press('Enter');
+    await expect(area.getByText('正在搜索地点…')).toBeVisible();
+    await gesture();
+    // The gesture ends the pending search at once.
+    await expect(area.getByText('正在搜索地点…'), name).toHaveCount(0);
+    release();
+    await settle();
+    // The late answer did not move the map to Sugar Land.
+    await expect(status, name).not.toContainText(`Late ${name}`);
+    expect(lastTileWest(), name).toBeGreaterThan(-95.5);
+  }
+
+  // Programmatic moves still apply and are not taken for gestures.
+  await search.fill('Slow Place');
+  await search.press('Enter');
+  await expect(status).toHaveText('当前查找区域：Slow Place');
+  await expect.poll(lastTileWest).toBeLessThan(-95.6);
+  await area.getByRole('button', { name: 'Chinatown 周边' }).click();
+  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
+  await expect.poll(lastTileWest).toBeGreaterThan(-95.58);
 });
 
 test('the current location moves the map and the pins follow', async ({ page, context }) => {
@@ -255,7 +564,7 @@ test('the current location moves the map and the pins follow', async ({ page, co
   await expect(pin(page, 'Fake Taco Stop')).toBeVisible();
   await expect(pin(page, 'Fake Noodle Bar')).toHaveCount(0);
   await pin(page, 'Fake Taco Stop').click();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_lat=29.735200');
   // The device position itself is never submitted.
@@ -272,13 +581,15 @@ test('visitors without location permission can still explore the map or search b
   await expect(page.getByText(/没有获得定位权限|暂时无法获取当前位置/)).toBeVisible();
   await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
 
-  await page.getByRole('searchbox', { name: '按名字搜索' }).fill('Dumpling');
-  await page
+  await page.getByRole('searchbox', { name: '在当前区域搜索餐厅' }).fill('Dumpling');
+  const result = page
     .getByRole('list', { name: '搜索结果' })
-    .getByRole('button', { name: /Dumpling Kitchen/ })
-    .click();
-  await page.getByRole('button', { name: '重新选择' }).click();
-  await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
+    .getByRole('button', { name: /Dumpling Kitchen/ });
+  // Distances are in miles.
+  await expect(result).toContainText(/\d mi$/);
+  await result.click();
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('Dumpling Kitchen');
+  await expect(pin(page, 'Dumpling Kitchen')).toHaveClass(/is-selected/);
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 
@@ -305,7 +616,7 @@ test('the map falls back to OpenStreetMap when Geoapify is out of credits', asyn
   });
   await page.goto('/rice-eats/submit/');
   await pin(page, 'Fake Noodle Bar').click();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
@@ -319,14 +630,14 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   await expect(page.getByText(/餐厅搜索暂时不可用/)).toBeVisible();
 
   await page.getByRole('button', { name: '手动添加餐厅' }).click();
-  await page.getByLabel('餐厅名字').fill('新开的面馆');
+  await page.getByLabel('餐厅名称').fill('新开的面馆');
   await expect(page.getByRole('button', { name: '下一步' })).toBeDisabled();
   await page
     .getByRole('region', { name: '标出餐厅位置的地图' })
     .click({ position: { x: 150, y: 100 } });
   await expect(page.getByText('已标出位置，可以再点一下修改。')).toBeVisible();
   await page.getByRole('button', { name: '下一步' }).click();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   const query = formQuery(page);
   await expect(query).toContainText(
     'restaurant_name=%E6%96%B0%E5%BC%80%E7%9A%84%E9%9D%A2%E9%A6%86',
@@ -338,11 +649,11 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   // Name only: allowed, and marked for location checking.
   await page.getByRole('button', { name: '更换餐厅' }).click();
   await page.getByRole('button', { name: '手动添加餐厅' }).click();
-  await page.getByLabel('餐厅名字').fill('Mystery Diner');
+  await page.getByLabel('餐厅名称').fill('Mystery Diner');
   await page.getByLabel(/我不确定具体位置/).check();
   await page.getByRole('button', { name: '下一步' }).click();
   await expect(page.getByText(/没有位置信息/)).toBeVisible();
-  await page.getByRole('button', { name: '确认餐厅' }).click();
+  await page.getByRole('button', { name: NEXT }).click();
   await expect(query).toContainText(
     'restaurant_name=Mystery+Diner&selection_method=manual&source=site',
   );
@@ -357,21 +668,55 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   );
   const query = formQuery(page);
   await expect(
-    page.frameLocator('iframe[title="Rice吃啥 投稿表单"]').getByText('Stub Tally form'),
+    page.frameLocator('iframe[title="Rice Eats 投稿表单"]').getByText('Stub Tally form'),
   ).toBeVisible();
   await expect(query).toContainText('restaurant_id=fixture-sichuan-house');
   await expect(query).toContainText('restaurant_lat=29.705300&restaurant_lng=-95.546500');
   await expect(query).toContainText('selection_method=existing&source=restaurant-page');
-  await expect(page.getByRole('link', { name: /在新窗口打开投稿表单/ })).toHaveAttribute(
-    'href',
-    /^https:\/\/tally\.so\/r\/e2eForm\?restaurant_id=fixture-sichuan-house&/,
-  );
+  await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
+  // Tally reports the form loaded: no loading note and no fallback link.
+  await expect(page.getByText('正在加载投稿表单…')).toHaveCount(0);
+  await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
 
   await page.getByRole('button', { name: '更换餐厅' }).click();
-  await expect(page.getByRole('heading', { name: '选择餐厅' })).toBeVisible();
+  await expect(page.getByText('第一步 · 选择餐厅')).toBeVisible();
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('蜀味小馆');
   await page.getByRole('link', { name: '投稿', exact: true }).click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);
   await expect(page.locator('iframe')).toHaveCount(0);
+});
+
+test('the form offers recovery when Tally does not load', async ({ page }) => {
+  // Tally answers with a page that never reports a loaded form (like its
+  // error page): the iframe still fires its load event.
+  let broken = true;
+  await page.route(/^https:\/\/tally\.so\//, (route) =>
+    broken
+      ? route.fulfill({ status: 503, contentType: 'text/html', body: '<p>Service unavailable</p>' })
+      : route.fallback(),
+  );
+  await page.clock.install();
+  await page.goto('/rice-eats/submit/?restaurant=fixture-sichuan-house');
+  await expect(page.getByText('正在加载投稿表单…')).toBeVisible();
+  await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
+  await page.clock.fastForward(11000);
+  await expect(page.getByText(/表单好像没有正常加载/)).toBeVisible();
+  const link = page.getByRole('link', { name: /在新窗口打开投稿表单/ });
+  const direct = new URL((await link.getAttribute('href'))!);
+  expect(direct.pathname).toBe('/r/e2eForm');
+  expect(direct.searchParams.get('restaurant_id')).toBe('fixture-sichuan-house');
+  expect(direct.searchParams.get('source')).toBe('restaurant-page');
+  expect(direct.searchParams.has('hideTitle')).toBe(false);
+
+  // Once Tally works again, reloading shows the form and clears the notice.
+  broken = false;
+  await page.getByRole('button', { name: '重新加载表单' }).click();
+  await expect(
+    page.frameLocator('iframe[title="Rice Eats 投稿表单"]').getByText('Stub Tally form'),
+  ).toBeVisible();
+  await expect(page.getByText('正在加载投稿表单…')).toHaveCount(0);
+  await page.clock.fastForward(11000);
+  await expect(page.getByText(/表单好像没有正常加载/)).toHaveCount(0);
 });
 
 test('the form does not load on other pages', async ({ page }) => {
@@ -386,7 +731,7 @@ test('the form does not load on other pages', async ({ page }) => {
   expect(requests).toEqual([]);
 });
 
-test('keyboard users can reach the submission entry and fallback link', async ({
+test('keyboard users can reach the submission entry and the step controls', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'keyboard navigation is a desktop concern');
@@ -409,13 +754,9 @@ test('keyboard users can reach the submission entry and fallback link', async ({
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
     '为「蜀味小馆（虚构示例）」投稿',
   );
-  const fallback = page.getByRole('link', { name: /在新窗口打开投稿表单/ });
-  for (
-    let i = 0;
-    i < 10 && !(await fallback.evaluate((el) => el === document.activeElement));
-    i++
-  ) {
+  const change = page.getByRole('button', { name: '更换餐厅' });
+  for (let i = 0; i < 10 && !(await change.evaluate((el) => el === document.activeElement)); i++) {
     await page.keyboard.press('Tab');
   }
-  await expect(fallback).toBeFocused();
+  await expect(change).toBeFocused();
 });

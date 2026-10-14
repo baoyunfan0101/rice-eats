@@ -32,6 +32,7 @@ import {
 } from '../../shared/submission.ts';
 import type { Rating } from '../../shared/content/vocabulary.ts';
 import { IntakeError } from './intake.ts';
+import { reviewHints, type ReviewText } from './moderation.ts';
 import { INFO_FILE } from './pipeline.ts';
 import { sniffImageFormat } from './privacy.ts';
 import { DownloadError, safeDownload, type Lookup } from './safe-fetch.ts';
@@ -661,6 +662,11 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
   const hasText =
     Boolean(submission.review?.trim()) ||
     submission.dishes.some((d) => d.name?.trim() || d.comment?.trim());
+  // A valid overall rating is content on its own: the form requires the
+  // rating and makes the review text optional, so a rating-only submission
+  // is complete (older form versions required the text instead).
+  const rating = ratingFromAnswer(submission.ratingAnswer);
+  const hasRating = rating !== undefined;
   const links = photoLinks(submission).length;
   const usable = state.filter((p) => USABLE.includes(p.status)).length;
   const unresolved = state.filter((p) => UNRESOLVED.includes(p.status)).map((p) => p.slot);
@@ -694,11 +700,10 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
       notes.push(`dish ${i + 1} verdict "${dish.verdictAnswer}" is not 推荐 or 避雷; leave it out`);
     }
   }
-  if (!submission.review?.trim()) {
-    notes.push('no review text (the form requires it): check with the maintainer whether to proceed');
+  if (!hasText && !hasRating && links === 0) {
+    blockers.push('neither a valid rating, review text, dishes, nor photos were submitted');
   }
-  if (!hasText && links === 0) blockers.push('neither review text, dishes, nor photos were submitted');
-  if (!hasText && links > 0 && usable === 0) {
+  if (!hasText && !hasRating && links > 0 && usable === 0) {
     blockers.push('photo-only submission without any retrieved photo: retry, add the photos by hand, or reject');
   }
   if (unresolved.length > 0) {
@@ -707,9 +712,10 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
         'add-photo, or waive them if the maintainer decides to proceed without them',
     );
   }
-  const rating = ratingFromAnswer(submission.ratingAnswer);
-  if (submission.ratingAnswer && rating === undefined) {
+  if (submission.ratingAnswer && !hasRating) {
     notes.push(`rating answer "${submission.ratingAnswer}" is not one of the five levels; leave the rating out`);
+  } else if (!submission.ratingAnswer) {
+    notes.push('no overall rating (optional in older form versions): leave the rating out');
   }
   if (!submission.email) notes.push('no contact email: questions cannot be sent back to the contributor');
   if (!submission.displayName) notes.push('no display name: credit it as 匿名 (the form says so)');
@@ -838,6 +844,11 @@ export async function importSubmissions(
     restaurants: await loadKnownRestaurants(options.restaurantsDir, options.draftsDir),
     poiIndex: poiIndexFromLog(await readLog(options.submissionsDir)),
   };
+  // Earlier imports and this export, for duplicate and repeat checks.
+  const others = [
+    ...(await storedReviewTexts(options.submissionsDir)),
+    ...submissions.map(reviewTextOf),
+  ];
   const reports: SubmissionReport[] = [];
   for (const incoming of submissions) {
     const id = incoming.submissionId;
@@ -854,6 +865,7 @@ export async function importSubmissions(
     if (stored && JSON.stringify(submission) !== JSON.stringify(incoming)) {
       extra.push('this export differs from the stored submission; the stored one was kept');
     }
+    extra.push(...reviewHints(reviewTextOf(submission), others));
     if (!stored) {
       await mkdir(dir, { recursive: true });
       await writeFile(path.join(dir, SUBMISSION_FILE), `${JSON.stringify(submission, null, 2)}\n`, { flag: 'wx' });
@@ -876,6 +888,28 @@ export async function importSubmissions(
     reports.push(report(submission, logged ? 'resumed' : 'new', known, state, { entry: updated, dir, extra }));
   }
   return reports;
+}
+
+/** The text an editor reviews for hints: the review and the dish comments. */
+function reviewTextOf(s: Submission): ReviewText {
+  return {
+    submissionId: s.submissionId,
+    restaurant: s.restaurantId ?? s.restaurantName?.trim(),
+    email: s.email,
+    text: [s.review, ...s.dishes.map((d) => d.comment)].filter((t) => t?.trim()).join('\n'),
+  };
+}
+
+/** Review texts of the submissions stored by earlier imports. */
+async function storedReviewTexts(submissionsDir: string): Promise<ReviewText[]> {
+  const texts: ReviewText[] = [];
+  for (const id of Object.keys(await readLog(submissionsDir))) {
+    const dir = submissionDir(submissionsDir, id);
+    if (existsSync(path.join(dir, SUBMISSION_FILE))) {
+      texts.push(reviewTextOf(await readStoredSubmission(dir)));
+    }
+  }
+  return texts;
 }
 
 /** Loads a stored submission for retry-photos, add-photo, waive-photo, and status. */
@@ -909,7 +943,8 @@ export async function submissionStatus(
     restaurants: await loadKnownRestaurants(options.restaurantsDir, options.draftsDir),
     poiIndex: poiIndexFromLog(await readLog(options.submissionsDir)),
   };
-  return report(submission, 'status', known, state, { entry, dir });
+  const extra = reviewHints(reviewTextOf(submission), await storedReviewTexts(options.submissionsDir));
+  return report(submission, 'status', known, state, { entry, dir, extra });
 }
 
 function report(
@@ -957,6 +992,7 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   lines.push(`  restaurant: ${describeIdentity(result.identity, s)}`);
   lines.push(`  selected:   ${describeSelection(s)}`);
   const kind = [
+    result.rating !== undefined && 'rating',
     s.review?.trim() && 'review text',
     s.dishes.length && `${s.dishes.length} dish(es)`,
     s.photoUrls.length && `${s.photoUrls.length} general photo(s)`,

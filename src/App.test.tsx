@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { ContentIndex, RestaurantDetail, RestaurantSummary } from '../shared/content/model';
 import { clearContentCache } from './lib/content';
+import { clearGeocodeCache, GEOAPIFY_GEOCODE_ENDPOINT } from './lib/geocode';
 import { clearPoiCache, OVERPASS_ENDPOINT, setOverpassRetryDelay } from './lib/poi';
 
 // Leaflet does not run in jsdom: the picker map is a stub whose button is a
@@ -37,6 +38,7 @@ vi.mock('./views/PickerMap', async () => {
     candidates?: { key: string; name: string }[];
     onMapClick?: (p: Point) => void;
     onMove?: (area: Area) => void;
+    onUserMove?: () => void;
     onSelect?: (c: unknown) => void;
   }) {
     const { view, onMove } = props;
@@ -46,7 +48,10 @@ vi.mock('./views/PickerMap', async () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view]);
     return (
-      <div aria-label={props.label}>
+      <div
+        aria-label={props.label}
+        data-view={`${view.center.lat.toFixed(4)},${view.center.lng.toFixed(4)},${view.zoom}`}
+      >
         {props.onMapClick && (
           <button type="button" onClick={() => props.onMapClick!({ lat: 29.7, lng: -95.4 })}>
             在地图上点一下
@@ -54,13 +59,32 @@ vi.mock('./views/PickerMap', async () => {
         )}
         {onMove && (
           <>
+            {/* By hand: Leaflet reports the gesture's start, then the new area. */}
             <button
               type="button"
-              onClick={() => onMove(areaAround({ lat: 29.735, lng: -95.39 }, 15))}
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround({ lat: 29.735, lng: -95.39 }, 15));
+              }}
             >
               拖动地图
             </button>
-            <button type="button" onClick={() => onMove(areaAround(view.center, 11))}>
+            <button
+              type="button"
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround(view.center, 17));
+              }}
+            >
+              放大地图
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround(view.center, 11));
+              }}
+            >
               缩小地图
             </button>
           </>
@@ -76,12 +100,16 @@ vi.mock('./views/PickerMap', async () => {
   return { default: PickerMapStub };
 });
 
-/** Hidden fields passed to the form (from the direct link). */
-const formParams = () =>
-  Object.fromEntries(
-    new URL(screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href')!)
-      .searchParams,
-  );
+/** The view the map was given: "lat,lng,zoom". */
+const mapView = () => screen.getByLabelText('附近餐厅地图').getAttribute('data-view');
+
+/** Hidden fields passed to the embedded form (its URL without the embed options). */
+const formParams = () => {
+  const params = new URL(screen.getByTitle('Rice Eats 投稿表单').getAttribute('src')!).searchParams;
+  for (const option of ['alignLeft', 'hideTitle', 'transparentBackground']) params.delete(option);
+  return Object.fromEntries(params);
+};
+const NEXT = '下一步：填写点评 →';
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -298,7 +326,7 @@ describe('restaurant details', () => {
       'https://maps.apple.com/?q=Bayou+BBQ&ll=29.74%2C-95.39',
     );
     expect(screen.getByText(/作者甲/)).toBeInTheDocument();
-    expect(document.title).toBe('Bayou BBQ · Rice吃啥');
+    expect(document.title).toBe('Bayou BBQ · Rice Eats');
 
     await user.click(screen.getByRole('button', { name: '← 返回' }));
     expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
@@ -359,10 +387,10 @@ describe('submissions', () => {
     ).toBeInTheDocument();
     // No introductory paragraphs: the form itself explains review and privacy.
     expect(screen.queryByText(/不会立即出现在网站上/)).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
+    expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
     // The form loads only after a restaurant is confirmed.
     expect(document.querySelector('iframe')).toBeNull();
-    expect(document.title).toBe('投稿 · Rice吃啥');
+    expect(document.title).toBe('投稿 · Rice Eats');
   });
 
   it('keeps manual entry working when restaurant search fails', async () => {
@@ -379,26 +407,35 @@ describe('submissions', () => {
     await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
     const next = screen.getByRole('button', { name: '下一步' });
     expect(next).toBeDisabled();
-    await user.type(screen.getByLabelText('餐厅名字'), ' 小面馆 ');
+    await user.type(screen.getByLabelText('餐厅名称'), ' 小面馆 ');
     expect(next).toBeDisabled(); // needs a marker or "not sure"
     await user.click(await screen.findByRole('button', { name: '在地图上点一下' }));
     expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
     await user.click(screen.getByLabelText(/我不确定具体位置/));
-    await user.type(screen.getByLabelText('地址（选填）'), '5 Oak St');
+    await user.type(screen.getByLabelText('餐厅地址（选填）'), '5 Oak St');
     await user.click(next);
-    expect(screen.getByRole('heading', { name: '确认餐厅' })).toBeInTheDocument();
-    expect(screen.getByText('小面馆')).toBeInTheDocument();
-    expect(screen.getByText(/没有位置信息，审核时会再核实/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+    // Back on the map page, with the manual entry selected in place.
+    const selected = screen.getByRole('region', { name: '已选餐厅' });
+    expect(within(selected).getByText('小面馆')).toBeInTheDocument();
+    expect(within(selected).getByText('5 Oak St')).toBeInTheDocument();
+    expect(within(selected).getByText(/没有位置信息，审核时会再核实/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: NEXT }));
+    expect(screen.getByText('第二步 · 填写点评')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: '为「小面馆」投稿' })).toHaveFocus();
-    const direct = screen.getByRole('link', { name: /在新窗口打开投稿表单/ }).getAttribute('href');
-    expect(direct).toBe(
-      'https://tally.so/r/wMq8xY?restaurant_name=%E5%B0%8F%E9%9D%A2%E9%A6%86' +
-        '&restaurant_address=5+Oak+St&selection_method=manual&source=site',
-    );
-    expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).toContain(
-      'selection_method=manual&source=site',
-    );
+    expect(formParams()).toEqual({
+      restaurant_name: '小面馆',
+      restaurant_address: '5 Oak St',
+      selection_method: 'manual',
+      source: 'site',
+    });
+    // Back to step 1: the entry stays selected and the map stays where it was.
+    await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+    expect(
+      within(screen.getByRole('region', { name: '已选餐厅' })).getByText('小面馆'),
+    ).toBeInTheDocument();
+    expect(mapView()).toBe('29.7174,-95.4018,15');
+    await user.click(screen.getByRole('button', { name: NEXT }));
+    expect(formParams()).toMatchObject({ restaurant_name: '小面馆', selection_method: 'manual' });
   });
 
   it('passes a manual marker as the restaurant location', async () => {
@@ -407,10 +444,11 @@ describe('submissions', () => {
     const user = userEvent.setup();
     visit('submit/');
     await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
-    await user.type(screen.getByLabelText('餐厅名字'), 'Corner Cafe');
+    await user.type(screen.getByLabelText('餐厅名称'), 'Corner Cafe');
     await user.click(await screen.findByRole('button', { name: '在地图上点一下' }));
     await user.click(screen.getByRole('button', { name: '下一步' }));
-    await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+    expect(screen.getByRole('button', { name: '图钉：Corner Cafe' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: NEXT }));
     const params = formParams();
     expect(params).toMatchObject({
       restaurant_name: 'Corner Cafe',
@@ -464,6 +502,59 @@ describe('submissions', () => {
     let slowRiceNames: Promise<void> | undefined;
     /** Per-tile Geoapify status for partial failures. */
     let tileStatus: ((filter: string) => number) | undefined;
+    let geocodes: URL[];
+    let geocodeStatus = 200;
+    /** Requests to any other host (e.g. a public geocoder) — there must be none. */
+    let unexpected: string[];
+    /** Holds a geocoding answer (by query) until resolved, for out-of-order answers. */
+    let geocodeHold: Map<string, Promise<void>>;
+    const holdGeocode = (query: string) => {
+      let release!: () => void;
+      geocodeHold.set(query, new Promise<void>((resolve) => (release = resolve)));
+      return release;
+    };
+    /** Fake geocoder: one match, two matches, or none, by query. */
+    const GEOCODED: Record<string, object[]> = {
+      norfolk: [
+        {
+          place_id: 'g-norfolk',
+          address_line1: '2111 Norfolk St',
+          address_line2: 'Houston, TX 77098, United States',
+          housenumber: '2111',
+          result_type: 'building',
+          lat: 29.7333,
+          lon: -95.4123,
+        },
+      ],
+      westheimer: [
+        {
+          place_id: 'g-westheimer',
+          address_line1: 'Westheimer Rd',
+          address_line2: 'Houston, TX, United States',
+          result_type: 'street',
+          lat: 29.7375,
+          lon: -95.4422,
+        },
+      ],
+      'main st': [
+        {
+          place_id: 'g-main-1',
+          address_line1: 'Main St',
+          address_line2: 'Houston, TX, United States',
+          result_type: 'street',
+          lat: 29.75,
+          lon: -95.37,
+        },
+        {
+          place_id: 'g-main-2',
+          address_line1: 'Main St',
+          address_line2: 'Sugar Land, TX, United States',
+          result_type: 'street',
+          lat: 29.62,
+          lon: -95.63,
+        },
+      ],
+    };
 
     beforeEach(() => {
       vi.stubEnv('VITE_TALLY_FORM', FORM);
@@ -476,6 +567,11 @@ describe('submissions', () => {
       overpassStatus = 200;
       slowRiceNames = undefined;
       tileStatus = undefined;
+      clearGeocodeCache();
+      geocodes = [];
+      geocodeStatus = 200;
+      unexpected = [];
+      geocodeHold = new Map();
       const indexFetch = vi.mocked(fetch);
       vi.stubGlobal(
         'fetch',
@@ -496,6 +592,18 @@ describe('submissions', () => {
               tags: { name: p.name, 'addr:street': p.address_line2 },
             }));
             return Response.json({ elements });
+          }
+          if (url.startsWith(GEOAPIFY_GEOCODE_ENDPOINT)) {
+            const u = new URL(url);
+            geocodes.push(u);
+            const status = geocodeStatus;
+            await geocodeHold.get(u.searchParams.get('text')!.toLowerCase());
+            if (status !== 200) return new Response('', { status });
+            const results = GEOCODED[u.searchParams.get('text')!.toLowerCase()] ?? [];
+            return Response.json({ results });
+          }
+          if (/^https?:\/\//.test(url) && !url.startsWith('https://api.geoapify.com/')) {
+            unexpected.push(url);
           }
           if (!url.startsWith('https://api.geoapify.com/')) return indexFetch(url, init);
           const u = new URL(url);
@@ -553,8 +661,13 @@ describe('submissions', () => {
       expect(screen.getByText(/Powered by Geoapify/)).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '搜索地图中心附近' })).not.toBeInTheDocument();
       await user.click(pin);
-      expect(screen.getByText('7 Pine St')).toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+      // Selected in place: shown below the map, no separate confirmation step.
+      const selected = screen.getByRole('region', { name: '已选餐厅' });
+      expect(within(selected).getByText('Noodle Corner')).toBeInTheDocument();
+      expect(within(selected).getByText('7 Pine St')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '确认餐厅' })).not.toBeInTheDocument();
+      expect(document.querySelector('iframe')).toBeNull();
+      await user.click(screen.getByRole('button', { name: NEXT }));
       expect(formParams()).toEqual({
         restaurant_name: 'Noodle Corner',
         restaurant_lat: '29.718300',
@@ -589,7 +702,7 @@ describe('submissions', () => {
       await screen.findByRole('button', { name: '图钉：Noodle Corner' });
       await user.click(screen.getByRole('button', { name: '使用当前位置' }));
       await user.click(await screen.findByRole('button', { name: '图钉：Home Cafe' }));
-      await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+      await user.click(screen.getByRole('button', { name: NEXT }));
       const params = formParams();
       expect(params.restaurant_lat).toBe('29.711300');
       expect(JSON.stringify(params)).not.toContain('29.7111');
@@ -613,7 +726,7 @@ describe('submissions', () => {
       const user = userEvent.setup();
       visit('submit/');
       await screen.findByRole('button', { name: '图钉：Noodle Corner' });
-      await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
+      await user.type(screen.getByRole('searchbox', { name: '在当前区域搜索餐厅' }), 'Pho');
       const list = await screen.findByRole('list', { name: '搜索结果' });
       // Debounced: one request for the whole query, around the map center.
       const byName = places.filter((u) => u.searchParams.has('name'));
@@ -621,14 +734,21 @@ describe('submissions', () => {
       // Around the map center, snapped to a ~2 km grid.
       expect(byName[0]!.searchParams.get('filter')).toBe('circle:-95.400000,29.720000,5000');
       await user.click(within(list).getByRole('button', { name: /Pho Noodles/ }));
-      expect(screen.getByRole('heading', { name: '确认餐厅' })).toBeInTheDocument();
+      // Same feedback as a pin: selected in place, with its pin highlighted.
+      expect(
+        within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Pho Noodles'),
+      ).toBeInTheDocument();
+      expect(within(list).getByRole('button', { name: /Pho Noodles/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
     });
 
     it('searches the new area when the map moves during a name search', async () => {
       const user = userEvent.setup();
       visit('submit/');
       await screen.findByRole('button', { name: '图钉：Noodle Corner' });
-      await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
+      await user.type(screen.getByRole('searchbox', { name: '在当前区域搜索餐厅' }), 'Pho');
       await screen.findByRole('button', { name: '图钉：Pho Noodles' });
       await user.click(screen.getByRole('button', { name: '拖动地图' }));
       const list = await screen.findByRole('list', { name: '搜索结果' });
@@ -647,7 +767,7 @@ describe('submissions', () => {
       const user = userEvent.setup();
       visit('submit/');
       await screen.findByRole('button', { name: '图钉：Noodle Corner' });
-      await user.type(screen.getByRole('searchbox', { name: '按名字搜索' }), 'Pho');
+      await user.type(screen.getByRole('searchbox', { name: '在当前区域搜索餐厅' }), 'Pho');
       await waitFor(() => expect(places.filter((u) => u.searchParams.has('name'))).toHaveLength(1));
       await user.click(screen.getByRole('button', { name: '拖动地图' }));
       await screen.findByRole('button', { name: '图钉：Pho North' });
@@ -693,7 +813,7 @@ describe('submissions', () => {
       const user = userEvent.setup();
       visit('submit/');
       await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
-      await user.click(screen.getByRole('button', { name: '确认餐厅' }));
+      await user.click(screen.getByRole('button', { name: NEXT }));
       expect(formParams()).toMatchObject({
         restaurant_name: 'Noodle Corner',
         restaurant_address: '7 Pine St',
@@ -719,12 +839,458 @@ describe('submissions', () => {
       expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
     });
 
-    it('lets the contributor go back from the confirmation', async () => {
+    it('locates the preset areas without a request or a selection', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      const status = () => screen.getByText(/^当前查找区域：/);
+      expect(status()).toHaveTextContent('当前查找区域：Rice University 周边');
+      await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+      // Bellaire Blvd in southwest Houston, not Downtown.
+      expect(mapView()).toBe('29.7040,-95.5560,15');
+      expect(status()).toHaveTextContent('当前查找区域：Chinatown 周边');
+      expect(screen.queryByRole('region', { name: '已选餐厅' })).not.toBeInTheDocument();
+      expect(geocodes).toHaveLength(0);
+      // Panning away: the page no longer claims the old area.
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      expect(status()).toHaveTextContent('当前查找区域：地图当前位置附近');
+      await user.click(screen.getByRole('button', { name: 'Rice University 周边' }));
+      expect(mapView()).toBe('29.7174,-95.4018,15');
+      expect(status()).toHaveTextContent('当前查找区域：Rice University 周边');
+    });
+
+    it('searches an address only when asked and lets the contributor pick among matches', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      const input = screen.getByRole('searchbox', { name: '输入地址或地点' });
+      await user.type(input, 'Main St');
+      // Typing alone sends nothing.
+      expect(geocodes).toHaveLength(0);
+      await user.click(screen.getByRole('button', { name: '搜索' }));
+      const results = await screen.findByRole('list', { name: '地点搜索结果' });
+      expect(geocodes).toHaveLength(1);
+      expect(geocodes[0]!.searchParams.get('bias')).toBe('proximity:-95.4018,29.7174');
+      expect(screen.getByText('找到多个地点，请选择：')).toBeInTheDocument();
+      // Ambiguous: the map waits for a choice.
+      expect(mapView()).toBe('29.7174,-95.4018,15');
+      await user.click(within(results).getByRole('button', { name: /Sugar Land/ }));
+      expect(mapView()).toBe('29.6200,-95.6300,16');
+      expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('当前查找区域：Main St');
+      expect(screen.queryByRole('region', { name: '已选餐厅' })).not.toBeInTheDocument();
+
+      // A single match moves the map at once.
+      await user.clear(input);
+      await user.type(input, 'Norfolk{Enter}');
+      await waitFor(() => expect(mapView()).toBe('29.7333,-95.4123,16'));
+      expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('2111 Norfolk St');
+      // Repeating a search from the same area is answered from the cache.
+      await user.click(screen.getByRole('button', { name: '搜索' }));
+      await waitFor(() => expect(geocodes).toHaveLength(3));
+      await user.click(screen.getByRole('button', { name: '搜索' }));
+      await user.click(screen.getByRole('button', { name: '搜索' }));
+      expect(geocodes).toHaveLength(3);
+    });
+
+    it('explains failed or empty address searches and retries', async () => {
+      const user = userEvent.setup();
+      geocodeStatus = 429;
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      const input = screen.getByRole('searchbox', { name: '输入地址或地点' });
+      await user.type(input, 'Norfolk{Enter}');
+      // Geoapify refused: no other geocoder is asked.
+      expect(await screen.findByText(/地点搜索暂时不可用/)).toBeInTheDocument();
+      expect(geocodes).toHaveLength(1);
+      expect(unexpected).toEqual([]);
+      // The presets and the map still work, and the old message goes away.
+      await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+      expect(mapView()).toBe('29.7040,-95.5560,15');
+      expect(screen.queryByText(/地点搜索暂时不可用/)).not.toBeInTheDocument();
+      // Failures are not cached: searching again asks again.
+      await user.type(input, '{Enter}');
+      expect(await screen.findByText(/地点搜索暂时不可用/)).toBeInTheDocument();
+      expect(geocodes).toHaveLength(2);
+      geocodeStatus = 200;
+      await user.click(screen.getByRole('button', { name: '重试' }));
+      await waitFor(() => expect(mapView()).toBe('29.7333,-95.4123,16'));
+      await user.clear(input);
+      await user.type(input, 'Nowhere Place{Enter}');
+      expect(await screen.findByText(/没有找到「Nowhere Place」/)).toBeInTheDocument();
+      // The map stays where it was, and usable.
+      expect(mapView()).toBe('29.7333,-95.4123,16');
+      expect(screen.getByRole('button', { name: '拖动地图' })).toBeInTheDocument();
+    });
+
+    describe('the last location request wins', () => {
+      const status = () => screen.getByText(/^当前查找区域：/);
+      const CHINATOWN = '29.7040,-95.5560,15';
+      /** Geolocation that answers only when the test says so. */
+      const pendingLocation = () => {
+        const pending: { ok: PositionCallback; fail: PositionErrorCallback }[] = [];
+        geolocation.getCurrentPosition.mockImplementation(
+          (ok: PositionCallback, fail: PositionErrorCallback) => pending.push({ ok, fail }),
+        );
+        return {
+          succeed: () => act(() => pending.shift()!.ok({ coords: DEVICE } as GeolocationPosition)),
+          deny: () =>
+            act(() =>
+              pending.shift()!.fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+            ),
+        };
+      };
+      const ready = async () => {
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        return screen.getByRole('searchbox', { name: '输入地址或地点' });
+      };
+
+      it('keeps a preset chosen while an address search was pending', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        expect(screen.getByText('正在搜索地点…')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        expect(mapView()).toBe(CHINATOWN);
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe(CHINATOWN);
+        expect(status()).toHaveTextContent('Chinatown 周边');
+        expect(screen.queryByText('正在搜索地点…')).not.toBeInTheDocument();
+        expect(screen.queryByRole('list', { name: '地点搜索结果' })).not.toBeInTheDocument();
+      });
+
+      it('uses the later of two searches when the earlier answers last', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.clear(input);
+        await user.type(input, 'Westheimer{Enter}');
+        await waitFor(() => expect(mapView()).toBe('29.7375,-95.4422,16'));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe('29.7375,-95.4422,16');
+        expect(status()).toHaveTextContent('Westheimer Rd');
+        expect(screen.queryByText('2111 Norfolk St')).not.toBeInTheDocument();
+      });
+
+      it('ignores a location that arrives after a preset was chosen', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        await ready();
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        expect(screen.getByRole('button', { name: '正在定位…' })).toBeDisabled();
+        await user.click(screen.getByRole('button', { name: 'Rice University 周边' }));
+        // The preset applies at once, without waiting for the location.
+        expect(screen.getByRole('button', { name: '使用当前位置' })).toBeEnabled();
+        location.succeed();
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('Rice University 周边');
+        // A late failure shows no message either.
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        location.deny();
+        expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+        expect(mapView()).toBe(CHINATOWN);
+      });
+
+      it('shows no stale error after the contributor moved on', async () => {
+        const user = userEvent.setup();
+        geocodeStatus = 503;
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(screen.queryByText(/地点搜索暂时不可用/)).not.toBeInTheDocument();
+        expect(mapView()).toBe(CHINATOWN);
+      });
+
+      it('keeps the result the contributor chose over a later location answer', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        const input = await ready();
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.type(input, 'Main St{Enter}');
+        await user.click(
+          within(await screen.findByRole('list', { name: '地点搜索结果' })).getByRole('button', {
+            name: /Sugar Land/,
+          }),
+        );
+        location.succeed();
+        expect(mapView()).toBe('29.6200,-95.6300,16');
+        expect(status()).toHaveTextContent('Main St');
+      });
+
+      it('never moves a manually placed marker, whatever answers late', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        const release = holdGeocode('norfolk');
+        visit('submit/');
+        await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
+        await user.type(screen.getByLabelText('餐厅名称'), 'Marker Cafe');
+        await user.click(screen.getByRole('button', { name: '在地图上点一下' }));
+        expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
+        await user.type(
+          screen.getByRole('searchbox', { name: '输入地址或地点' }),
+          'Norfolk{Enter}',
+        );
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        location.succeed();
+        const manualMap = screen.getByLabelText('标出餐厅位置的地图');
+        expect(manualMap.getAttribute('data-view')).toBe(CHINATOWN);
+        // No offer to use the stale search result as the location.
+        expect(
+          screen.queryByRole('button', { name: '用这个地点作为餐厅位置' }),
+        ).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '下一步' }));
+        await user.click(screen.getByRole('button', { name: NEXT }));
+        expect(formParams()).toMatchObject({
+          restaurant_name: 'Marker Cafe',
+          restaurant_lat: '29.700000',
+          restaurant_lng: '-95.400000',
+        });
+      });
+
+      it('keeps the view the contributor dragged to over a late address', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        // The drag ends the pending search at once.
+        expect(screen.queryByText('正在搜索地点…')).not.toBeInTheDocument();
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        // No programmatic move: the map stays where it was dragged.
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('地图当前位置附近');
+        expect(screen.queryByRole('list', { name: '地点搜索结果' })).not.toBeInTheDocument();
+        // A new search still works afterwards.
+        await user.clear(input);
+        await user.type(input, 'Westheimer{Enter}');
+        await waitFor(() => expect(mapView()).toBe('29.7375,-95.4422,16'));
+      });
+
+      it('keeps the view the contributor zoomed to over a late address', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '放大地图' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('Rice University 周边');
+      });
+
+      it('does not jump back to the device location after a drag', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        await ready();
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        expect(screen.getByRole('button', { name: '使用当前位置' })).toBeEnabled();
+        location.succeed();
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('地图当前位置附近');
+      });
+
+      it('shows no stale error after a drag', async () => {
+        const user = userEvent.setup();
+        geocodeStatus = 503;
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(screen.queryByText(/地点搜索暂时不可用/)).not.toBeInTheDocument();
+      });
+
+      it('keeps the focus on a restaurant chosen while an address search was pending', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '图钉：Noodle Corner' }));
+        expect(mapView()).toBe('29.7183,-95.4012,16');
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe('29.7183,-95.4012,16');
+        expect(
+          within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Noodle Corner'),
+        ).toBeInTheDocument();
+      });
+
+      it('keeps a placed marker and its view when the map is dragged or answers come late', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        visit('submit/');
+        await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
+        await user.type(screen.getByLabelText('餐厅名称'), 'Drag Cafe');
+        const manualMap = () =>
+          screen.getByLabelText('标出餐厅位置的地图').getAttribute('data-view');
+        const before = manualMap();
+        await user.type(
+          screen.getByRole('searchbox', { name: '输入地址或地点' }),
+          'Norfolk{Enter}',
+        );
+        // Placing the marker is the latest intent.
+        await user.click(screen.getByRole('button', { name: '在地图上点一下' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(manualMap()).toBe(before);
+        expect(
+          screen.queryByRole('button', { name: '用这个地点作为餐厅位置' }),
+        ).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '下一步' }));
+        await user.click(screen.getByRole('button', { name: NEXT }));
+        expect(formParams()).toMatchObject({
+          restaurant_name: 'Drag Cafe',
+          restaurant_lat: '29.700000',
+          restaurant_lng: '-95.400000',
+        });
+      });
+
+      it('ignores answers that arrive after the area controls are gone', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        // Leaving the selection map unmounts its area controls.
+        await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
+        const manualMap = () =>
+          screen.getByLabelText('标出餐厅位置的地图').getAttribute('data-view');
+        const before = manualMap();
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        location.succeed();
+        expect(manualMap()).toBe(before);
+        expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('Rice University 周边');
+        // Back on the selection map, nothing moved it while it was gone.
+        await user.click(screen.getByRole('button', { name: '返回搜索' }));
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('Rice University 周边');
+      });
+    });
+
+    it('searches restaurant names around the current area', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      expect(screen.getByText(/搜索地图中心约 3.1 mi 范围内的餐厅/)).toBeInTheDocument();
+      const named = () => places.filter((u) => u.searchParams.get('name'));
+      await user.type(screen.getByRole('searchbox', { name: '在当前区域搜索餐厅' }), 'Pho');
+      await waitFor(() => expect(named()).toHaveLength(1));
+      // 5,000 m is the 3.1 mi shown.
+      expect(named()[0]!.searchParams.get('filter')).toMatch(/,5000$/);
+      await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+      await waitFor(() => expect(named()).toHaveLength(2));
+      expect(named()[1]!.searchParams.get('filter')).toBe('circle:-95.560000,29.700000,5000');
+    });
+
+    it('adds a restaurant by hand with the area controls, never using the area as its location', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
+      await user.type(screen.getByLabelText('餐厅名称'), 'Norfolk Noodles');
+      const next = screen.getByRole('button', { name: '下一步' });
+      await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+      expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('Chinatown 周边');
+      // Locating an area does not place the restaurant.
+      expect(next).toBeDisabled();
+      expect(screen.getByText('在地图上点一下餐厅所在的位置：')).toBeInTheDocument();
+      // No other restaurants on this map.
+      expect(screen.queryByRole('button', { name: /^图钉：/ })).not.toBeInTheDocument();
+      await user.type(screen.getByRole('searchbox', { name: '输入地址或地点' }), 'Norfolk{Enter}');
+      await user.click(await screen.findByRole('button', { name: '用这个地点作为餐厅位置' }));
+      expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
+      expect(screen.getByLabelText('餐厅地址（选填）')).toHaveValue(
+        'Houston, TX 77098, United States',
+      );
+      await user.click(next);
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      expect(formParams()).toMatchObject({
+        restaurant_name: 'Norfolk Noodles',
+        restaurant_lat: '29.733300',
+        restaurant_lng: '-95.412300',
+        selection_method: 'manual',
+      });
+    });
+
+    it('focuses a chosen restaurant and restores the last map view after step 2', async () => {
       const user = userEvent.setup();
       visit('submit/');
       await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
-      await user.click(screen.getByRole('button', { name: '重新选择' }));
-      expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
+      // Choosing focuses the map on the restaurant.
+      expect(mapView()).toBe('29.7183,-95.4012,16');
+      // The contributor keeps browsing, then continues and comes back.
+      await user.click(screen.getByRole('button', { name: '拖动地图' }));
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+      expect(mapView()).toBe('29.7350,-95.3900,15');
+      expect(
+        within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Noodle Corner'),
+      ).toBeInTheDocument();
+      // Choosing another restaurant focuses on it.
+      await user.click(await screen.findByRole('button', { name: '图钉：Taco Stop' }));
+      expect(mapView()).toBe('29.7352,-95.3897,16');
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      expect(formParams()).toMatchObject({ restaurant_name: 'Taco Stop', poi_id: 'p-taco' });
+    });
+
+    it('lists the restaurants in view for choosing without the pins', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      await user.click(screen.getByText('按列表查看这 2 家餐厅'));
+      const list = screen.getByRole('list', { name: '地图上的餐厅' });
+      // Nearest the map center first.
+      expect(
+        within(list)
+          .getAllByRole('button')
+          .map((b) => b.textContent),
+      ).toEqual(['Noodle Corner7 Pine St', 'East Deli3 Bay St']);
+      await user.click(within(list).getByRole('button', { name: /East Deli/ }));
+      expect(
+        within(screen.getByRole('region', { name: '已选餐厅' })).getByText('East Deli'),
+      ).toBeInTheDocument();
+      expect(within(list).getByRole('button', { name: /East Deli/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    it('lets the contributor change the selection and come back from step 2', async () => {
+      const user = userEvent.setup();
+      visit('submit/');
+      await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
+      await user.click(screen.getByRole('button', { name: '图钉：East Deli' }));
+      const selected = () => screen.getByRole('region', { name: '已选餐厅' });
+      expect(within(selected()).getByText('East Deli')).toBeInTheDocument();
+      expect(within(selected()).queryByText('Noodle Corner')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      expect(
+        screen.getByRole('heading', { level: 1, name: '为「East Deli」投稿' }),
+      ).toBeInTheDocument();
+      // The name appears once: no "餐厅：…" line next to 更换餐厅.
+      expect(screen.getAllByText(/East Deli/)).toHaveLength(1);
+      expect(screen.queryByText(/在新窗口打开投稿表单/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+      // Back on step 1 with the selection kept.
+      expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+      expect(within(selected()).getByText('East Deli')).toBeInTheDocument();
       expect(document.querySelector('iframe')).toBeNull();
     });
   });
@@ -748,16 +1314,134 @@ describe('submissions', () => {
       selection_method: 'existing',
       source: 'restaurant-page',
     });
-    expect(screen.getByTitle('Rice吃啥 投稿表单').getAttribute('src')).toContain(
+    expect(screen.getByTitle('Rice Eats 投稿表单').getAttribute('src')).toContain(
       'restaurant_id=bayou-bbq&restaurant_name=Bayou+BBQ',
     );
-    expect(screen.getByRole('link', { name: '← Bayou BBQ' })).toHaveAttribute(
+    expect(screen.getByText('第二步 · 填写点评')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '← 返回餐厅页面' })).toHaveAttribute(
       'href',
       `${BASE}r/bayou-bbq/`,
     );
     await user.click(screen.getByRole('button', { name: '更换餐厅' }));
-    expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
+    expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+    // The map opens on that restaurant.
+    expect(mapView()).toBe('29.7400,-95.3900,16');
+    // The restaurant stays selected (its pin and the panel) until another is chosen.
+    expect(
+      within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Bayou BBQ'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '图钉：Bayou BBQ' })).toBeInTheDocument();
     expect(document.querySelector('iframe')).toBeNull();
+    await user.click(screen.getByRole('button', { name: NEXT }));
+    expect(formParams()).toMatchObject({ restaurant_id: 'bayou-bbq', source: 'restaurant-page' });
+  });
+
+  describe('embedded form loading', () => {
+    const FALLBACK = /在新窗口打开投稿表单/;
+    /** Tally's message from the embedded form (or, with other arguments, an impostor). */
+    const tallyMessage = (
+      frame: HTMLIFrameElement,
+      { formId = 'wMq8xY', origin = 'https://tally.so', source = frame.contentWindow } = {},
+    ) =>
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: JSON.stringify({ event: 'Tally.FormLoaded', payload: { formId } }),
+            origin,
+            source,
+          }),
+        );
+      });
+    const frame = () => screen.getByTitle<HTMLIFrameElement>('Rice Eats 投稿表单');
+
+    beforeEach(() => {
+      vi.stubEnv('VITE_TALLY_FORM', FORM);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('shows the form without recovery options once Tally reports it loaded', async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
+      tallyMessage(frame());
+      expect(screen.queryByText('正在加载投稿表单…')).not.toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(30000));
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '重新加载表单' })).not.toBeInTheDocument();
+    });
+
+    it('offers recovery when the form loads slowly or not at all', async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      act(() => void vi.advanceTimersByTime(9000));
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(2000));
+      expect(screen.getByText(/表单好像没有正常加载/)).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: FALLBACK });
+      expect(link).toHaveAttribute('target', '_blank');
+      // The new window gets the same restaurant, without the embed options.
+      const direct = new URL(link.getAttribute('href')!);
+      expect(direct.origin + direct.pathname).toBe('https://tally.so/r/wMq8xY');
+      expect(Object.fromEntries(direct.searchParams)).toEqual(formParams());
+      // A late load still clears the notice.
+      tallyMessage(frame());
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+    });
+
+    it('does not count a frame that loaded an error page as the form', async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      // The iframe's load event fires for any page, including Tally's error page.
+      act(() => void frame().dispatchEvent(new Event('load')));
+      // Messages from elsewhere, or about another form, do not count either.
+      tallyMessage(frame(), { origin: 'https://evil.example' });
+      tallyMessage(frame(), { formId: 'other' });
+      tallyMessage(frame(), { source: window });
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(screen.getByRole('link', { name: FALLBACK })).toBeInTheDocument();
+    });
+
+    it('reloads the form on request and starts the check again', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      act(() => void vi.advanceTimersByTime(11000));
+      const before = frame();
+      await user.click(screen.getByRole('button', { name: '重新加载表单' }));
+      // A new frame with the same restaurant, and no stale notice.
+      expect(frame()).not.toBe(before);
+      expect(formParams()).toMatchObject({ restaurant_id: 'bayou-bbq' });
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
+      tallyMessage(frame());
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+    });
+
+    it('starts a fresh form after changing the restaurant', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(screen.getByRole('link', { name: FALLBACK })).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: '更换餐厅' }));
+      await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
+      await user.type(screen.getByLabelText('餐厅名称'), 'Other Place');
+      await user.click(screen.getByLabelText(/我不确定具体位置/));
+      await user.click(screen.getByRole('button', { name: '下一步' }));
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      // The old timeout does not carry over to the new form.
+      expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+      expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
+      expect(formParams()).toMatchObject({ restaurant_name: 'Other Place' });
+      act(() => void vi.advanceTimersByTime(11000));
+      expect(
+        new URL(
+          screen.getByRole('link', { name: FALLBACK }).getAttribute('href')!,
+        ).searchParams.get('restaurant_name'),
+      ).toBe('Other Place');
+    });
   });
 
   it('ignores unknown restaurant ids and lets the contributor choose', async () => {
@@ -766,7 +1450,7 @@ describe('submissions', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
+    expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain('r-fake99');
   });
 
@@ -774,7 +1458,7 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     failIndex = true;
     visit('submit/?restaurant=bayou-bbq');
-    expect(await screen.findByRole('heading', { name: '选择餐厅' })).toBeInTheDocument();
+    expect(await screen.findByText('第一步 · 选择餐厅')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
   });
 });

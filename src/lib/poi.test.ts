@@ -89,10 +89,12 @@ describe('normalizing places', () => {
     expect(normalizeGeoapify({ features: 'x' })).toEqual([]);
   });
 
-  it('describes distances', () => {
-    expect(distanceText(123)).toBe('120 米');
-    expect(distanceText(1)).toBe('1 米');
-    expect(distanceText(1234)).toBe('1.2 公里');
+  it('describes distances in miles', () => {
+    expect(distanceText(20)).toBe('<0.1 mi');
+    expect(distanceText(140)).toBe('0.1 mi');
+    expect(distanceText(1609)).toBe('1.0 mi');
+    expect(distanceText(1234 * 2)).toBe('1.5 mi');
+    expect(distanceText(30000)).toBe('19 mi');
     expect(distanceText(undefined)).toBeUndefined();
   });
 });

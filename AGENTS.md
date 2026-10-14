@@ -4,7 +4,7 @@ Instructions for coding agents working in this repository.
 
 ## Project
 
-Rice吃啥 (Rice Eats) is a community-maintained restaurant guide and interactive food map for Rice University and the surrounding areas of Houston. It is an independent community project, not an official Rice University service.
+Rice Eats is a community-maintained restaurant guide and interactive food map for Rice University and the surrounding areas of Houston. It is an independent community project, not an official Rice University service.
 
 Architecture, three independent layers in one repository:
 

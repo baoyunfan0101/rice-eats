@@ -20,7 +20,7 @@ export function RestaurantPage({ id }: { id: string }) {
   const detail = useRestaurantDetail(known ? id : '', attempt);
 
   useEffect(() => {
-    if (detail.status === 'ready') document.title = `${detail.data.name} · Rice吃啥`;
+    if (detail.status === 'ready') document.title = `${detail.data.name} · Rice Eats`;
   }, [detail]);
 
   const retry = () => setAttempt((n) => n + 1);
