@@ -168,45 +168,58 @@ test('using the map never changes the explorer', async ({ page }) => {
   await expect(markers(page)).toHaveCount(3);
 });
 
+/** The map's current zoom, from the tiles of its front tile layer. */
+const mapZoom = (page: Page) =>
+  page.evaluate(() => {
+    const levels = [...document.querySelectorAll<HTMLElement>('.leaflet-tile-container')];
+    const front = levels.sort((a, b) => Number(b.style.zIndex) - Number(a.style.zIndex))[0];
+    const src = front?.querySelector('img')?.getAttribute('src') ?? '';
+    return Number(/\/(\d+)\/\d+\/\d+\.png/.exec(src)?.[1]);
+  });
+
 test('a map gesture during the refit delay wins over the pending refit', async ({ page }) => {
+  // The page's clock is paused while the results change and the gesture
+  // happens, so a slow machine cannot let the refit delay pass in between.
+  await page.clock.install();
   await page.goto('/rice-eats/');
   await expect(markers(page)).toHaveCount(WITH_LOCATION);
   await page.waitForTimeout(500);
   const map = page.getByRole('region', { name: '餐厅地图' });
   const box = (await map.boundingBox())!;
-  /** How far the only marker is from the map's horizontal center (a refit centers it). */
-  const offCenter = async () => {
-    const pin = (await markers(page).first().boundingBox())!;
-    return Math.abs(pin.x + pin.width / 2 - (box.x + box.width / 2));
+  // Fitting one restaurant zooms to 15; the overview of all is much further out.
+  const overview = await mapZoom(page);
+  expect(overview).toBeLessThan(14);
+  let at = Date.now() + 60_000;
+  const paused = async (act: () => Promise<void>) => {
+    await page.clock.pauseAt(new Date((at += 60_000)));
+    await act();
+    await page.clock.resume();
+    await page.waitForTimeout(1200);
   };
 
-  // Press on the map, change the results (one restaurant), then drag at once,
-  // inside the refit delay.
-  await page.mouse.move(box.x + box.width / 2, box.y + 60);
-  await page.mouse.down();
-  await page.getByRole('searchbox').fill('拉面');
-  await page.mouse.move(box.x + box.width / 2 - 160, box.y + 80, { steps: 4 });
-  await page.mouse.up();
-  await page.waitForTimeout(1200);
-  await expect(markers(page)).toHaveCount(1);
-  // The pending refit was dropped: the restaurant was not centered.
-  expect(await offCenter()).toBeGreaterThan(60);
-
-  // The zoom buttons count too: type and press Zoom out in the same moment
-  // (in the page, so a slow machine cannot let the delay pass in between).
-  await page.evaluate(() => {
-    const box = document.querySelector<HTMLInputElement>('input[type=search]')!;
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(box, '蜀味');
-    box.dispatchEvent(new Event('input', { bubbles: true }));
-    document.querySelector<HTMLElement>('.leaflet-control-zoom-out')!.click();
+  // Change the results (one restaurant), then drag.
+  await paused(async () => {
+    await page.getByRole('searchbox').fill('拉面');
+    await page.mouse.move(box.x + box.width / 2, box.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 160, box.y + 80, { steps: 4 });
+    await page.mouse.up();
   });
-  await page.waitForTimeout(1200);
   await expect(markers(page)).toHaveCount(1);
-  expect(await offCenter()).toBeGreaterThan(60);
+  // The pending refit was dropped: the zoom is still the overview's.
+  expect(await mapZoom(page)).toBe(overview);
 
-  // Without a gesture, a change of results refits: the restaurant is centered.
+  // Change the results, then use the zoom buttons.
+  await paused(async () => {
+    await page.getByRole('searchbox').fill('蜀味');
+    await map.getByRole('button', { name: 'Zoom out' }).click();
+  });
+  await expect(markers(page)).toHaveCount(1);
+  expect(await mapZoom(page)).toBe(overview - 1);
+
+  // Without a gesture, a change of results refits to the one restaurant.
   await page.getByRole('searchbox').fill('灯笼');
-  await expect.poll(offCenter, { timeout: 3000 }).toBeLessThan(20);
+  await expect.poll(() => mapZoom(page), { timeout: 3000 }).toBe(15);
 });
 
 test('map shows located restaurants and opens details from a marker', async ({ page }) => {
