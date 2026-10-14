@@ -26,51 +26,236 @@ test.beforeEach(async ({ page }) => {
 const listNames = (page: Page) =>
   page.getByRole('list', { name: '餐厅列表' }).getByRole('heading', { level: 2 }).allTextContents();
 
-test('list, grid, and map share filters and the URL', async ({ page }) => {
+const markers = (page: Page) => page.locator('.leaflet-marker-icon');
+/** The map pane's offset: changes whenever the map pans. */
+const mapOffset = (page: Page) =>
+  page.locator('.leaflet-map-pane').evaluate((el) => (el as HTMLElement).style.transform);
+/** Opens a filter, toggles options, and closes it again. */
+async function filter(page: Page, button: RegExp, ...options: string[]) {
+  await page.getByRole('button', { name: button }).click();
+  const panel = page.locator('#filter-panel');
+  for (const option of options)
+    await panel.getByRole('button', { name: option, exact: true }).click();
+  await panel.getByRole('button', { name: '完成' }).click();
+}
+
+test('search and multi-select filters update the list and the map, and live in the URL', async ({
+  page,
+}) => {
   await page.goto('/rice-eats/');
   await expect(page.getByText(`共 ${PUBLISHED} 家`)).toBeVisible();
   await expect(page.getByText('虚构的示例数据')).toBeVisible();
   expect(await listNames(page)).not.toContain('草稿餐厅（虚构示例）');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  // No view modes: the list and the map are always both there.
+  await expect(page.getByRole('button', { name: '网格' })).toHaveCount(0);
 
-  await page.getByLabel('按菜系筛选').selectOption('chinese');
-  await expect(page).toHaveURL(/cuisine=chinese/);
-  expect(await listNames(page)).toEqual(['蜀味小馆（虚构示例）', '点心大堂（虚构示例）']);
-
-  await page.getByRole('button', { name: '网格' }).click();
-  const grid = page.getByRole('list', { name: '餐厅网格' });
-  await expect(grid.getByRole('link')).toHaveCount(2);
-
-  await page.getByRole('button', { name: '地图' }).click();
-  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2);
-  await expect(page).toHaveURL(/view=map/);
+  await filter(page, /^菜系/, '川菜', '日本菜');
+  await expect(page).toHaveURL(/\?cuisine=japanese%2Csichuan$/);
+  expect(await listNames(page)).toEqual(['蜀味小馆（虚构示例）', '灯笼拉面（虚构示例）']);
+  await expect(markers(page)).toHaveCount(2);
+  // Across dimensions every filter must match.
+  await filter(page, /^标签/, '偏辣', '适合聚餐');
+  expect(await listNames(page)).toEqual(['蜀味小馆（虚构示例）']);
+  await expect(markers(page)).toHaveCount(1);
 
   await page.reload();
-  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2);
-  await expect(page.getByText('找到 2 家 / 共 11 家')).toBeVisible();
+  await expect(page.getByText('找到 1 家 / 共 11 家')).toBeVisible();
+  await expect(markers(page)).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /^菜系 \(2\)/ })).toBeVisible();
 
   await page.goBack();
-  await expect(grid.getByRole('link')).toHaveCount(2);
+  await expect(markers(page)).toHaveCount(2);
+  await page.getByRole('button', { name: '清除全部' }).click();
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+
+  await page.getByRole('searchbox').fill('拉面');
+  expect(await listNames(page)).toEqual(['灯笼拉面（虚构示例）']);
+  await expect(markers(page)).toHaveCount(1);
+});
+
+test('the price range and the sort work together without changing the map', async ({ page }) => {
+  await page.goto('/rice-eats/');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  await page.getByRole('button', { name: /^人均/ }).click();
+  // The slider (keyboard) and the typed fields both set the range.
+  await page.getByRole('slider', { name: '最低人均' }).focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+  await expect(page).toHaveURL(/\?min=15$/);
+  await page.getByLabel('最高价（美元）').fill('30');
+  await expect(page).toHaveURL(/\?min=15&max=30$/);
+  // Unknown prices are not in a range.
+  expect(await listNames(page)).toEqual([
+    '河湾烤肉（虚构示例）',
+    '蜀味小馆（虚构示例）',
+    '灯笼拉面（虚构示例）',
+  ]);
+  await page.locator('#filter-panel').getByRole('button', { name: '完成' }).click();
+  await expect(page.getByRole('button', { name: /^\$15–30/ })).toBeVisible();
+
+  // Sorting reorders the list but leaves the map exactly where it was.
+  await page.waitForTimeout(600);
+  const before = await mapOffset(page);
+  await page.getByLabel('排序').selectOption('price-desc');
+  await expect(page).toHaveURL(/sort=price-desc/);
+  expect(await listNames(page)).toEqual([
+    '河湾烤肉（虚构示例）',
+    '蜀味小馆（虚构示例）',
+    '灯笼拉面（虚构示例）',
+  ]);
+  await page.getByLabel('排序').selectOption('price-asc');
+  expect((await listNames(page))[0]).toBe('灯笼拉面（虚构示例）');
+  await page.waitForTimeout(600);
+  expect(await mapOffset(page)).toBe(before);
+  await expect(markers(page)).toHaveCount(3);
+});
+
+test('distance sorting asks for the location only when chosen', async ({ page, context }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({ latitude: 29.7053, longitude: -95.5465 }); // at the Sichuan fixture
+  await page.goto('/rice-eats/');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  await page.getByLabel('排序').selectOption('distance');
+  await expect.poll(async () => (await listNames(page))[0]).toBe('蜀味小馆（虚构示例）');
+  // The restaurant without a location comes last; distances are in miles.
+  expect((await listNames(page)).at(-1)).toBe('流动餐车（虚构示例）');
+  await expect(
+    page
+      .getByRole('list', { name: '餐厅列表' })
+      .getByText(/· \d+(\.\d)? mi$/)
+      .first(),
+  ).toBeVisible();
+  // The location never reaches the URL.
+  expect(page.url()).not.toMatch(/29\.70|95\.54|lat|lng/);
+});
+
+test('using the map never changes the explorer', async ({ page }) => {
+  await page.goto('/rice-eats/?tag=group&sort=name');
+  await expect(markers(page)).toHaveCount(3);
+  const names = await listNames(page);
+  const map = page.getByRole('region', { name: '餐厅地图' });
+  const box = (await map.boundingBox())!;
+  // Drag and zoom (in the part of the map no sheet covers).
+  await page.mouse.move(box.x + box.width / 2, box.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 120, box.y + 120, { steps: 8 });
+  await page.mouse.up();
+  await map.getByRole('button', { name: 'Zoom out' }).click();
+  await page.waitForTimeout(500);
+  await expect(page).toHaveURL(/\?tag=group&sort=name$/);
+  expect(await listNames(page)).toEqual(names);
+  await expect(markers(page)).toHaveCount(3);
 });
 
 test('map shows located restaurants and opens details from a marker', async ({ page }) => {
-  await page.goto('/rice-eats/?view=map');
-  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(WITH_LOCATION);
+  await page.goto('/rice-eats/');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
   await expect(page.getByText('1 家餐厅暂无位置信息')).toBeVisible();
   await expect(page.getByText('部分地图底图加载失败')).toBeVisible();
   await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap');
 
-  // The marker (the sidebar list is hidden on small screens). Nearby markers
-  // overlap at this zoom, so select it with the keyboard (Enter), as a screen
-  // reader or keyboard user would.
+  // Nearby markers overlap at this zoom, so select it with the keyboard
+  // (Enter), as a screen reader or keyboard user would.
   const marker = page.getByRole('button', { name: '灯笼拉面（虚构示例）', exact: true });
   await marker.focus();
   await marker.press('Enter');
   await expect(page).toHaveURL(/id=fixture-lantern-noodles/);
   const preview = page.getByRole('region', { name: '灯笼拉面（虚构示例） 预览' });
   await expect(preview).toBeVisible();
+  // The list is unchanged by the pin.
+  await expect(page.getByText(`共 ${PUBLISHED} 家`)).toBeVisible();
   await preview.getByRole('link', { name: '查看详情' }).click();
   await expect(page).toHaveURL(/\/rice-eats\/r\/fixture-lantern-noodles\/$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('灯笼拉面（虚构示例）');
+});
+
+test('the list shows a restaurant on the map', async ({ page }) => {
+  await page.goto('/rice-eats/');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  await page.getByRole('button', { name: '在地图上显示点心大堂（虚构示例）' }).click();
+  await expect(page.locator('.leaflet-marker-icon.is-selected')).toHaveAttribute(
+    'title',
+    '点心大堂（虚构示例）',
+  );
+  const preview = page.getByRole('region', { name: '点心大堂（虚构示例） 预览' });
+  await expect(preview).toBeVisible();
+  // The selected pin is in view, not under the list or the sheet.
+  const pin = (await page.locator('.leaflet-marker-icon.is-selected').boundingBox())!;
+  const map = (await page.getByRole('region', { name: '餐厅地图' }).boundingBox())!;
+  expect(pin.x).toBeGreaterThan(map.x);
+  expect(pin.x + pin.width).toBeLessThan(map.x + map.width);
+  const sheet = page.getByRole('region', { name: '餐厅列表面板' });
+  const covered = (await sheet.count()) ? (await sheet.boundingBox())!.y : map.y + map.height;
+  expect(pin.y + pin.height).toBeLessThan(covered);
+  // A restaurant without a location cannot be located.
+  await expect(page.getByRole('button', { name: '在地图上显示流动餐车（虚构示例）' })).toHaveCount(
+    0,
+  );
+});
+
+test('desktop: explorer and map side by side, the list scrolls on its own', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'desktop layout');
+  await page.goto('/rice-eats/');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  const explorer = (await page.getByRole('region', { name: '餐厅探索' }).boundingBox())!;
+  const map = (await page.getByRole('region', { name: '餐厅地图' }).boundingBox())!;
+  expect(explorer.x + explorer.width).toBeLessThanOrEqual(map.x + 1);
+  expect(Math.abs(explorer.y - map.y)).toBeLessThan(2);
+  // The page itself does not scroll; the list does.
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(
+    page.viewportSize()!.height,
+  );
+  const list = page.getByRole('list', { name: '餐厅列表' }).locator('..');
+  await list.hover();
+  await page.mouse.wheel(0, 600);
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  expect((await page.getByRole('region', { name: '餐厅地图' }).boundingBox())!.y).toBe(map.y);
+});
+
+test('mobile: full-screen map with a three-state bottom sheet', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'mobile layout');
+  await page.goto('/rice-eats/?tag=group');
+  await expect(markers(page)).toHaveCount(3);
+  const sheet = page.getByRole('region', { name: '餐厅列表面板' });
+  const map = page.getByRole('region', { name: '餐厅地图' });
+  // The map fills the page behind the sheet, which starts half expanded.
+  const mapBox = (await map.boundingBox())!;
+  expect(mapBox.width).toBe(page.viewportSize()!.width);
+  await expect(sheet).toHaveAttribute('data-state', 'half');
+  await expect(sheet.getByRole('searchbox')).toBeVisible();
+  await expect(sheet.getByRole('button', { name: /^标签 \(1\)/ })).toBeVisible();
+
+  // Drag the top bar up: expanded.
+  const top = (await sheet.boundingBox())!;
+  await page.mouse.move(top.x + 40, top.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(top.x + 40, top.y - 250, { steps: 8 });
+  await page.mouse.up();
+  await expect(sheet).toHaveAttribute('data-state', 'expanded');
+  // Scrolling the list inside does not move the sheet.
+  await sheet.getByRole('list', { name: '餐厅列表' }).hover();
+  await page.mouse.wheel(0, 300);
+  await expect(sheet).toHaveAttribute('data-state', 'expanded');
+
+  // Buttons work without gestures; the filters and list survive every state.
+  await sheet.getByRole('button', { name: '看地图' }).click();
+  await expect(sheet).toHaveAttribute('data-state', 'collapsed');
+  // Leaflet still fills its container and the pins stay usable.
+  expect((await map.boundingBox())!.height).toBeGreaterThan(400);
+  await sheet.getByRole('button', { name: '展开', exact: true }).click();
+  await expect(sheet).toHaveAttribute('data-state', 'half');
+  await expect(page).toHaveURL(/\?tag=group$/);
+  expect(await listNames(page)).toHaveLength(3);
+
+  // The filter panel opens inside the sheet.
+  await filter(page, /^评级/, '🥵 夯');
+  expect(await listNames(page)).toEqual(['河湾烤肉（虚构示例）', '蜀味小馆（虚构示例）']);
+  await expect(markers(page)).toHaveCount(2);
+  // Focusing the search expands the sheet above the keyboard.
+  await sheet.getByRole('searchbox').focus();
+  await expect(sheet).toHaveAttribute('data-state', 'expanded');
 });
 
 test('restaurant pages render rich content and survive reloads', async ({ page }) => {
@@ -159,7 +344,7 @@ test('layout fits the viewport without horizontal scrolling', async ({ page }) =
   }
 });
 
-test('keyboard users can reach search, views, and restaurants', async ({ page }, testInfo) => {
+test('keyboard users can reach search, filters, and restaurants', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'keyboard navigation is a desktop concern');
   await page.goto('/rice-eats/');
   await page.keyboard.press('Tab');
@@ -167,6 +352,11 @@ test('keyboard users can reach search, views, and restaurants', async ({ page },
   await page.getByRole('searchbox').focus();
   await page.keyboard.type('河粉');
   expect(await listNames(page)).toEqual(['河粉花园（虚构示例）']);
+  await page.getByRole('button', { name: /^菜系/ }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#filter-panel')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#filter-panel')).toHaveCount(0);
   await page.getByRole('link', { name: /河粉花园/ }).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('河粉花园（虚构示例）');

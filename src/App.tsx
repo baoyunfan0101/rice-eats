@@ -19,7 +19,7 @@ export function App() {
   }, [pageKey]);
 
   return (
-    <Layout>
+    <Layout fill={route.kind === 'browse'}>
       {route.kind === 'browse' && <BrowsePage params={route.params} />}
       {route.kind === 'restaurant' && <RestaurantPage id={route.id} />}
       {route.kind === 'submit' && <SubmitPage restaurantId={route.restaurantId} />}

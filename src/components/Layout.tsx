@@ -3,9 +3,14 @@ import { browseHref, submitHref } from '../lib/router';
 import { submissionFormId } from '../lib/submission';
 import { Link } from './Link';
 
-export function Layout({ children }: { children: ReactNode }) {
+/**
+ * The page frame. With `fill`, the page takes exactly the viewport height
+ * (the discovery page's list and map scroll inside it), and the page shows
+ * the footer notes itself.
+ */
+export function Layout({ children, fill = false }: { children: ReactNode; fill?: boolean }) {
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className={fill ? 'flex h-dvh flex-col overflow-hidden' : 'flex min-h-dvh flex-col'}>
       <a
         href="#main"
         className="sr-only z-[2000] rounded bg-white px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
@@ -37,28 +42,36 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
         </div>
       </header>
-      <main id="main" className="flex flex-1 flex-col">
+      <main id="main" className={fill ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-1 flex-col'}>
         {children}
       </main>
-      <footer className="border-t border-line bg-white/60">
-        <div className="mx-auto max-w-6xl space-y-1 px-4 py-6 text-xs leading-6 text-muted">
-          <p>
-            Rice Eats 是独立的社区项目，与莱斯大学（Rice
-            University）无关，也不是莱斯大学的官方服务。
-          </p>
-          <p>
-            网站代码以 MIT 许可开源；点评、照片等内容的版权归各自作者所有，不适用 MIT 许可。
-            <a
-              href="https://github.com/baoyunfan0101/rice-eats"
-              className="ml-1 underline hover:text-ink"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              GitHub
-            </a>
-          </p>
-        </div>
-      </footer>
+      {!fill && (
+        <footer className="border-t border-line bg-white/60">
+          <FooterNotes className="mx-auto max-w-6xl px-4 py-6" />
+        </footer>
+      )}
+    </div>
+  );
+}
+
+/** The project notes shown at the bottom of every page. */
+export function FooterNotes({ className = '' }: { className?: string }) {
+  return (
+    <div className={`space-y-1 text-xs leading-6 text-muted ${className}`}>
+      <p>
+        Rice Eats 是独立的社区项目，与莱斯大学（Rice University）无关，也不是莱斯大学的官方服务。
+      </p>
+      <p>
+        网站代码以 MIT 许可开源；点评、照片等内容的版权归各自作者所有，不适用 MIT 许可。
+        <a
+          href="https://github.com/baoyunfan0101/rice-eats"
+          className="ml-1 underline hover:text-ink"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub
+        </a>
+      </p>
     </div>
   );
 }
