@@ -180,10 +180,11 @@ test('a map gesture during the refit delay wins over the pending refit', async (
     return Math.abs(pin.x + pin.width / 2 - (box.x + box.width / 2));
   };
 
-  // Change the results (one restaurant), then drag at once, inside the refit delay.
-  await page.getByRole('searchbox').fill('拉面');
+  // Press on the map, change the results (one restaurant), then drag at once,
+  // inside the refit delay.
   await page.mouse.move(box.x + box.width / 2, box.y + 60);
   await page.mouse.down();
+  await page.getByRole('searchbox').fill('拉面');
   await page.mouse.move(box.x + box.width / 2 - 160, box.y + 80, { steps: 4 });
   await page.mouse.up();
   await page.waitForTimeout(1200);
@@ -191,9 +192,14 @@ test('a map gesture during the refit delay wins over the pending refit', async (
   // The pending refit was dropped: the restaurant was not centered.
   expect(await offCenter()).toBeGreaterThan(60);
 
-  // The zoom buttons count too.
-  await page.getByRole('searchbox').fill('蜀味');
-  await map.getByRole('button', { name: 'Zoom out' }).click();
+  // The zoom buttons count too: type and press Zoom out in the same moment
+  // (in the page, so a slow machine cannot let the delay pass in between).
+  await page.evaluate(() => {
+    const box = document.querySelector<HTMLInputElement>('input[type=search]')!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(box, '蜀味');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector<HTMLElement>('.leaflet-control-zoom-out')!.click();
+  });
   await page.waitForTimeout(1200);
   await expect(markers(page)).toHaveCount(1);
   expect(await offCenter()).toBeGreaterThan(60);
