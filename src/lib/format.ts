@@ -1,16 +1,8 @@
 import type { RestaurantSummary } from '../../shared/content/model';
 import { RATINGS, type Rating } from '../../shared/content/vocabulary';
 import { cuisineLabel, RATING_LABELS } from './labels';
-import type { PriceBucketId } from './price';
 
 export { RATING_LABELS };
-
-export const PRICE_LABELS: Record<PriceBucketId, string> = {
-  '1': '$15 以下',
-  '2': '$15–30',
-  '3': '$30–60',
-  '4': '$60 以上',
-};
 
 export const RATING_STYLES: Record<Rating, string> = {
   5: 'bg-chili-600 text-white',

@@ -57,7 +57,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
   const google = googleMapsUrl(r);
   const apple = appleMapsUrl(r);
   const onMap = r.location
-    ? browseHref(toSearchParams({ ...DEFAULT_STATE, view: 'map', selected: r.id }))
+    ? browseHref(toSearchParams({ ...DEFAULT_STATE, selected: r.id }))
     : undefined;
 
   return (

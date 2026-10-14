@@ -10,7 +10,7 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 
 ## Features
 
-- **List, grid, and map views** of the same restaurants, with shared search (by Chinese, English, or other names), cuisine, scenario tag, rating, and price filters, and sorting by rating, name, or price.
+- **One discovery page**: a restaurant explorer (search by Chinese, English, or other names; multi-select cuisine, tag, and rating filters; a price-per-person range; sorting by rating, distance, price, or name) next to a map of the results. On phones, the map fills the screen under a three-state bottom sheet. The map shows what the explorer selects and never changes it; filters live in the URL, and older `?view=` links still work.
 - **Shareable URLs**: the view, filters, and selected restaurant are kept in the address bar, and every restaurant has its own link (`/rice-eats/r/<id>/`).
 - **Restaurant pages** with an optional long-form review, any number of photos (photo-only restaurants work too), dishes marked 推荐 or 避雷, and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.
@@ -36,7 +36,7 @@ Notable decisions:
 - **Submissions through Tally, not a backend.** The site links to and embeds a hosted Tally form (`/rice-eats/submit/`); Tally stores uploads and emails the maintainers, and local commands turn submissions into private drafts. The form is configured in one place (`TALLY_FORM` in `site.config.ts`); while it is empty, submission links are hidden.
 - **No router library.** The site has three kinds of pages; a small History API router (`src/lib/router.ts`) keeps the bundle smaller.
 - **GitHub Pages deep links.** The build writes `r/<id>/index.html` for each restaurant and `submit/index.html` (served with HTTP 200) and a `404.html` fallback, so direct links and reloads work on static hosting.
-- **The map loads on demand.** Leaflet is downloaded only when the map view is opened.
+- **The map loads separately.** Leaflet is a separate chunk, so the list shows without waiting for it; it refits only when the set of results changes.
 
 ## Development
 

@@ -155,7 +155,7 @@ rules, in priority order (`src/lib/imagePlacement.ts`):
 4. **照片 gallery**: all remaining photos, in stored order.
 
 So photo-only restaurants show the cover and then every other photo, and no
-display flags are stored in the data. List, grid, and map previews always use
+display flags are stored in the data. List cards and map previews always use
 the cover. The build turns
 each photo into WebP renditions 480, 960, and 1600 px wide (never upscaled,
 metadata-free), cached in `.cache/images/` by content hash.

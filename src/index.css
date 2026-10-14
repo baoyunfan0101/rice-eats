@@ -139,3 +139,18 @@
   margin-left: 0;
   margin-right: -2px;
 }
+
+/* Two range inputs stacked into one price slider: only the thumbs take input. */
+.price-thumb {
+  @apply pointer-events-none appearance-none bg-transparent;
+}
+.price-thumb::-webkit-slider-thumb {
+  @apply pointer-events-auto size-5 cursor-pointer appearance-none rounded-full border-2 border-white bg-chili-600 shadow;
+}
+.price-thumb::-moz-range-thumb {
+  @apply pointer-events-auto size-5 cursor-pointer rounded-full border-2 border-white bg-chili-600 shadow;
+}
+.price-thumb::-webkit-slider-runnable-track,
+.price-thumb::-moz-range-track {
+  @apply bg-transparent;
+}

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
@@ -102,6 +102,53 @@ vi.mock('./views/PickerMap', async () => {
 
 /** The view the map was given: "lat,lng,zoom". */
 const mapView = () => screen.getByLabelText('附近餐厅地图').getAttribute('data-view');
+
+// The discovery map (Leaflet) is replaced by a stub that shows what the page
+// gives it: the restaurants with a location as pin buttons, how often the
+// set to fit changed, the focus requests, and the selection with its preview.
+vi.mock('./views/DiscoveryMap', async () => {
+  const { useRef } = await import('react');
+  type R = { id: string; name: string; location?: object };
+  function DiscoveryMapStub(props: {
+    restaurants: R[];
+    fitKey: string;
+    selected: string;
+    focusRequest: number;
+    onSelect: (id: string) => void;
+    insets?: { bottom: number };
+  }) {
+    const keys = useRef<string[]>([]);
+    if (keys.current.at(-1) !== props.fitKey) keys.current.push(props.fitKey);
+    const current = props.restaurants.find((r) => r.id === props.selected);
+    return (
+      <div
+        aria-label="餐厅地图"
+        role="region"
+        data-fits={keys.current.length}
+        data-focus={props.focusRequest}
+        data-inset={props.insets?.bottom ?? 0}
+      >
+        {/* A map gesture changes nothing outside the map. */}
+        <button type="button">拖动餐厅地图</button>
+        {props.restaurants
+          .filter((r) => r.location)
+          .map((r) => (
+            <button key={r.id} type="button" onClick={() => props.onSelect(r.id)}>
+              地图图钉：{r.name}
+            </button>
+          ))}
+        {current && (
+          <section aria-label={`${current.name} 预览`}>
+            <button type="button" onClick={() => props.onSelect('')}>
+              关闭预览
+            </button>
+          </section>
+        )}
+      </div>
+    );
+  }
+  return { default: DiscoveryMapStub };
+});
 
 /** Hidden fields passed to the embedded form (its URL without the embed options). */
 const formParams = () => {
@@ -208,55 +255,382 @@ const names = (container: HTMLElement) =>
     .map((h) => h.textContent);
 
 describe('browsing', () => {
-  it('shows the list view with restaurant information', async () => {
-    visit('');
-    const list = await screen.findByRole('list', { name: '餐厅列表' });
-    expect(names(list)).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
-    // The English name (and other names) appear under the Chinese one.
-    expect(within(list).getByText('Pho Garden / PG')).toBeInTheDocument();
-    expect(within(list).getByText('美式烧烤 · 人均 $28')).toBeInTheDocument();
-    expect(within(list).getByText('适合聚餐')).toBeInTheDocument();
-    expect(screen.getByText('共 3 家')).toBeInTheDocument();
-  });
+  const list = () => screen.getByRole('list', { name: '餐厅列表' });
+  const map = () => screen.getByRole('region', { name: '餐厅地图' });
+  const pins = () =>
+    within(map())
+      .queryAllByRole('button', { name: /^地图图钉：/ })
+      .map((b) => b.textContent!.replace('地图图钉：', ''));
+  const filter = async (
+    user: ReturnType<typeof userEvent.setup>,
+    button: RegExp,
+    ...options: string[]
+  ) => {
+    await user.click(screen.getByRole('button', { name: button }));
+    for (const option of options) await user.click(screen.getByRole('button', { name: option }));
+    await user.click(screen.getByRole('button', { name: '完成' }));
+  };
 
-  it('shares search and filters across views and keeps them in the URL', async () => {
-    const user = userEvent.setup();
+  it('shows the explorer and the map together, with restaurant information', async () => {
     visit('');
     await screen.findByRole('list', { name: '餐厅列表' });
-    await user.selectOptions(screen.getByLabelText('按场景筛选'), 'group');
-    expect(window.location.search).toBe('?tag=group');
-    expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['Bayou BBQ']);
-
-    await user.click(screen.getByRole('button', { name: '网格' }));
-    expect(window.location.search).toBe('?view=grid&tag=group');
-    expect(names(screen.getByRole('list', { name: '餐厅网格' }))).toEqual(['Bayou BBQ']);
-    expect(screen.getByText('找到 1 家 / 共 3 家')).toBeInTheDocument();
-
-    act(() => window.history.back());
-    expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
+    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
+    expect(within(list()).getByText('Pho Garden / PG')).toBeInTheDocument();
+    expect(within(list()).getByText('美式烧烤 · 人均 $28')).toBeInTheDocument();
+    expect(within(list()).getByText('适合聚餐')).toBeInTheDocument();
+    expect(screen.getByText('共 3 家')).toBeInTheDocument();
+    // No view modes any more; the map shows the restaurants that have a location.
+    expect(screen.queryByRole('button', { name: '网格' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: '餐厅地图' })).toBeInTheDocument();
+    expect(pins()).toEqual(['Bayou BBQ']);
+    // Restaurants without a location stay in the list and cannot be located.
+    expect(within(list()).getAllByRole('button', { name: /^在地图上显示/ })).toHaveLength(1);
   });
 
-  it('restores state from a shared URL and handles no results', async () => {
+  it('combines multi-select filters and keeps them in the URL', async () => {
+    const user = userEvent.setup();
+    visit('');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    await filter(user, /^菜系/, '美式烧烤', '越南菜');
+    expect(window.location.search).toBe('?cuisine=bbq%2Cvietnamese');
+    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园']);
+    expect(screen.getByRole('button', { name: /^菜系 \(2\)/ })).toBeInTheDocument();
+    await filter(user, /^标签/, '实惠');
+    expect(names(list())).toEqual(['河粉花园']);
+    expect(pins()).toEqual([]);
+    expect(screen.getByText('找到 1 家 / 共 3 家')).toBeInTheDocument();
+    // Reset one dimension, then everything.
+    await user.click(screen.getByRole('button', { name: /^标签/ }));
+    await user.click(screen.getByRole('button', { name: '重置' }));
+    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园']);
+    await user.click(screen.getByRole('button', { name: '清除全部' }));
+    expect(window.location.search).toBe('');
+    expect(names(list())).toHaveLength(3);
+  });
+
+  it('filters by rating and by a price range whose handles cannot cross', async () => {
+    const user = userEvent.setup();
+    visit('');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    await filter(user, /^评级/, '🥵 夯', '🤤 人上人');
+    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园']);
+    await user.click(screen.getByRole('button', { name: /^评级/ }));
+    await user.click(screen.getByRole('button', { name: '重置' }));
+    await user.click(screen.getByRole('button', { name: /^人均/ }));
+    const low = screen.getByRole('slider', { name: '最低人均' });
+    const high = screen.getByRole('slider', { name: '最高人均' });
+    // The top end means no upper limit.
+    expect(high).toHaveAttribute('aria-valuetext', '不限');
+    fireEvent.change(low, { target: { value: '20' } });
+    expect(window.location.search).toBe('?min=20');
+    expect(names(list())).toEqual(['Bayou BBQ']);
+    // The upper handle stops at the lower one.
+    fireEvent.change(high, { target: { value: '10' } });
+    expect(window.location.search).toBe('?min=20&max=20');
+    fireEvent.change(high, { target: { value: '30' } });
+    expect(window.location.search).toBe('?min=20&max=30');
+    expect(names(list())).toEqual(['Bayou BBQ']);
+    expect(screen.getByRole('button', { name: /^\$20–30/ })).toBeInTheDocument();
+    fireEvent.change(high, { target: { value: '100' } });
+    expect(window.location.search).toBe('?min=20');
+  });
+
+  it('shows a price from a link beyond the slider as it is', async () => {
+    const user = userEvent.setup();
+    visit('?min=150');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    expect(screen.getByRole('button', { name: /^\$150 以上/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^\$150 以上/ }));
+    // The handles sit at the slider's end, but the tag says what is filtered.
+    expect(screen.getByText('$150+')).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: '最低人均' })).toHaveAttribute(
+      'aria-valuetext',
+      '$150',
+    );
+    expect(screen.getByText('没有符合条件的餐厅')).toBeInTheDocument();
+  });
+
+  it('restores state from a shared or older URL and handles no results', async () => {
     const user = userEvent.setup();
     visit('?view=grid&q=zzz');
     expect(await screen.findByText('没有符合条件的餐厅')).toBeInTheDocument();
     expect(screen.getByRole('searchbox')).toHaveValue('zzz');
-    // Both the toolbar and the empty state offer "clear filters".
-    expect(screen.getAllByRole('button', { name: '清除筛选' })).toHaveLength(2);
-    await user.click(screen.getAllByRole('button', { name: '清除筛选' })[1]!);
-    expect(names(await screen.findByRole('list', { name: '餐厅网格' }))).toHaveLength(3);
+    await user.click(screen.getByRole('button', { name: '清除全部筛选' }));
+    expect(names(await screen.findByRole('list', { name: '餐厅列表' }))).toHaveLength(3);
   });
 
-  it('searches Chinese, English, and other names', async () => {
+  it('opens older single-value links on the unified page', async () => {
+    visit('?view=map&tag=group&price=2');
+    await screen.findByRole('list', { name: '餐厅列表' });
+    expect(names(list())).toEqual(['Bayou BBQ']);
+    expect(screen.getByRole('button', { name: /^标签 \(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^\$15–30/ })).toBeInTheDocument();
+  });
+
+  it('searches Chinese, English, and other names, and updates the map', async () => {
     const user = userEvent.setup();
     visit('');
     const box = await screen.findByRole('searchbox');
+    await screen.findByRole('region', { name: '餐厅地图' });
     await user.type(box, 'pho');
-    expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['河粉花园']);
+    expect(names(list())).toEqual(['河粉花园']);
     expect(window.location.search).toBe('?q=pho');
+    expect(pins()).toEqual([]);
     await user.clear(box);
     await user.type(box, '河粉');
-    expect(names(screen.getByRole('list', { name: '餐厅列表' }))).toEqual(['河粉花园']);
+    expect(names(list())).toEqual(['河粉花园']);
+    await user.clear(box);
+    expect(pins()).toEqual(['Bayou BBQ']);
+  });
+
+  it('sorts without changing the results or refitting the map', async () => {
+    const user = userEvent.setup();
+    visit('');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    const fits = map().getAttribute('data-fits');
+    await user.selectOptions(screen.getByLabelText('排序'), 'price-asc');
+    expect(window.location.search).toBe('?sort=price-asc');
+    // Unknown prices last.
+    expect(names(list())).toEqual(['河粉花园', 'Bayou BBQ', 'Food Truck']);
+    await user.selectOptions(screen.getByLabelText('排序'), 'price-desc');
+    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
+    await user.selectOptions(screen.getByLabelText('排序'), 'name');
+    expect(map().getAttribute('data-fits')).toBe(fits);
+    expect(pins()).toEqual(['Bayou BBQ']);
+    // A filter that changes the set on the map refits.
+    await filter(user, /^菜系/, '越南菜');
+    expect(Number(map().getAttribute('data-fits'))).toBe(Number(fits) + 1);
+  });
+
+  it('asks for the location only for distance sorting and never puts it in the URL', async () => {
+    const user = userEvent.setup();
+    const getCurrentPosition = vi.fn((ok: PositionCallback) =>
+      ok({ coords: { latitude: 29.741, longitude: -95.391 } } as GeolocationPosition),
+    );
+    vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+    visit('?sort=name');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+    await user.selectOptions(screen.getByLabelText('排序'), 'distance');
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    // Located restaurants first, nearest first; distance in miles.
+    expect(names(list())[0]).toBe('Bayou BBQ');
+    expect(within(list()).getByText(/美式烧烤 · 人均 \$28 · 0\.1 mi/)).toBeInTheDocument();
+    expect(window.location.search).toBe('?sort=name');
+    expect(window.location.href).not.toMatch(/29\.741|95\.391/);
+  });
+
+  it('falls back to the previous sort when the location is denied', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      geolocation: {
+        getCurrentPosition: (_ok: PositionCallback, fail: PositionErrorCallback) =>
+          fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+      },
+    });
+    visit('?sort=price-asc');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    await user.selectOptions(screen.getByLabelText('排序'), 'distance');
+    expect(screen.getByText(/没有获得定位权限，无法按距离排序/)).toBeInTheDocument();
+    expect(screen.getByLabelText('排序')).toHaveValue('price-asc');
+    expect(names(list())).toEqual(['河粉花园', 'Bayou BBQ', 'Food Truck']);
+  });
+
+  describe('distance sorting with location answers out of order', () => {
+    /** A geolocation whose requests answer only when (and how) the test says. */
+    const controlledLocation = () => {
+      const requests: { ok: PositionCallback; fail: PositionErrorCallback }[] = [];
+      const getCurrentPosition = vi.fn((ok: PositionCallback, fail: PositionErrorCallback) =>
+        requests.push({ ok, fail }),
+      );
+      vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+      return {
+        requests,
+        succeed: (i: number, latitude: number, longitude = -95.39) =>
+          act(() => requests[i]!.ok({ coords: { latitude, longitude } } as GeolocationPosition)),
+        deny: (i: number) =>
+          act(() =>
+            requests[i]!.fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+          ),
+      };
+    };
+    const sortBox = () => screen.getByLabelText('排序');
+    const bayouLine = () => within(list()).getByText(/^美式烧烤 · 人均 \$28/).textContent;
+    // Bayou BBQ is at 29.74, -95.39: 0.1 mi from 29.741, about 4.1 mi from 29.8.
+    const NEAR = 29.741;
+    const FAR = 29.8;
+    const start = async (url = '') => {
+      visit(url);
+      await screen.findByRole('region', { name: '餐厅地图' });
+      return userEvent.setup();
+    };
+
+    it('sorts by distance once the location arrives', async () => {
+      const location = controlledLocation();
+      const user = await start('?sort=name');
+      await user.selectOptions(sortBox(), 'distance');
+      expect(sortBox()).toHaveValue('distance');
+      location.succeed(0, NEAR);
+      expect(names(list())[0]).toBe('Bayou BBQ');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 0.1 mi');
+    });
+
+    it('keeps a later rating sort when an older location succeeds', async () => {
+      const location = controlledLocation();
+      const user = await start('?sort=name');
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'rating');
+      location.succeed(0, NEAR);
+      expect(sortBox()).toHaveValue('rating');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28');
+      expect(window.location.search).toBe('');
+    });
+
+    it('keeps a later price sort, with no stale error, when an older location fails', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'price-asc');
+      location.deny(0);
+      expect(sortBox()).toHaveValue('price-asc');
+      expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+      expect(names(list())).toEqual(['河粉花园', 'Bayou BBQ', 'Food Truck']);
+    });
+
+    it('does not let an older failure cancel a newer distance sort', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'name');
+      await user.selectOptions(sortBox(), 'distance');
+      location.deny(0);
+      expect(sortBox()).toHaveValue('distance');
+      expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+      expect(sortBox().querySelector('option[value=distance]')).toHaveTextContent('正在获取位置…');
+      location.succeed(1, FAR);
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+    });
+
+    it('uses the newer location whichever answers last', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'name');
+      await user.selectOptions(sortBox(), 'distance');
+      // Older first, then newer.
+      location.succeed(0, NEAR);
+      location.succeed(1, FAR);
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+      // Newer first, then older (a third and fourth request).
+      await user.selectOptions(sortBox(), 'rating');
+      await user.selectOptions(sortBox(), 'distance');
+      await user.selectOptions(sortBox(), 'name');
+      await user.selectOptions(sortBox(), 'distance');
+      location.succeed(3, FAR);
+      location.succeed(2, NEAR);
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+    });
+
+    it('returns to the previous sort with a message when the current request fails', async () => {
+      const location = controlledLocation();
+      const user = await start('?sort=price-desc');
+      await user.selectOptions(sortBox(), 'distance');
+      location.deny(0);
+      expect(sortBox()).toHaveValue('price-desc');
+      expect(screen.getByText(/没有获得定位权限，无法按距离排序/)).toBeInTheDocument();
+      // Choosing another sort clears the message.
+      await user.selectOptions(sortBox(), 'name');
+      expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+    });
+
+    it('ignores answers after leaving the page', async () => {
+      const location = controlledLocation();
+      const errors = vi.spyOn(console, 'error');
+      const user = await start();
+      await user.selectOptions(sortBox(), 'distance');
+      await user.click(screen.getByRole('link', { name: 'Bayou BBQ' }));
+      await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' });
+      location.succeed(0, NEAR);
+      location.deny(0);
+      expect(errors).not.toHaveBeenCalled();
+      expect(window.location.search).toBe('');
+    });
+
+    it('never changes the map while switching sorts', async () => {
+      const location = controlledLocation();
+      const user = await start();
+      const fits = map().getAttribute('data-fits');
+      const pinsBefore = pins();
+      await user.selectOptions(sortBox(), 'distance');
+      location.succeed(0, NEAR);
+      await user.selectOptions(sortBox(), 'price-desc');
+      await user.selectOptions(sortBox(), 'rating');
+      expect(map().getAttribute('data-fits')).toBe(fits);
+      expect(pins()).toEqual(pinsBefore);
+    });
+  });
+
+  it('keeps the explorer as it is when the map is used', async () => {
+    const user = userEvent.setup();
+    visit('?tag=group&sort=name');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    await user.click(screen.getByRole('button', { name: '拖动餐厅地图' }));
+    await user.click(screen.getByRole('button', { name: '地图图钉：Bayou BBQ' }));
+    // The pin shows a preview; the filters and sort stay, only the selection is added.
+    expect(screen.getByRole('region', { name: 'Bayou BBQ 预览' })).toBeInTheDocument();
+    expect(window.location.search).toBe('?tag=group&sort=name&id=bayou-bbq');
+    expect(names(list())).toEqual(['Bayou BBQ']);
+    await user.click(screen.getByRole('button', { name: '关闭预览' }));
+    expect(window.location.search).toBe('?tag=group&sort=name');
+  });
+
+  it('shows a restaurant on the map from the list, and drops a preview the filters exclude', async () => {
+    const user = userEvent.setup();
+    visit('');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    expect(map().getAttribute('data-focus')).toBe('0');
+    await user.click(screen.getByRole('button', { name: '在地图上显示Bayou BBQ' }));
+    expect(map().getAttribute('data-focus')).toBe('1');
+    expect(screen.getByRole('region', { name: 'Bayou BBQ 预览' })).toBeInTheDocument();
+    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
+    await filter(user, /^菜系/, '越南菜');
+    expect(screen.queryByRole('region', { name: 'Bayou BBQ 预览' })).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe('?cuisine=vietnamese'));
+  });
+
+  it('uses a map with a bottom sheet on narrow screens', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    visit('?tag=group');
+    const sheet = await screen.findByRole('region', { name: '餐厅列表面板' });
+    // Half-expanded by default, with search, filters, and the list.
+    expect(sheet).toHaveAttribute('data-state', 'half');
+    expect(within(sheet).getByRole('searchbox')).toBeInTheDocument();
+    // No extra buttons: the handle (also a button for keyboards) cycles the states.
+    expect(within(sheet).queryByRole('button', { name: '看地图' })).not.toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: /列表半展开/ }));
+    expect(sheet).toHaveAttribute('data-state', 'expanded');
+    await user.click(within(sheet).getByRole('button', { name: /列表已展开/ }));
+    expect(sheet).toHaveAttribute('data-state', 'half');
+    // The filters survive every state.
+    expect(names(list())).toEqual(['Bayou BBQ']);
+    expect(window.location.search).toBe('?tag=group');
+    // Locating a restaurant makes room for the map.
+    await user.click(screen.getByRole('button', { name: '在地图上显示Bayou BBQ' }));
+    expect(sheet).toHaveAttribute('data-state', 'collapsed');
   });
 
   it('shows a friendly empty state when nothing is published', async () => {

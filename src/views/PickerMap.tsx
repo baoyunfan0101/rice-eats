@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngValue } from '../../shared/submission';
 import { placeLabels, type LabelPlacement } from '../lib/labelLayout';
+import { onUserMove } from '../lib/mapGestures';
 import type { Bounds, RestaurantCandidate } from '../lib/poi';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
@@ -187,49 +188,14 @@ const areaOf = (map: L.Map): MapArea => {
   };
 };
 
-/** Keys Leaflet's keyboard handler pans or zooms with. */
-const MAP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', '+', '-', '=', '_']);
-
-/**
- * Reports the start of a move by the contributor. Leaflet's movestart,
- * moveend, and zoomend also fire for programmatic setView calls, so they are
- * not used: a drag is Leaflet's dragstart (never fired by setView), and a
- * zoom or keyboard pan is recognized from the input that causes it (wheel,
- * double click, a two-finger touch, the zoom buttons, or the map's keys).
- */
-function UserMoves({ onUserMove }: { onUserMove: () => void }) {
+/** Reports the start of a move by the contributor (see mapGestures.ts). */
+function UserMoves({ onUserMove: report }: { onUserMove: () => void }) {
   const map = useMap();
-  const latest = useRef(onUserMove);
+  const latest = useRef(report);
   useEffect(() => {
-    latest.current = onUserMove;
-  }, [onUserMove]);
-  useEffect(() => {
-    const report = () => latest.current();
-    const container = map.getContainer();
-    const onTouch = (e: TouchEvent) => {
-      if (e.touches.length > 1) report();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (MAP_KEYS.has(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey) report();
-    };
-    const onClick = (e: MouseEvent) => {
-      if ((e.target as Element).closest('.leaflet-control-zoom')) report();
-    };
-    map.on('dragstart', report);
-    container.addEventListener('wheel', report, { passive: true });
-    container.addEventListener('dblclick', report);
-    container.addEventListener('touchstart', onTouch, { passive: true });
-    container.addEventListener('keydown', onKey);
-    container.addEventListener('click', onClick, true);
-    return () => {
-      map.off('dragstart', report);
-      container.removeEventListener('wheel', report);
-      container.removeEventListener('dblclick', report);
-      container.removeEventListener('touchstart', onTouch);
-      container.removeEventListener('keydown', onKey);
-      container.removeEventListener('click', onClick, true);
-    };
-  }, [map]);
+    latest.current = report;
+  }, [report]);
+  useEffect(() => onUserMove(map, () => latest.current()), [map]);
   return null;
 }
 
