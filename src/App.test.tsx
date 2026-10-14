@@ -2000,6 +2000,12 @@ describe('submissions', () => {
         );
       });
     const frame = () => screen.getByTitle<HTMLIFrameElement>('Rice Eats 投稿表单');
+    /** Opens the form and lets its effects run, so the timeout and the message listener are in place. */
+    const openForm = async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      await act(async () => {});
+    };
 
     beforeEach(() => {
       vi.stubEnv('VITE_TALLY_FORM', FORM);
@@ -2008,8 +2014,7 @@ describe('submissions', () => {
     afterEach(() => vi.useRealTimers());
 
     it('shows the form without recovery options once Tally reports it loaded', async () => {
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
       tallyMessage(frame());
       expect(screen.queryByText('正在加载投稿表单…')).not.toBeInTheDocument();
@@ -2019,8 +2024,7 @@ describe('submissions', () => {
     });
 
     it('offers recovery when the form loads slowly or not at all', async () => {
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       act(() => void vi.advanceTimersByTime(9000));
       expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
       act(() => void vi.advanceTimersByTime(2000));
@@ -2037,8 +2041,7 @@ describe('submissions', () => {
     });
 
     it('does not count a frame that loaded an error page as the form', async () => {
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       // The iframe's load event fires for any page, including Tally's error page.
       act(() => void frame().dispatchEvent(new Event('load')));
       // Messages from elsewhere, or about another form, do not count either.
@@ -2051,8 +2054,7 @@ describe('submissions', () => {
 
     it('reloads the form on request and starts the check again', async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       act(() => void vi.advanceTimersByTime(11000));
       const before = frame();
       await user.click(screen.getByRole('button', { name: '重新加载表单' }));
@@ -2068,8 +2070,7 @@ describe('submissions', () => {
 
     it('starts a fresh form after changing the restaurant', async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       act(() => void vi.advanceTimersByTime(11000));
       expect(screen.getByRole('link', { name: FALLBACK })).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: '更换餐厅' }));
