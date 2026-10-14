@@ -8,6 +8,13 @@ import { clearContentCache } from './lib/content';
 import { clearGeocodeCache, GEOAPIFY_GEOCODE_ENDPOINT } from './lib/geocode';
 import { clearPoiCache, OVERPASS_ENDPOINT, setOverpassRetryDelay } from './lib/poi';
 
+/** The submission's current step (the step indicator), checked to be `label`. */
+function stepNow(label: string) {
+  const step = screen.getByRole('listitem', { current: 'step' });
+  expect(step).toHaveTextContent(label);
+  return step;
+}
+
 // Leaflet does not run in jsdom: the picker map is a stub whose button is a
 // tap on the map at a fixed point, and whose markers are plain buttons.
 // Leaflet does not run in jsdom: the picker map is a stub. It reports the
@@ -130,19 +137,21 @@ vi.mock('./views/DiscoveryMap', async () => {
     restaurants: R[];
     fitKey: string;
     selected: string;
+    hovered?: string;
     focusRequest: number;
     onSelect: (id: string) => void;
     insets?: { bottom: number };
   }) {
     const keys = useRef<string[]>([]);
     if (keys.current.at(-1) !== props.fitKey) keys.current.push(props.fitKey);
-    const current = props.restaurants.find((r) => r.id === props.selected);
     return (
       <div
         aria-label="餐厅地图"
         role="region"
         data-fits={keys.current.length}
         data-focus={props.focusRequest}
+        data-selected={props.selected}
+        data-hovered={props.hovered ?? ''}
         data-inset={props.insets?.bottom ?? 0}
       >
         {/* A map gesture changes nothing outside the map. */}
@@ -154,13 +163,6 @@ vi.mock('./views/DiscoveryMap', async () => {
               地图图钉：{r.name}
             </button>
           ))}
-        {current && (
-          <section aria-label={`${current.name} 预览`}>
-            <button type="button" onClick={() => props.onSelect('')}>
-              关闭预览
-            </button>
-          </section>
-        )}
       </div>
     );
   }
@@ -300,8 +302,8 @@ describe('browsing', () => {
     expect(screen.queryByRole('button', { name: '网格' })).not.toBeInTheDocument();
     expect(await screen.findByRole('region', { name: '餐厅地图' })).toBeInTheDocument();
     expect(pins()).toEqual(['Bayou BBQ']);
-    // Restaurants without a location stay in the list and cannot be located.
-    expect(within(list()).getAllByRole('button', { name: /^在地图上显示/ })).toHaveLength(1);
+    // Restaurants without a location stay in the list; cards have no extra map buttons.
+    expect(within(list()).queryAllByRole('button')).toHaveLength(0);
   });
 
   it('combines multi-select filters and keeps them in the URL', async () => {
@@ -588,32 +590,49 @@ describe('browsing', () => {
     });
   });
 
-  it('keeps the explorer as it is when the map is used', async () => {
+  it('opens details from a pin, keeping the explorer and the map as they are', async () => {
     const user = userEvent.setup();
     visit('?tag=group&sort=name');
     await screen.findByRole('region', { name: '餐厅地图' });
     await user.click(screen.getByRole('button', { name: '拖动餐厅地图' }));
     await user.click(screen.getByRole('button', { name: '地图图钉：Bayou BBQ' }));
-    // The pin shows a preview; the filters and sort stay, only the selection is added.
-    expect(screen.getByRole('region', { name: 'Bayou BBQ 预览' })).toBeInTheDocument();
+    // The details replace the list beside the map, which selects the pin
+    // without moving (the visitor put the map where it is).
+    expect(window.location.pathname).toBe(`${BASE}r/bayou-bbq/`);
+    expect(window.location.search).toBe('?tag=group&sort=name');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
+    expect(map()).toHaveAttribute('data-selected', 'bayou-bbq');
+    expect(map()).toHaveAttribute('data-focus', '0');
+    expect(screen.queryByRole('list', { name: '餐厅列表' })).not.toBeInTheDocument();
+    // Back to the list: the filters and sort stay, and the pin stays selected.
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
+    expect(window.location.pathname).toBe(BASE);
     expect(window.location.search).toBe('?tag=group&sort=name&id=bayou-bbq');
     expect(names(list())).toEqual(['Bayou BBQ']);
-    await user.click(screen.getByRole('button', { name: '关闭预览' }));
-    expect(window.location.search).toBe('?tag=group&sort=name');
+    expect(map()).toHaveAttribute('data-selected', 'bayou-bbq');
   });
 
-  it('shows a restaurant on the map from the list, and drops a preview the filters exclude', async () => {
+  it('opens details from the list, showing the restaurant on the map', async () => {
     const user = userEvent.setup();
     visit('');
     await screen.findByRole('region', { name: '餐厅地图' });
     expect(map().getAttribute('data-focus')).toBe('0');
-    await user.click(screen.getByRole('button', { name: '在地图上显示Bayou BBQ' }));
+    // Pointing at a card highlights its pin.
+    await user.hover(within(list()).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(map()).toHaveAttribute('data-hovered', 'bayou-bbq');
+    await user.unhover(within(list()).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(map()).toHaveAttribute('data-hovered', '');
+    await user.click(within(list()).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
     expect(map().getAttribute('data-focus')).toBe('1');
-    expect(screen.getByRole('region', { name: 'Bayou BBQ 预览' })).toBeInTheDocument();
-    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
+    expect(map()).toHaveAttribute('data-selected', 'bayou-bbq');
+    // The map keeps every result.
+    expect(pins()).toEqual(['Bayou BBQ']);
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
+    // A selection the filters then exclude is dropped.
     await filter(user, /^菜系/, '越南菜');
-    expect(screen.queryByRole('region', { name: 'Bayou BBQ 预览' })).not.toBeInTheDocument();
     await waitFor(() => expect(window.location.search).toBe('?cuisine=vietnamese'));
+    expect(map()).toHaveAttribute('data-selected', '');
   });
 
   it('uses a map with a bottom sheet on narrow screens', async () => {
@@ -645,9 +664,14 @@ describe('browsing', () => {
     // The filters survive every state.
     expect(names(list())).toEqual(['Bayou BBQ']);
     expect(window.location.search).toBe('?tag=group');
-    // Locating a restaurant makes room for the map.
-    await user.click(screen.getByRole('button', { name: '在地图上显示Bayou BBQ' }));
-    expect(sheet).toHaveAttribute('data-state', 'collapsed');
+    // Details open in the sheet, which scrolls like the list (the map may be covered).
+    await user.click(within(sheet).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(
+      await within(sheet).findByRole('heading', { level: 1, name: 'Bayou BBQ' }),
+    ).toBeInTheDocument();
+    expect(sheet).toHaveAttribute('data-state', 'half');
+    await user.click(within(sheet).getByRole('button', { name: '← 返回列表' }));
+    expect(names(list())).toEqual(['Bayou BBQ']);
   });
 
   it('shows a friendly empty state when nothing is published', async () => {
@@ -719,14 +743,21 @@ describe('restaurant details', () => {
     expect(screen.getByText(/作者甲/)).toBeInTheDocument();
     expect(document.title).toBe('Bayou BBQ · Rice Eats');
 
-    await user.click(screen.getByRole('button', { name: '← 返回' }));
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
     expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
+    expect(document.title).toBe('Rice Eats · 莱斯周边的美食地图');
   });
 
-  it('works as a direct link and offers a way back', async () => {
-    visit('r/bayou-bbq');
+  it('works as a direct link, beside the map, and offers a way back', async () => {
+    const user = userEvent.setup();
+    visit('r/bayou-bbq/');
     expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '← 全部餐厅' })).toHaveAttribute('href', BASE);
+    const map = await screen.findByRole('region', { name: '餐厅地图' });
+    expect(map).toHaveAttribute('data-selected', 'bayou-bbq');
+    expect(map).toHaveAttribute('data-focus', '1');
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
+    expect(window.location.pathname).toBe(BASE);
+    expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
   });
 
   it('shows not-found pages for unknown restaurants and paths', async () => {
@@ -746,7 +777,7 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', '');
     const { unmount } = visit('r/bayou-bbq');
     await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' });
-    expect(screen.queryByRole('link', { name: '投稿' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '我要投稿' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '补充点评或照片' })).not.toBeInTheDocument();
     unmount();
     visit('submit/');
@@ -758,7 +789,7 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', 'https://example.com/form');
     visit('submit/');
     expect(screen.getByText('投稿功能即将开放')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: '投稿' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '我要投稿' })).not.toBeInTheDocument();
   });
 
   it('offers a general entry in the header that works without restaurants', async () => {
@@ -771,14 +802,14 @@ describe('submissions', () => {
       'href',
       `${BASE}submit/`,
     );
-    await user.click(screen.getByRole('link', { name: '投稿' }));
+    await user.click(screen.getByRole('link', { name: '我要投稿' }));
     expect(window.location.pathname).toBe(`${BASE}submit/`);
     expect(
       screen.getByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
     // No introductory paragraphs: the form itself explains review and privacy.
     expect(screen.queryByText(/不会立即出现在网站上/)).not.toBeInTheDocument();
-    expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+    expect(stepNow('选择餐厅')).toBeInTheDocument();
     // The form loads only after a restaurant is confirmed.
     expect(document.querySelector('iframe')).toBeNull();
     expect(document.title).toBe('投稿 · Rice Eats');
@@ -811,7 +842,7 @@ describe('submissions', () => {
     expect(within(selected).getByText('小面馆')).toBeInTheDocument();
     expect(within(selected).getByText(/没有位置信息，审核时会再核实/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: NEXT }));
-    expect(screen.getByText('第二步 · 填写点评')).toBeInTheDocument();
+    expect(stepNow('填写点评')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: '为「小面馆」投稿' })).toHaveFocus();
     expect(formParams()).toEqual({
       restaurant_name: '小面馆',
@@ -826,6 +857,19 @@ describe('submissions', () => {
     expect(mapView()).toBe('29.7174,-95.4018,15');
     await user.click(screen.getByRole('button', { name: NEXT }));
     expect(formParams()).toMatchObject({ restaurant_name: '小面馆', selection_method: 'manual' });
+    // The step indicator: step 1 is done and leads back to it; step 2 is current.
+    const progress = screen.getByRole('navigation', { name: '投稿进度' });
+    expect(
+      within(progress)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['选择餐厅第 1 步 · 已完成', '2填写点评第 2 步 · 当前步骤']);
+    await user.click(within(progress).getByRole('button', { name: /选择餐厅/ }));
+    stepNow('选择餐厅');
+    expect(within(progress).queryByRole('button')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: '已选餐厅' })).getByText('小面馆'),
+    ).toBeInTheDocument();
   });
 
   it('passes a manual marker as the restaurant location', async () => {
@@ -1325,7 +1369,7 @@ describe('submissions', () => {
       await screen.findByRole('button', { name: '图钉：Noodle Corner' });
       // The title comes first, then the step.
       const title = screen.getByRole('heading', { level: 1 });
-      const step = screen.getByText('第一步 · 选择餐厅');
+      const step = stepNow('选择餐厅');
       expect(title.compareDocumentPosition(step) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       // Both parts are boxes with a heading.
       const area = screen.getByRole('region', { name: '选择查找区域' });
@@ -1340,9 +1384,7 @@ describe('submissions', () => {
         'Rice University 周边',
         'Chinatown 周边',
       ]);
-      expect(within(area).getByRole('button', { name: '使用当前位置' })).toHaveClass(
-        'bg-chili-600',
-      );
+      expect(within(area).getByRole('button', { name: '使用当前位置' })).toHaveClass('btn-primary');
       expect(screen.queryByRole('searchbox', { name: '输入地址或地点' })).not.toBeInTheDocument();
       expect(within(area).getByRole('button', { name: '或者：输入地址或地点' })).toHaveAttribute(
         'aria-expanded',
@@ -1365,8 +1407,7 @@ describe('submissions', () => {
       await user.click(screen.getByRole('button', { name: NEXT }));
       const formTitle = screen.getByRole('heading', { level: 1, name: '为「Noodle Corner」投稿' });
       expect(
-        formTitle.compareDocumentPosition(screen.getByText('第二步 · 填写点评')) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
+        formTitle.compareDocumentPosition(stepNow('填写点评')) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     });
 
@@ -1895,7 +1936,7 @@ describe('submissions', () => {
       expect(screen.queryByText(/在新窗口打开投稿表单/)).not.toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: '更换餐厅' }));
       // Back on step 1 with the selection kept.
-      expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+      expect(stepNow('选择餐厅')).toBeInTheDocument();
       expect(within(selected()).getByText('East Deli')).toBeInTheDocument();
       expect(document.querySelector('iframe')).toBeNull();
     });
@@ -1923,13 +1964,13 @@ describe('submissions', () => {
     expect(screen.getByTitle('Rice Eats 投稿表单').getAttribute('src')).toContain(
       'restaurant_id=bayou-bbq&restaurant_name=Bayou+BBQ',
     );
-    expect(screen.getByText('第二步 · 填写点评')).toBeInTheDocument();
+    expect(stepNow('填写点评')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '← 返回餐厅页面' })).toHaveAttribute(
       'href',
       `${BASE}r/bayou-bbq/`,
     );
     await user.click(screen.getByRole('button', { name: '更换餐厅' }));
-    expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+    expect(stepNow('选择餐厅')).toBeInTheDocument();
     // The map opens on that restaurant.
     expect(mapView()).toBe('29.7400,-95.3900,16');
     // The restaurant stays selected (its pin and the panel) until another is chosen.
@@ -1959,6 +2000,12 @@ describe('submissions', () => {
         );
       });
     const frame = () => screen.getByTitle<HTMLIFrameElement>('Rice Eats 投稿表单');
+    /** Opens the form and lets its effects run, so the timeout and the message listener are in place. */
+    const openForm = async () => {
+      visit('submit/?restaurant=bayou-bbq');
+      await screen.findByTitle('Rice Eats 投稿表单');
+      await act(async () => {});
+    };
 
     beforeEach(() => {
       vi.stubEnv('VITE_TALLY_FORM', FORM);
@@ -1967,8 +2014,7 @@ describe('submissions', () => {
     afterEach(() => vi.useRealTimers());
 
     it('shows the form without recovery options once Tally reports it loaded', async () => {
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();
       tallyMessage(frame());
       expect(screen.queryByText('正在加载投稿表单…')).not.toBeInTheDocument();
@@ -1978,8 +2024,7 @@ describe('submissions', () => {
     });
 
     it('offers recovery when the form loads slowly or not at all', async () => {
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       act(() => void vi.advanceTimersByTime(9000));
       expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
       act(() => void vi.advanceTimersByTime(2000));
@@ -1996,8 +2041,7 @@ describe('submissions', () => {
     });
 
     it('does not count a frame that loaded an error page as the form', async () => {
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       // The iframe's load event fires for any page, including Tally's error page.
       act(() => void frame().dispatchEvent(new Event('load')));
       // Messages from elsewhere, or about another form, do not count either.
@@ -2010,8 +2054,7 @@ describe('submissions', () => {
 
     it('reloads the form on request and starts the check again', async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       act(() => void vi.advanceTimersByTime(11000));
       const before = frame();
       await user.click(screen.getByRole('button', { name: '重新加载表单' }));
@@ -2027,8 +2070,7 @@ describe('submissions', () => {
 
     it('starts a fresh form after changing the restaurant', async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      visit('submit/?restaurant=bayou-bbq');
-      await screen.findByTitle('Rice Eats 投稿表单');
+      await openForm();
       act(() => void vi.advanceTimersByTime(11000));
       expect(screen.getByRole('link', { name: FALLBACK })).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: '更换餐厅' }));
@@ -2056,7 +2098,7 @@ describe('submissions', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('第一步 · 选择餐厅')).toBeInTheDocument();
+    expect(stepNow('选择餐厅')).toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain('r-fake99');
   });
 
@@ -2064,7 +2106,8 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     failIndex = true;
     visit('submit/?restaurant=bayou-bbq');
-    expect(await screen.findByText('第一步 · 选择餐厅')).toBeInTheDocument();
+    expect(await screen.findByRole('navigation', { name: '投稿进度' })).toBeInTheDocument();
+    stepNow('选择餐厅');
     expect(screen.getByRole('button', { name: '手动添加餐厅' })).toBeInTheDocument();
   });
 });

@@ -1,32 +1,65 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
-import { RICE_CENTER, type LatLng, type RestaurantSummary } from '../../shared/content/model';
-import { RatingBadge } from '../components/Badges';
-import { Link } from '../components/Link';
-import { RestaurantImage } from '../components/RestaurantImage';
-import { metaLine } from '../lib/format';
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import {
+  RICE_CENTER,
+  type ImageAsset,
+  type LatLng,
+  type RestaurantSummary,
+} from '../../shared/content/model';
+import { placeLabels, type LabelPlacement } from '../lib/labelLayout';
 import { onUserMove } from '../lib/mapGestures';
-import { restaurantHref } from '../lib/router';
+import { pinIconOptions } from '../lib/pin';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
-const pinIcons = {
-  normal: L.divIcon({ className: 'map-pin', html: '<span></span>', iconSize: [32, 32] }),
-  selected: L.divIcon({
-    className: 'map-pin is-selected',
-    html: '<span></span>',
-    iconSize: [32, 32],
-  }),
-};
+const escapeHtml = (text: string) =>
+  text.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
+
+/** The smallest rendition of a photo (from its srcset), for map thumbnails. */
+export function smallestRendition(image: ImageAsset): string {
+  const candidates = image.srcset
+    .split(',')
+    .map((entry) => entry.trim().split(/\s+/))
+    .map(([url, w]) => ({ url: url!, width: Number.parseInt(w ?? '', 10) }))
+    .filter((c) => c.url && Number.isFinite(c.width));
+  candidates.sort((a, b) => a.width - b.width);
+  return candidates[0]?.url ?? image.src;
+}
+
+/**
+ * A pin (anchored at its tip, src/lib/pin.ts), with a label beside it when it
+ * has a placement: the cover thumbnail and the restaurant name.
+ */
+function restaurantIcon(
+  r: RestaurantSummary,
+  state: { selected: boolean; hovered: boolean },
+  label?: LabelPlacement,
+): L.DivIcon {
+  const thumb = r.cover
+    ? `<img class="poi-thumb" src="${escapeHtml(smallestRendition(r.cover))}" alt="" draggable="false">`
+    : '<span class="poi-thumb is-empty"></span>';
+  const html = label
+    ? `<span class="poi-label has-thumb${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px;margin-top:${label.dy}px">${thumb}<span class="poi-name">${escapeHtml(r.name)}</span></span>`
+    : '';
+  const options = pinIconOptions(state.selected, html);
+  return L.divIcon({
+    ...options,
+    className: `${options.className}${state.hovered ? ' is-hovered' : ''}`,
+  });
+}
+
+/** Notes over the map (no locations, failed tiles). */
+const NOTE = 'border-2 border-ink bg-cream px-2.5 py-1 text-xs font-semibold shadow-px-sm';
 
 /** Fitting never zooms in closer than this (one restaurant), nor out further than MIN_FIT_ZOOM. */
 const MAX_FIT_ZOOM = 15;
 const MIN_FIT_ZOOM = 10;
 /** Zoom used when the list asks to show one restaurant. */
 const FOCUS_ZOOM = 16;
-/** Height the preview card needs above the overlays, with its margins. */
-const PREVIEW_SPACE = 160;
 /** Typing changes the results often; the map refits once the results settle. */
 const FIT_DELAY_MS = 250;
 
@@ -45,8 +78,11 @@ export interface MapProps {
    */
   fitKey: string;
   selected: string;
+  /** The restaurant under the pointer in the list ('' for none): its pin is highlighted. */
+  hovered?: string;
   /** Bumped when the list asks to show `selected` on the map. */
   focusRequest: number;
+  /** A pin was clicked (or activated from the keyboard). */
   onSelect: (id: string) => void;
   /** Overlays covering the map; fitting and focusing keep restaurants out from under them. */
   insets?: Insets;
@@ -64,6 +100,7 @@ export default function DiscoveryMap({
   restaurants,
   fitKey,
   selected,
+  hovered = '',
   focusRequest,
   onSelect,
   insets = { top: 0, bottom: 0 },
@@ -76,33 +113,13 @@ export default function DiscoveryMap({
   const current = restaurants.find((r) => r.id === selected);
   const [tilesFailed, setTilesFailed] = useState(false);
   const pendingFitRef = useRef<() => void>(undefined);
-  // The preview needs room above the overlays (the expanded bottom sheet
-  // leaves almost none): without it, the pin stays selected and the preview
-  // comes back when there is room again.
-  const frame = useRef<HTMLDivElement>(null);
-  const [frameHeight, setFrameHeight] = useState(0);
-  useEffect(() => {
-    const element = frame.current;
-    if (!element) return;
-    const update = () => setFrameHeight(element.clientHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  const previewFits = frameHeight - insets.top - insets.bottom >= PREVIEW_SPACE;
 
   return (
-    <div
-      ref={frame}
-      role="region"
-      aria-label="餐厅地图"
-      className="relative h-full w-full overflow-hidden"
-    >
+    <div role="region" aria-label="餐厅地图" className="relative h-full w-full overflow-hidden">
       <MapContainer
         center={[RICE_CENTER.lat, RICE_CENTER.lng]}
         zoom={13}
-        className="h-full w-full bg-line"
+        className="h-full w-full bg-sand"
       >
         <TileLayer
           url={TILE_URL}
@@ -112,6 +129,13 @@ export default function DiscoveryMap({
         />
         <FocusWithoutScrolling />
         <KeepSize />
+        {/* Before the fit and the focus, so its labels follow their first moves too. */}
+        <RestaurantMarkers
+          located={located}
+          selected={selected}
+          hovered={hovered}
+          onSelect={onSelect}
+        />
         <FitToResults
           located={located}
           fitKey={fitKey}
@@ -124,24 +148,6 @@ export default function DiscoveryMap({
           insets={insets}
           pendingFitRef={pendingFitRef}
         />
-        {located.map((r) => (
-          <Marker
-            key={r.id}
-            position={[r.location.lat, r.location.lng]}
-            icon={r.id === selected ? pinIcons.selected : pinIcons.normal}
-            title={r.name}
-            alt={r.name}
-            zIndexOffset={r.id === selected ? 1000 : 0}
-            eventHandlers={{
-              click: () => onSelect(r.id),
-              // Leaflet makes markers focusable but does not activate them from the keyboard.
-              keypress: (e) => {
-                const key = (e as L.LeafletKeyboardEvent).originalEvent.key;
-                if (key === 'Enter' || key === ' ') onSelect(r.id);
-              },
-            }}
-          />
-        ))}
       </MapContainer>
 
       <div
@@ -149,78 +155,89 @@ export default function DiscoveryMap({
         style={{ top: insets.top + 12 }}
       >
         {located.length === 0 && restaurants.length > 0 && (
-          <p role="status" className="rounded-full bg-white/95 px-3 py-1 text-xs text-muted shadow">
+          <p role="status" className={`${NOTE} text-muted`}>
             当前结果都没有位置信息
           </p>
         )}
         {missing > 0 && located.length > 0 && (
-          <p className="rounded-full bg-white/95 px-3 py-1 text-xs text-muted shadow">
-            {missing} 家餐厅暂无位置信息，未在地图上显示
-          </p>
+          <p className={`${NOTE} text-muted`}>{missing} 家餐厅暂无位置信息，未在地图上显示</p>
         )}
         {tilesFailed && (
-          <p
-            role="status"
-            className="rounded-full bg-white/95 px-3 py-1 text-xs text-chili-700 shadow"
-          >
+          <p role="status" className={`${NOTE} text-chili-700`}>
             部分地图底图加载失败，标记位置仍然有效
           </p>
         )}
       </div>
-
-      {current && previewFits && (
-        <Preview restaurant={current} bottom={insets.bottom} onClose={() => onSelect('')} />
-      )}
     </div>
   );
 }
 
-function Preview({
-  restaurant: r,
-  bottom,
-  onClose,
+/**
+ * Restaurant pins, each labelled with its cover thumbnail and name when there
+ * is room: `placeLabels` decides which and on which side (the selected one
+ * always, then the best rated, without overlaps, covered pins, or labels cut
+ * off by the map edge). Pins without room keep their name as a tooltip, and
+ * zooming in makes room. The layout follows pans, zooms, and resizes.
+ */
+function RestaurantMarkers({
+  located,
+  selected,
+  hovered,
+  onSelect,
 }: {
-  restaurant: RestaurantSummary;
-  bottom: number;
-  onClose: () => void;
+  located: Located[];
+  selected: string;
+  hovered: string;
+  onSelect: (id: string) => void;
 }) {
-  return (
-    <section
-      aria-label={`${r.name} 预览`}
-      className="absolute right-3 left-3 z-[1000] mx-auto flex max-w-md gap-3 rounded-2xl bg-white p-3 shadow-xl sm:right-auto sm:left-4 sm:w-96"
-      style={{ bottom: bottom + 16 }}
-    >
-      <RestaurantImage
-        decorative
-        image={r.cover}
-        sizes="96px"
-        className="aspect-square w-20 shrink-0 rounded-xl sm:w-24"
+  const map = useMap();
+  const [layout, setLayout] = useState(0);
+  const relayout = () => setLayout((n) => n + 1);
+  useMapEvents({ zoomend: relayout, moveend: relayout, resize: relayout });
+
+  const labels = useMemo(() => {
+    void layout; // recompute when the map moves
+    const size = map.getSize();
+    return placeLabels(
+      located.map((r) => {
+        const p = map.latLngToContainerPoint([r.location.lat, r.location.lng]);
+        return {
+          key: r.id,
+          x: p.x,
+          y: p.y,
+          name: r.name,
+          selected: r.id === selected,
+          thumb: true,
+          priority: r.rating ?? 0,
+        };
+      }),
+      { width: size.x, height: size.y },
+    );
+  }, [located, selected, map, layout]);
+
+  return located.map((r) => {
+    const isSelected = r.id === selected;
+    const isHovered = r.id === hovered && !isSelected;
+    const label = labels.get(r.id);
+    return (
+      <Marker
+        key={r.id}
+        position={[r.location.lat, r.location.lng]}
+        icon={restaurantIcon(r, { selected: isSelected, hovered: isHovered }, label)}
+        title={r.name}
+        alt={r.name}
+        zIndexOffset={isSelected ? 1000 : isHovered ? 900 : label ? 100 : 0}
+        eventHandlers={{
+          click: () => onSelect(r.id),
+          // Leaflet makes markers focusable but does not activate them from the keyboard.
+          keypress: (e) => {
+            const key = (e as L.LeafletKeyboardEvent).originalEvent.key;
+            if (key === 'Enter' || key === ' ') onSelect(r.id);
+          },
+        }}
       />
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-start gap-2">
-          <h2 className="min-w-0 flex-1 leading-snug font-bold">{r.name}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭预览"
-            className="-mt-1 -mr-1 flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-line/60"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <RatingBadge rating={r.rating} />
-          <span className="truncate">{metaLine(r)}</span>
-        </div>
-        <Link
-          href={restaurantHref(r.id)}
-          className="mt-auto self-start rounded-full bg-chili-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-chili-700"
-        >
-          查看详情
-        </Link>
-      </div>
-    </section>
-  );
+    );
+  });
 }
 
 /**

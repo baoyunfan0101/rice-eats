@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from '../components/Link';
+import { StepIndicator } from '../components/StepIndicator';
 import type { SearchArea } from '../lib/areas';
 import { Loading, Message } from '../components/States';
 import { useContentIndex } from '../lib/content';
@@ -33,7 +34,7 @@ export function SubmitPage({ restaurantId }: { restaurantId?: string }) {
         icon="📝"
         title="投稿功能即将开放"
         action={
-          <Link href={browseHref()} className="font-semibold text-chili-700 underline">
+          <Link href={browseHref()} className="btn btn-primary">
             返回首页
           </Link>
         }
@@ -67,6 +68,9 @@ function ExistingRestaurant({ formId, restaurantId }: { formId: string; restaura
 
 type Step = 'select' | 'form';
 
+/** The two steps, as the step indicator names them. */
+const STEPS = [{ label: '选择餐厅' }, { label: '填写点评' }];
+
 function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }) {
   const [step, setStep] = useState<Step>(initial ? 'form' : 'select');
   const [selection, setSelection] = useState<Selection | undefined>(initial);
@@ -91,35 +95,31 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
     !!initial && !!selection && selectionKey(selection) === selectionKey(initial);
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
-      <header className="space-y-2">
+      <header className="space-y-4">
         {fromRestaurantPage && onForm && initial.restaurantId && (
           <Link
             href={restaurantHref(initial.restaurantId)}
-            className="inline-flex min-h-10 items-center gap-1 text-sm font-semibold text-muted hover:text-ink"
+            className="inline-flex min-h-10 items-center gap-1 text-sm font-bold text-muted hover:text-chili-700"
           >
             ← 返回餐厅页面
           </Link>
         )}
-        <h1
-          ref={heading}
-          tabIndex={-1}
-          className="text-2xl leading-tight font-black outline-none sm:text-3xl"
-        >
-          {onForm ? `为「${selection.name}」投稿` : '投稿：分享你的用餐体验'}
-        </h1>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <p className="text-sm font-semibold text-chili-700">
-            {onForm ? '第二步 · 填写点评' : '第一步 · 选择餐厅'}
-          </p>
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+          <h1
+            ref={heading}
+            tabIndex={-1}
+            className="text-2xl leading-tight font-black outline-none sm:text-3xl"
+          >
+            {onForm ? `为「${selection.name}」投稿` : '投稿：分享你的用餐体验'}
+          </h1>
           {onForm && (
-            <button
-              type="button"
-              onClick={() => setStep('select')}
-              className="text-sm font-semibold text-muted underline hover:text-ink"
-            >
+            <button type="button" onClick={() => setStep('select')} className="btn btn-sm">
               更换餐厅
             </button>
           )}
+        </div>
+        <div className="card px-3 py-2.5 sm:px-4 sm:py-3">
+          <StepIndicator steps={STEPS} current={onForm ? 1 : 0} onBack={() => setStep('select')} />
         </div>
       </header>
 
@@ -217,7 +217,7 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
   // Selections are complete by construction; this guards against regressions.
   if (contextProblem(context)) {
     return (
-      <p role="status" className="text-sm text-chili-700">
+      <p role="status" className="text-sm font-semibold text-chili-700">
         餐厅信息不完整，请点「更换餐厅」重新选择。
       </p>
     );
@@ -226,9 +226,14 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
   return (
     <section aria-label="投稿表单" className="space-y-3">
       <div role="status" className="text-sm empty:hidden">
-        {state === 'loading' && <p className="text-muted">正在加载投稿表单…</p>}
+        {state === 'loading' && (
+          <p className="flex items-center gap-2 font-semibold text-muted">
+            <span aria-hidden="true" className="pixel-loader" />
+            正在加载投稿表单…
+          </p>
+        )}
         {state === 'stalled' && (
-          <div className="space-y-2 rounded-2xl border border-chili-600 bg-chili-50 p-4">
+          <div className="card space-y-3 bg-chili-50 p-4">
             <p>表单好像没有正常加载，可能是网络问题，或表单服务暂时不可用。</p>
             <p className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <button
@@ -237,7 +242,7 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
                   setState('loading');
                   setAttempt((n) => n + 1);
                 }}
-                className="inline-flex min-h-10 items-center rounded-full bg-chili-600 px-4 font-semibold text-white hover:bg-chili-700"
+                className="btn btn-primary"
               >
                 重新加载表单
               </button>
@@ -245,7 +250,7 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
                 href={urls.direct}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-semibold text-chili-700 underline"
+                className="text-action"
               >
                 在新窗口打开投稿表单
                 <span className="sr-only">（在新窗口打开）</span>
@@ -259,7 +264,7 @@ function SubmitForm({ formId, context }: { formId: string; context: SubmissionCo
         ref={frame}
         src={urls.embed}
         title="Rice Eats 投稿表单"
-        className="h-[75dvh] min-h-[560px] w-full rounded-2xl border border-line bg-white"
+        className="h-[75dvh] min-h-[560px] w-full border-2 border-ink bg-white shadow-px"
       />
     </section>
   );

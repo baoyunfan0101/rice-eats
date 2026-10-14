@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import L from 'leaflet';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RestaurantSummary } from '../../shared/content/model';
@@ -145,14 +145,44 @@ describe('DiscoveryMap', () => {
     expect(fitBounds).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the preview only when the overlays leave room for it', () => {
-    const { update } = setup({ selected: 'a', insets: { top: 0, bottom: 0 } });
-    expect(screen.getByRole('region', { name: 'a 预览' })).toBeInTheDocument();
-    // An expanded bottom sheet (the map is 400px tall here).
-    update({ insets: { top: 0, bottom: 344 } });
-    expect(screen.queryByRole('region', { name: 'a 预览' })).not.toBeInTheDocument();
-    // The selection stays, so the preview returns with the room.
-    update({ insets: { top: 0, bottom: 200 } });
-    expect(screen.getByRole('region', { name: 'a 预览' })).toBeInTheDocument();
+  it('labels pins with the cover thumbnail and the name, the selected one always', () => {
+    const cover = {
+      src: '/img/a-640.webp',
+      srcset: '/img/a-640.webp 640w, /img/a-160.webp 160w, /img/a-320.webp 320w',
+      width: 640,
+      height: 480,
+      alt: 'A photo',
+    };
+    const { container, update } = setup({
+      restaurants: [{ ...A, name: '<b>A</b>', cover }, B],
+      selected: 'a',
+    });
+    const selected = container.querySelector('.map-pin.is-selected')!;
+    const label = selected.querySelector('.poi-label.has-thumb')!;
+    // The smallest rendition, and the name as text (escaped).
+    expect(label.querySelector('img.poi-thumb')!.getAttribute('src')).toBe('/img/a-160.webp');
+    expect(label.querySelector('.poi-name')!.textContent).toBe('<b>A</b>');
+    // A restaurant without a cover gets an empty thumbnail.
+    update({ restaurants: [A, B], selected: 'b' });
+    const other = container.querySelector('.map-pin.is-selected .poi-label')!;
+    expect(other.querySelector('.poi-thumb.is-empty')).not.toBeNull();
+    expect(other.textContent).toBe('b');
+  });
+
+  it('highlights the pin of the restaurant under the pointer in the list', () => {
+    const { container, update } = setup();
+    expect(container.querySelector('.map-pin.is-hovered')).toBeNull();
+    update({ hovered: 'b' });
+    expect(container.querySelectorAll('.map-pin.is-hovered')).toHaveLength(1);
+    expect(container.querySelector('.map-pin.is-hovered')!.getAttribute('title')).toBe('b');
+    update({ hovered: '' });
+    expect(container.querySelector('.map-pin.is-hovered')).toBeNull();
+  });
+
+  it('reports pin clicks', () => {
+    const onSelect = vi.fn();
+    const { container } = setup({ onSelect });
+    act(() => (container.querySelector('.map-pin[title="b"]') as HTMLElement).click());
+    expect(onSelect).toHaveBeenCalledWith('b');
   });
 });

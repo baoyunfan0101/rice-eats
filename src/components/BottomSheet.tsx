@@ -131,7 +131,7 @@ export function BottomSheet({
       aria-label="餐厅列表面板"
       data-state={state}
       data-dragging={drag ? '' : undefined}
-      className="absolute inset-x-0 bottom-0 z-[1100] flex flex-col overflow-hidden rounded-t-2xl bg-paper shadow-[0_-4px_24px_rgba(0,0,0,0.18)] motion-safe:transition-[height] motion-safe:duration-200 data-dragging:transition-none"
+      className="absolute inset-x-0 bottom-0 z-[1100] flex flex-col overflow-hidden border-t-2 border-ink bg-paper shadow-[0_-4px_0_0_rgba(36,34,56,0.18)] motion-safe:transition-[height] motion-safe:duration-200 data-dragging:transition-none"
       style={{ height: visible || undefined, paddingBottom: 'env(safe-area-inset-bottom)' }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -149,7 +149,7 @@ export function BottomSheet({
           aria-label={`${LABELS[state]}，点按${state === 'expanded' ? '半展开' : '展开'}`}
           className="flex h-4 w-20 items-start justify-center"
         >
-          <span aria-hidden="true" className="h-1 w-9 rounded-full bg-muted/50" />
+          <span aria-hidden="true" className="h-1.5 w-10 bg-ink/45" />
         </button>
       </div>
       <div className="min-h-0 flex-1">{children}</div>

@@ -164,4 +164,26 @@ describe('placeLabels', () => {
   it('skips pins outside the map without labelling them into view', () => {
     expect(placeLabels([pin('Gone', -50, 200)], SIZE).has('Gone')).toBe(false);
   });
+
+  it('makes room for a cover thumbnail', () => {
+    expect(labelWidth('Taco', false, true)).toBe(labelWidth('Taco') + 24);
+    expect(labelWidth('Taco', true, true)).toBe(labelWidth('Taco', true) + 28);
+    // A long name keeps its full text width beside the thumbnail.
+    expect(labelWidth('The Very Long Name of a Neighborhood Bistro', false, true)).toBe(
+      LABEL_MAX_WIDTH + 24,
+    );
+  });
+
+  it('labels higher priorities first when labels would collide', () => {
+    // Three pins on one spot: only the two sides have room for labels.
+    const at = (key: string, priority: number) => pin(key, 300, 200, { thumb: true, priority });
+    const labels = placeLabels([at('Low', 1), at('Mid', 3), at('Best', 5)], SIZE);
+    expect([...labels.keys()].sort()).toEqual(['Best', 'Mid']);
+    // The selected pin still comes first.
+    const selected = placeLabels(
+      [{ ...at('Low', 1), selected: true }, at('Mid', 3), at('Best', 5)],
+      SIZE,
+    );
+    expect([...selected.keys()].sort()).toEqual(['Best', 'Low']);
+  });
 });

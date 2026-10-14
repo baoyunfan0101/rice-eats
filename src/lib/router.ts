@@ -1,5 +1,5 @@
 // Minimal History API router. The site has three kinds of pages (browsing,
-// restaurant details, and the submission page), so a routing library would be overkill.
+// restaurant details beside the same map, and the submission page), so a routing library would be overkill.
 
 import { useSyncExternalStore } from 'react';
 
@@ -7,7 +7,8 @@ const BASE = import.meta.env.BASE_URL; // "/rice-eats/" in production
 
 export type Route =
   | { kind: 'browse'; params: URLSearchParams }
-  | { kind: 'restaurant'; id: string }
+  /** A restaurant's details, beside the map; `params` keep the browse state (filters, sort). */
+  | { kind: 'restaurant'; id: string; params: URLSearchParams }
   | { kind: 'submit'; restaurantId?: string }
   | { kind: 'notFound' };
 
@@ -18,7 +19,11 @@ export function parseRoute(pathname: string, search: string): Route {
   const parts = relative.split('/').filter(Boolean);
   if (parts.length === 0) return { kind: 'browse', params: new URLSearchParams(search) };
   if (parts.length === 2 && parts[0] === 'r') {
-    return { kind: 'restaurant', id: decodeURIComponent(parts[1]!) };
+    return {
+      kind: 'restaurant',
+      id: decodeURIComponent(parts[1]!),
+      params: new URLSearchParams(search),
+    };
   }
   if (parts.length === 1 && parts[0] === 'submit') {
     const restaurantId = new URLSearchParams(search).get('restaurant') ?? undefined;
@@ -32,9 +37,11 @@ export function browseHref(params?: URLSearchParams): string {
   return query ? `${BASE}?${query}` : BASE;
 }
 
-export function restaurantHref(id: string): string {
+/** A restaurant's details; `params` carry the browse state the list had (filters, sort). */
+export function restaurantHref(id: string, params?: URLSearchParams): string {
   // Trailing slash: GitHub Pages serves r/<id>/index.html there without a redirect.
-  return `${BASE}r/${encodeURIComponent(id)}/`;
+  const query = params?.toString();
+  return `${BASE}r/${encodeURIComponent(id)}/${query ? `?${query}` : ''}`;
 }
 
 /** The submission page, optionally about one restaurant (by its stable id). */

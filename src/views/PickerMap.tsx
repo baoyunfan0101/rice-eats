@@ -5,6 +5,7 @@ import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-lea
 import type { LatLngValue } from '../../shared/submission';
 import { placeLabels, type LabelPlacement } from '../lib/labelLayout';
 import { onUserMove } from '../lib/mapGestures';
+import { pinIconOptions } from '../lib/pin';
 import type { Bounds, RestaurantCandidate } from '../lib/poi';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
@@ -16,19 +17,14 @@ const escapeHtml = (text: string) =>
 
 /**
  * A pin, with the restaurant name beside it when it has a label placement
- * (names come from POI data: escaped).
+ * (names come from POI data: escaped). The anchor is the tip of the pin
+ * (src/lib/pin.ts).
  */
 function poiIcon(name: string, selected: boolean, label?: LabelPlacement): L.DivIcon {
   const html = label
     ? `<span class="poi-label${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px;margin-top:${label.dy}px">${escapeHtml(name)}</span>`
     : '';
-  return L.divIcon({
-    className: `poi-marker${selected ? ' is-selected' : ''}`,
-    html: `<span class="poi-pin" aria-hidden="true"></span>${html}`,
-    // The anchor is the tip of the pin.
-    iconSize: selected ? [32, 40] : [24, 30],
-    iconAnchor: selected ? [16, 40] : [12, 30],
-  });
+  return L.divIcon(pinIconOptions(selected, html));
 }
 
 export interface MapArea {
@@ -81,7 +77,7 @@ export default function PickerMap({
     <MapContainer
       center={[view.center.lat, view.center.lng]}
       zoom={view.zoom}
-      className={`${className} w-full rounded-2xl border border-line bg-line`}
+      className={`${className} w-full border-2 border-ink bg-sand`}
     >
       <Container label={label} />
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
