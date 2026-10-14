@@ -1101,6 +1101,69 @@ test('the manual pin keeps its name inside the map, wherever it is', async ({ pa
   await inside();
 });
 
+test('pin names stay inside the map at the top, bottom, and corners', async ({ page }) => {
+  await fakePlaces(page);
+  await page.goto('/rice-eats/submit/');
+  const pickMap = page.getByRole('region', { name: '附近餐厅地图' });
+  await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
+  await pickMap.scrollIntoViewIfNeeded();
+  /** Every rendered label of the given marker lies inside the map's box. */
+  const insideMap = async (map: typeof pickMap, marker: ReturnType<typeof pin>) => {
+    const box = (await map.boundingBox())!;
+    const label = (await marker.locator('.poi-label').boundingBox())!;
+    expect(label.x).toBeGreaterThanOrEqual(box.x - 0.5);
+    expect(label.y).toBeGreaterThanOrEqual(box.y - 0.5);
+    expect(label.x + label.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+    expect(label.y + label.height).toBeLessThanOrEqual(box.y + box.height + 0.5);
+  };
+  /** Pans the map (slowly, without inertia) so the marker's tip lands at (x, y) in the map. */
+  const panTo = async (
+    map: typeof pickMap,
+    marker: ReturnType<typeof pin>,
+    x: number,
+    y: number,
+  ) => {
+    const box = (await map.boundingBox())!;
+    const p = (await marker.boundingBox())!;
+    const tip = { x: p.x + p.width / 2, y: p.y + p.height };
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + (box.x + x - tip.x), from.y + (box.y + y - tip.y), { steps: 8 });
+    await page.waitForTimeout(400);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+  };
+
+  // A selected restaurant at the top edge, then at the top-right corner.
+  const selected = pin(page, 'Fake Noodle Bar');
+  await selected.click();
+  await expect(selected).toHaveClass(/is-selected/);
+  let box = (await pickMap.boundingBox())!;
+  await panTo(pickMap, selected, box.width / 2, 14);
+  await insideMap(pickMap, selected);
+  await panTo(pickMap, selected, box.width - 14, 14);
+  await insideMap(pickMap, selected);
+
+  // The manual pin: top, top right, bottom left (clear of the zoom buttons).
+  await page.getByRole('button', { name: '手动添加餐厅' }).click();
+  await page.getByLabel('餐厅名称').fill('一家名字很长的手工面馆（莱斯大学店）');
+  const manualMap = page.getByRole('region', { name: '标出餐厅位置的地图' });
+  await manualMap.scrollIntoViewIfNeeded();
+  box = (await manualMap.boundingBox())!;
+  const manual = page.locator('.leaflet-marker-icon[title="餐厅位置"]');
+  for (const [x, y] of [
+    [box.width / 2, 6],
+    [box.width - 8, 6],
+    [box.width - 8, box.height - 30],
+    [8, box.height - 30],
+  ] as const) {
+    await manualMap.click({ position: { x, y } });
+    await page.waitForTimeout(300);
+    await insideMap(manualMap, manual);
+  }
+});
+
 test('visitors can add a restaurant by hand when search fails', async ({ page }) => {
   await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
     route.fulfill({ status: 429, body: '' }),

@@ -18,6 +18,12 @@ export interface LabelPlacement {
   side: LabelSide;
   /** Width available to the label; longer names are truncated to it. */
   maxWidth: number;
+  /**
+   * Vertical shift (pixels, down when positive) from the label's usual place
+   * beside the pin head, so it stays inside the map near the top or bottom
+   * edge. The pin itself never moves.
+   */
+  dy: number;
 }
 
 /** Widest a label gets, in pixels (matches `max-w-44` in the CSS). */
@@ -54,9 +60,11 @@ function pinBox(p: LabelPin): Box {
   return { left: p.x - w / 2, right: p.x + w / 2, top: p.y - h, bottom: p.y };
 }
 
-function labelBox(p: LabelPin, side: LabelSide, width: number): Box {
+/** The label's usual top, beside the pin head (matches the CSS). */
+const baseTop = (p: LabelPin) => p.y - pinSize(p.selected).h + (p.selected ? -2 : 0);
+
+function labelBox(p: LabelPin, side: LabelSide, width: number, top: number): Box {
   const offset = labelOffset(p.selected);
-  const top = p.y - pinSize(p.selected).h + (p.selected ? -2 : 0);
   const bottom = top + labelHeight(p.selected);
   return side === 'right'
     ? { left: p.x + offset, right: p.x + offset + width, top, bottom }
@@ -67,6 +75,9 @@ function labelBox(p: LabelPin, side: LabelSide, width: number): Box {
  * Chooses which pins get a name label and on which side, so that labels stay
  * inside the map, do not overlap each other, and do not cover other pins
  * (which would block clicks on them).
+ *
+ * Vertically, a label sits beside the pin head, shifted down near the top
+ * edge or up near the bottom edge so it stays inside the map (`dy`).
  *
  * The selected pin is placed first and always gets a label: on the side with
  * room (truncated to fit when neither side has room for the whole name),
@@ -108,12 +119,16 @@ export function placeLabels(
     );
   };
   const inside = (box: Box) => box.top >= 0 && box.bottom <= size.height;
+  /** The label's top, kept inside the map vertically. */
+  const topFor = (p: LabelPin) =>
+    Math.max(EDGE, Math.min(baseTop(p), size.height - EDGE - labelHeight(p.selected)));
 
   for (const p of ordered.filter(inView)) {
     const full = labelWidth(p.name, p.selected);
+    const top = topFor(p);
     const options = (['right', 'left'] as const).map((side) => {
       const maxWidth = room(p, side);
-      return { side, maxWidth, box: labelBox(p, side, Math.max(maxWidth, 0)) };
+      return { side, maxWidth, box: labelBox(p, side, Math.max(maxWidth, 0), top) };
     });
     let choice: (typeof options)[number] | undefined;
     if (p.selected) {
@@ -132,7 +147,7 @@ export function placeLabels(
     }
     if (!choice || choice.maxWidth <= 0) continue;
     placed.push(choice.box);
-    result.set(p.key, { side: choice.side, maxWidth: choice.maxWidth });
+    result.set(p.key, { side: choice.side, maxWidth: choice.maxWidth, dy: top - baseTop(p) });
   }
   return result;
 }

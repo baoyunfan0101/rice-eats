@@ -20,7 +20,7 @@ const escapeHtml = (text: string) =>
  */
 function poiIcon(name: string, selected: boolean, label?: LabelPlacement): L.DivIcon {
   const html = label
-    ? `<span class="poi-label${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px">${escapeHtml(name)}</span>`
+    ? `<span class="poi-label${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px;margin-top:${label.dy}px">${escapeHtml(name)}</span>`
     : '';
   return L.divIcon({
     className: `poi-marker${selected ? ' is-selected' : ''}`,

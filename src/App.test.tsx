@@ -878,6 +878,8 @@ describe('submissions', () => {
     let placesStatus = 200;
     /** Holds every Geoapify answer until resolved (to see the loading state). */
     let placesHold: Promise<void> | undefined;
+    /** Holds the Geoapify answers whose filter matches (an area's tiles), until resolved. */
+    let holdArea: { match: RegExp; until: Promise<void> } | undefined;
     let overpass: string[];
     let overpassStatus = 200;
     /** Per-tile Geoapify status for partial failures. */
@@ -944,6 +946,7 @@ describe('submissions', () => {
       places = [];
       placesStatus = 200;
       placesHold = undefined;
+      holdArea = undefined;
       overpass = [];
       overpassStatus = 200;
       tileStatus = undefined;
@@ -989,6 +992,7 @@ describe('submissions', () => {
           const u = new URL(url);
           places.push(u);
           if (placesHold) await placesHold;
+          if (holdArea?.match.test(u.searchParams.get('filter') ?? '')) await holdArea.until;
           if (placesStatus !== 200) return new Response('', { status: placesStatus });
           const name = u.searchParams.get('name');
           const filter = u.searchParams.get('filter')!;
@@ -1138,6 +1142,64 @@ describe('submissions', () => {
         await searchName(user, '');
         expect(header()).toHaveTextContent('列表查看地图范围内的 2 家餐厅');
         expect(header()).toHaveAttribute('aria-expanded', 'false');
+      });
+
+      const AREA_A = /^rect:-95\.39\d*,29\.73/;
+      const requestedA = () => places.some((u) => AREA_A.test(u.searchParams.get('filter') ?? ''));
+
+      it("never reports the old area's result for a new area", async () => {
+        const user = userEvent.setup();
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        await searchName(user, 'deli');
+        expect(header()).toHaveTextContent('名称包含「deli」的餐厅：1 家');
+        // A new area: during the pause before it loads, nothing is claimed.
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        expect(header()).toHaveTextContent(/^名称包含「deli」的餐厅$/);
+        expect(screen.getByText('正在加载地图范围内的餐厅…')).toBeInTheDocument();
+        expect(screen.queryByText(/没有这个名字/)).not.toBeInTheDocument();
+        expect(screen.getByText('正在加载附近的餐厅…')).toBeInTheDocument();
+        // Loaded: no Deli there, so now "none" is true.
+        expect(await screen.findByText(/没有这个名字的餐厅/)).toBeInTheDocument();
+        expect(header()).toHaveTextContent('名称包含「deli」的餐厅：0 家');
+      });
+
+      it('ignores an older area answering after a newer one', async () => {
+        const user = userEvent.setup();
+        let release!: () => void;
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        // Area A (around Taco Stop) loads slowly.
+        holdArea = { match: AREA_A, until: new Promise((r) => (release = r)) };
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        await waitFor(() => expect(requestedA()).toBe(true));
+        // Area B (Chinatown) answers first: nothing there.
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        expect(
+          await screen.findByText('这片区域没有找到餐厅，可以拖动地图看看别处。'),
+        ).toBeInTheDocument();
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 50));
+        expect(
+          screen.getByText('这片区域没有找到餐厅，可以拖动地图看看别处。'),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '图钉：Taco Stop' })).not.toBeInTheDocument();
+      });
+
+      it('ignores an answer for an area left by zooming out too far', async () => {
+        const user = userEvent.setup();
+        let release!: () => void;
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        holdArea = { match: AREA_A, until: new Promise((r) => (release = r)) };
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        await waitFor(() => expect(requestedA()).toBe(true));
+        await user.click(screen.getByRole('button', { name: '缩小地图' }));
+        expect(screen.getByText('放大地图就能看到附近的餐厅。')).toBeInTheDocument();
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 50));
+        expect(screen.getByText('放大地图就能看到附近的餐厅。')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '图钉：Taco Stop' })).not.toBeInTheDocument();
       });
 
       it('keeps the list area when the map has no restaurants at all', async () => {

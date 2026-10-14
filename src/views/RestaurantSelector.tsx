@@ -25,7 +25,8 @@ const START = { center: PRESET_AREAS.rice.center, zoom: PRESET_AREAS.rice.zoom }
 /** Wait for the map to settle before loading its restaurants. */
 const SETTLE_MS = 400;
 
-type Discovery =
+/** What is known about the restaurants of one map area (`for`: its key). */
+type Discovery = { for?: string } & (
   | { status: 'idle' }
   | { status: 'loading'; candidates: RestaurantCandidate[] }
   | {
@@ -36,7 +37,8 @@ type Discovery =
       truncated: boolean;
     }
   /** Nothing in the area loaded; the previous pins stay. */
-  | { status: 'error'; message: string; candidates: RestaurantCandidate[] };
+  | { status: 'error'; message: string; candidates: RestaurantCandidate[] }
+);
 
 function errorMessage(e: unknown): string {
   const kind = e instanceof PoiError ? e.kind : 'failed';
@@ -116,7 +118,7 @@ export function RestaurantSelector({
     setView({ center: a.center, zoom: a.zoom });
   };
   const [area, setArea] = useState<MapArea>();
-  const [discovery, setDiscovery] = useState<Discovery>({ status: 'idle' });
+  const [stored, setDiscovery] = useState<Discovery>({ status: 'idle' });
   const [query, setQuery] = useState('');
   /** The name search is a fallback, shown when asked for (or when it has a query). */
   const [nameOpen, setNameOpen] = useState(false);
@@ -130,26 +132,35 @@ export function RestaurantSelector({
   // An area too large to search (zoomed far out) shows a hint instead.
   const tooWide = !!area && (area.zoom < DISCOVERY_MIN_ZOOM || !tilesFor(area.bounds));
 
+  // The area the restaurants are for: what the map shows now (and the retry
+  // count, so a retry never accepts an answer from before it).
+  const b = area?.bounds;
+  const areaKey = b ? `${b.south},${b.west},${b.north},${b.east}|${attempt}` : undefined;
   // Map discovery: once the map has settled, load the restaurants in view.
+  // Any change of area (including zooming out too far) makes older requests
+  // stale at once, not only when the next one starts after the pause.
   useEffect(() => {
-    if (!area || tooWide) return;
     const seq = ++discoverySeq.current;
+    if (!area || tooWide || !areaKey) return;
     const timer = setTimeout(() => {
       setDiscovery((d) => ({
+        for: areaKey,
         status: 'loading',
         candidates: 'candidates' in d ? d.candidates : [],
       }));
       void restaurantsInArea(area.bounds).then((result) => {
-        // Results for an area the map has left are ignored.
+        // Results for an area the map has left (or after leaving) are ignored.
         if (seq !== discoverySeq.current) return;
         if (result.total > 0 && result.failed === result.total) {
           setDiscovery((d) => ({
+            for: areaKey,
             status: 'error',
             message: errorMessage(result.error),
             candidates: 'candidates' in d ? d.candidates : [],
           }));
         } else {
           setDiscovery({
+            for: areaKey,
             status: 'ready',
             candidates: result.candidates,
             failed: result.failed,
@@ -159,7 +170,24 @@ export function RestaurantSelector({
       });
     }, SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [area, tooWide, attempt]);
+  }, [area, tooWide, areaKey]);
+  useEffect(
+    () => () => {
+      discoverySeq.current++;
+    },
+    [],
+  );
+  // What is known is about the current area only: an older area's state (even
+  // "ready") counts as loading here until the current area's answer arrives;
+  // its restaurants stay as pins meanwhile.
+  const discovery: Discovery =
+    stored.for === areaKey || !areaKey
+      ? stored
+      : {
+          for: areaKey,
+          status: 'loading',
+          candidates: 'candidates' in stored ? stored.candidates : [],
+        };
 
   /** Selects a restaurant in place and brings it into focus on the map. */
   const choose = (s: Selection) => {
