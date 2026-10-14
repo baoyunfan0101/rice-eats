@@ -410,7 +410,7 @@
   fill: var(--color-ink);
 }
 
-/* Restaurant names beside pins (PickerMap); placed by src/lib/labelLayout.ts. */
+/* Restaurant names beside pins; placed by src/lib/labelLayout.ts. */
 .map-pin .poi-label {
   @apply absolute left-full block max-w-44 cursor-pointer truncate border-2 border-ink bg-cream px-1 text-xs leading-4 font-bold whitespace-nowrap text-ink;
   top: 0;
@@ -428,6 +428,41 @@
   @apply right-full left-auto;
   margin-left: 0;
   margin-right: -2px;
+}
+
+/* Discovery map labels: the cover thumbnail, then the name (DiscoveryMap). */
+.map-pin .poi-label.has-thumb {
+  @apply flex max-w-52 items-center gap-1 py-0 pl-0;
+}
+.map-pin .poi-thumb {
+  @apply block size-5 shrink-0 border-r-2 border-ink bg-sand object-cover;
+}
+.map-pin.is-selected .poi-thumb {
+  @apply size-6;
+}
+.map-pin .poi-thumb.is-empty {
+  background: repeating-linear-gradient(45deg, var(--color-sand) 0 3px, var(--color-cream) 3px 6px);
+}
+.map-pin .poi-name {
+  @apply min-w-0 truncate;
+}
+
+/* The list's restaurant under the pointer: its pin hops (the anchor itself stays put). */
+.map-pin.is-hovered .pin-fill {
+  fill: var(--color-chili-700);
+}
+.map-pin.is-hovered .poi-label {
+  @apply bg-gold-100;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .map-pin.is-hovered .pin-shape {
+    animation: pin-hop 0.6s steps(3, end) infinite alternate;
+  }
+}
+@keyframes pin-hop {
+  to {
+    translate: 0 -6px;
+  }
 }
 
 /* Two range inputs stacked into one price slider: only the thumbs take input. */

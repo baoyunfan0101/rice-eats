@@ -137,19 +137,21 @@ vi.mock('./views/DiscoveryMap', async () => {
     restaurants: R[];
     fitKey: string;
     selected: string;
+    hovered?: string;
     focusRequest: number;
     onSelect: (id: string) => void;
     insets?: { bottom: number };
   }) {
     const keys = useRef<string[]>([]);
     if (keys.current.at(-1) !== props.fitKey) keys.current.push(props.fitKey);
-    const current = props.restaurants.find((r) => r.id === props.selected);
     return (
       <div
         aria-label="餐厅地图"
         role="region"
         data-fits={keys.current.length}
         data-focus={props.focusRequest}
+        data-selected={props.selected}
+        data-hovered={props.hovered ?? ''}
         data-inset={props.insets?.bottom ?? 0}
       >
         {/* A map gesture changes nothing outside the map. */}
@@ -161,13 +163,6 @@ vi.mock('./views/DiscoveryMap', async () => {
               地图图钉：{r.name}
             </button>
           ))}
-        {current && (
-          <section aria-label={`${current.name} 预览`}>
-            <button type="button" onClick={() => props.onSelect('')}>
-              关闭预览
-            </button>
-          </section>
-        )}
       </div>
     );
   }
@@ -307,8 +302,8 @@ describe('browsing', () => {
     expect(screen.queryByRole('button', { name: '网格' })).not.toBeInTheDocument();
     expect(await screen.findByRole('region', { name: '餐厅地图' })).toBeInTheDocument();
     expect(pins()).toEqual(['Bayou BBQ']);
-    // Restaurants without a location stay in the list and cannot be located.
-    expect(within(list()).getAllByRole('button', { name: /^在地图上显示/ })).toHaveLength(1);
+    // Restaurants without a location stay in the list; cards have no extra map buttons.
+    expect(within(list()).queryAllByRole('button')).toHaveLength(0);
   });
 
   it('combines multi-select filters and keeps them in the URL', async () => {
@@ -595,32 +590,49 @@ describe('browsing', () => {
     });
   });
 
-  it('keeps the explorer as it is when the map is used', async () => {
+  it('opens details from a pin, keeping the explorer and the map as they are', async () => {
     const user = userEvent.setup();
     visit('?tag=group&sort=name');
     await screen.findByRole('region', { name: '餐厅地图' });
     await user.click(screen.getByRole('button', { name: '拖动餐厅地图' }));
     await user.click(screen.getByRole('button', { name: '地图图钉：Bayou BBQ' }));
-    // The pin shows a preview; the filters and sort stay, only the selection is added.
-    expect(screen.getByRole('region', { name: 'Bayou BBQ 预览' })).toBeInTheDocument();
+    // The details replace the list beside the map, which selects the pin
+    // without moving (the visitor put the map where it is).
+    expect(window.location.pathname).toBe(`${BASE}r/bayou-bbq/`);
+    expect(window.location.search).toBe('?tag=group&sort=name');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
+    expect(map()).toHaveAttribute('data-selected', 'bayou-bbq');
+    expect(map()).toHaveAttribute('data-focus', '0');
+    expect(screen.queryByRole('list', { name: '餐厅列表' })).not.toBeInTheDocument();
+    // Back to the list: the filters and sort stay, and the pin stays selected.
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
+    expect(window.location.pathname).toBe(BASE);
     expect(window.location.search).toBe('?tag=group&sort=name&id=bayou-bbq');
     expect(names(list())).toEqual(['Bayou BBQ']);
-    await user.click(screen.getByRole('button', { name: '关闭预览' }));
-    expect(window.location.search).toBe('?tag=group&sort=name');
+    expect(map()).toHaveAttribute('data-selected', 'bayou-bbq');
   });
 
-  it('shows a restaurant on the map from the list, and drops a preview the filters exclude', async () => {
+  it('opens details from the list, showing the restaurant on the map', async () => {
     const user = userEvent.setup();
     visit('');
     await screen.findByRole('region', { name: '餐厅地图' });
     expect(map().getAttribute('data-focus')).toBe('0');
-    await user.click(screen.getByRole('button', { name: '在地图上显示Bayou BBQ' }));
+    // Pointing at a card highlights its pin.
+    await user.hover(within(list()).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(map()).toHaveAttribute('data-hovered', 'bayou-bbq');
+    await user.unhover(within(list()).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(map()).toHaveAttribute('data-hovered', '');
+    await user.click(within(list()).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
     expect(map().getAttribute('data-focus')).toBe('1');
-    expect(screen.getByRole('region', { name: 'Bayou BBQ 预览' })).toBeInTheDocument();
-    expect(names(list())).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
+    expect(map()).toHaveAttribute('data-selected', 'bayou-bbq');
+    // The map keeps every result.
+    expect(pins()).toEqual(['Bayou BBQ']);
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
+    // A selection the filters then exclude is dropped.
     await filter(user, /^菜系/, '越南菜');
-    expect(screen.queryByRole('region', { name: 'Bayou BBQ 预览' })).not.toBeInTheDocument();
     await waitFor(() => expect(window.location.search).toBe('?cuisine=vietnamese'));
+    expect(map()).toHaveAttribute('data-selected', '');
   });
 
   it('uses a map with a bottom sheet on narrow screens', async () => {
@@ -652,9 +664,14 @@ describe('browsing', () => {
     // The filters survive every state.
     expect(names(list())).toEqual(['Bayou BBQ']);
     expect(window.location.search).toBe('?tag=group');
-    // Locating a restaurant makes room for the map.
-    await user.click(screen.getByRole('button', { name: '在地图上显示Bayou BBQ' }));
-    expect(sheet).toHaveAttribute('data-state', 'collapsed');
+    // Details open in the sheet, which scrolls like the list (the map may be covered).
+    await user.click(within(sheet).getByRole('link', { name: 'Bayou BBQ' }));
+    expect(
+      await within(sheet).findByRole('heading', { level: 1, name: 'Bayou BBQ' }),
+    ).toBeInTheDocument();
+    expect(sheet).toHaveAttribute('data-state', 'half');
+    await user.click(within(sheet).getByRole('button', { name: '← 返回列表' }));
+    expect(names(list())).toEqual(['Bayou BBQ']);
   });
 
   it('shows a friendly empty state when nothing is published', async () => {
@@ -726,14 +743,21 @@ describe('restaurant details', () => {
     expect(screen.getByText(/作者甲/)).toBeInTheDocument();
     expect(document.title).toBe('Bayou BBQ · Rice Eats');
 
-    await user.click(screen.getByRole('button', { name: '← 返回' }));
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
     expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
+    expect(document.title).toBe('Rice Eats · 莱斯周边的美食地图');
   });
 
-  it('works as a direct link and offers a way back', async () => {
-    visit('r/bayou-bbq');
+  it('works as a direct link, beside the map, and offers a way back', async () => {
+    const user = userEvent.setup();
+    visit('r/bayou-bbq/');
     expect(await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '← 全部餐厅' })).toHaveAttribute('href', BASE);
+    const map = await screen.findByRole('region', { name: '餐厅地图' });
+    expect(map).toHaveAttribute('data-selected', 'bayou-bbq');
+    expect(map).toHaveAttribute('data-focus', '1');
+    await user.click(screen.getByRole('button', { name: '← 返回列表' }));
+    expect(window.location.pathname).toBe(BASE);
+    expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
   });
 
   it('shows not-found pages for unknown restaurants and paths', async () => {
@@ -753,7 +777,7 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', '');
     const { unmount } = visit('r/bayou-bbq');
     await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' });
-    expect(screen.queryByRole('link', { name: '投稿' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '我要投稿' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '补充点评或照片' })).not.toBeInTheDocument();
     unmount();
     visit('submit/');
@@ -765,7 +789,7 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', 'https://example.com/form');
     visit('submit/');
     expect(screen.getByText('投稿功能即将开放')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: '投稿' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '我要投稿' })).not.toBeInTheDocument();
   });
 
   it('offers a general entry in the header that works without restaurants', async () => {
@@ -778,7 +802,7 @@ describe('submissions', () => {
       'href',
       `${BASE}submit/`,
     );
-    await user.click(screen.getByRole('link', { name: '投稿' }));
+    await user.click(screen.getByRole('link', { name: '我要投稿' }));
     expect(window.location.pathname).toBe(`${BASE}submit/`);
     expect(
       screen.getByRole('heading', { level: 1, name: '投稿：分享你的用餐体验' }),

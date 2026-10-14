@@ -5,11 +5,12 @@ import { cuisineLabel, RATING_LABELS } from './labels';
 export { RATING_LABELS };
 
 export const RATING_STYLES: Record<Rating, string> = {
-  5: 'bg-chili-600 text-white',
-  4: 'bg-chili-100 text-ink',
-  3: 'bg-gold-300 text-ink',
-  2: 'bg-sand text-ink',
-  1: 'bg-ink text-cream',
+  // Light backgrounds keep the emoji readable; the hue runs from hot to cold.
+  5: 'bg-chili-100 text-chili-700',
+  4: 'bg-chili-50 text-chili-700',
+  3: 'bg-gold-100 text-gold-700',
+  2: 'bg-basil-50 text-basil-600',
+  1: 'bg-sand text-muted',
 };
 
 export const RATING_HINT = `个人评级，从高到低：${RATINGS.map((r) => RATING_LABELS[r]).join(' > ')}`;

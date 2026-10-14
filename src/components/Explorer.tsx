@@ -13,10 +13,9 @@ import { metaLine } from '../lib/format';
 import { cuisineLabel, RATING_LABELS, tagLabel } from '../lib/labels';
 import { distanceText } from '../lib/poi';
 import { PRICE_SLIDER_MAX, PRICE_STEP, priceRangeLabel } from '../lib/price';
-import { restaurantHref } from '../lib/router';
 import { DraftBadge, RatingBadge, Tags } from './Badges';
 import { Link } from './Link';
-import { PixelCheck, PixelChevron, PixelPin, PixelSearch } from './PixelIcons';
+import { PixelCheck, PixelChevron, PixelSearch } from './PixelIcons';
 import { RestaurantImage } from './RestaurantImage';
 
 export type Change = (next: Partial<BrowseState>, options?: { replace?: boolean }) => void;
@@ -50,7 +49,8 @@ export function Explorer({
   distances,
   onChange,
   onSort,
-  onLocate,
+  detailHref,
+  onHover,
   onSearchFocus,
   footer,
 }: {
@@ -66,8 +66,10 @@ export function Explorer({
   distances?: Map<string, number>;
   onChange: Change;
   onSort: (sort: Sort) => void;
-  /** Shows a restaurant on the map. */
-  onLocate: (id: string) => void;
+  /** The link that opens a restaurant's details (beside the map, which selects it). */
+  detailHref: (id: string) => string;
+  /** The restaurant under the pointer ('' for none); the map highlights its pin. */
+  onHover?: (id: string) => void;
   onSearchFocus?: () => void;
   footer?: ReactNode;
 }) {
@@ -156,7 +158,8 @@ export function Explorer({
                 restaurant={r}
                 selected={r.id === state.selected}
                 distance={distances?.get(r.id)}
-                onLocate={onLocate}
+                href={detailHref(r.id)}
+                onHover={onHover}
               />
             ))}
           </ul>
@@ -471,16 +474,20 @@ function RestaurantCard({
   restaurant: r,
   selected,
   distance,
-  onLocate,
+  href,
+  onHover,
 }: {
   restaurant: RestaurantSummary;
   selected: boolean;
   distance?: number;
-  onLocate: (id: string) => void;
+  href: string;
+  onHover?: (id: string) => void;
 }) {
   return (
     <li
       data-selected={selected ? '' : undefined}
+      onPointerEnter={(e) => e.pointerType === 'mouse' && onHover?.(r.id)}
+      onPointerLeave={(e) => e.pointerType === 'mouse' && onHover?.('')}
       className="relative flex gap-2.5 border-2 border-transparent px-1.5 py-2 hover:border-ink hover:bg-cream data-selected:border-ink data-selected:bg-gold-100 data-selected:shadow-px"
     >
       <RestaurantImage
@@ -494,7 +501,9 @@ function RestaurantCard({
           <h2 className="leading-snug font-black">
             {/* The card links to the details page; the link covers the card. */}
             <Link
-              href={restaurantHref(r.id)}
+              href={href}
+              onFocus={() => onHover?.(r.id)}
+              onBlur={() => onHover?.('')}
               className="after:absolute after:inset-0 hover:text-chili-700"
             >
               {r.name}
@@ -513,17 +522,6 @@ function RestaurantCard({
         </p>
         <Tags tags={r.tags.slice(0, 3)} />
       </div>
-      {r.location && (
-        <button
-          type="button"
-          onClick={() => onLocate(r.id)}
-          aria-label={`在地图上显示${r.name}`}
-          title="在地图上显示"
-          className="btn btn-sm relative z-10 size-9 shrink-0 self-center p-0 text-chili-600"
-        >
-          <PixelPin className="size-5" />
-        </button>
-      )}
     </li>
   );
 }

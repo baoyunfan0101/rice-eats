@@ -18,9 +18,10 @@ import {
   type Sort,
 } from '../lib/filters';
 import { distanceMeters } from '../lib/poi';
-import { browseHref, navigate, submitHref } from '../lib/router';
+import { browseHref, navigate, restaurantHref, submitHref } from '../lib/router';
 import { submissionFormId } from '../lib/submission';
 import type { Insets } from './DiscoveryMap';
+import { RestaurantDetails } from './RestaurantDetails';
 
 // Leaflet is downloaded separately so the list shows without waiting for it.
 const DiscoveryMap = lazy(() => import('./DiscoveryMap'));
@@ -41,17 +42,22 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-export function BrowsePage({ params }: { params: URLSearchParams }) {
+/**
+ * The discovery page. With `detailId`, the list area shows that restaurant's
+ * details (the list keeps its state underneath) and the map selects it.
+ */
+export function BrowsePage({ params, detailId }: { params: URLSearchParams; detailId?: string }) {
   const [attempt, setAttempt] = useState(0);
   const content = useContentIndex(attempt);
 
   useEffect(() => {
-    document.title = 'Rice Eats · 莱斯大学周边美食指南';
-  }, []);
+    // The details set their own title once loaded.
+    if (detailId === undefined) document.title = 'Rice Eats · 莱斯周边的美食地图';
+  }, [detailId]);
 
   if (content.status === 'loading') return <Loading />;
   if (content.status === 'error') return <ErrorState onRetry={() => setAttempt((n) => n + 1)} />;
-  return <Discovery index={content.data} params={params} />;
+  return <Discovery index={content.data} params={params} detailId={detailId} />;
 }
 
 /**
@@ -62,8 +68,18 @@ export function BrowsePage({ params }: { params: URLSearchParams }) {
  * selection). The visitor's location, used only for distance sorting, stays
  * in memory: it is never put in the URL or stored.
  */
-function Discovery({ index, params }: { index: ContentIndex; params: URLSearchParams }) {
+function Discovery({
+  index,
+  params,
+  detailId,
+}: {
+  index: ContentIndex;
+  params: URLSearchParams;
+  detailId?: string;
+}) {
   const state = parseBrowseState(params);
+  // The details select their restaurant on the map; the list's own selection waits underneath.
+  const selected = detailId ?? state.selected;
   const all = index.restaurants;
   const wide = useMediaQuery(WIDE);
 
@@ -99,8 +115,11 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
   const update = (next: Partial<BrowseState>, options: { replace?: boolean } = {}) =>
     navigate(browseHref(toSearchParams({ ...state, ...next })), options);
 
-  // A selection the filters no longer include has no preview.
-  const selectionGone = state.selected !== '' && !filtered.some((r) => r.id === state.selected);
+  // A selection the filters no longer include is dropped (the details keep theirs).
+  const selectionGone =
+    detailId === undefined &&
+    state.selected !== '' &&
+    !filtered.some((r) => r.id === state.selected);
   useEffect(() => {
     if (selectionGone) {
       navigate(browseHref(toSearchParams({ ...state, selected: '' })), { replace: true });
@@ -150,17 +169,41 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
     );
   };
 
-  // A link with a selected restaurant (e.g. from its page) opens the map on it.
-  const [focusRequest, setFocusRequest] = useState(() => (state.selected ? 1 : 0));
+  // A link with a selected restaurant (or its details) opens the map on it.
+  const [focusRequest, setFocusRequest] = useState(() => (selected ? 1 : 0));
   const [sheet, setSheet] = useState<SheetState>('half');
   const [sheetHeight, setSheetHeight] = useState(0);
   const onSheetHeight = useCallback((h: number) => setSheetHeight(h), []);
-  const locate = (id: string) => {
-    update({ selected: id }, { replace: true });
-    setFocusRequest((n) => n + 1);
-    // On a phone, make room for the map; the list keeps its state.
-    if (!wide) setSheet('collapsed');
+  const [hovered, setHovered] = useState('');
+
+  // The browse state without a selection: what the details' links carry.
+  const listParams = toSearchParams({ ...state, selected: '' });
+  const detailHref = (id: string) => restaurantHref(id, listParams);
+  // Opening details from the map keeps the map where the visitor put it;
+  // from the list (or a link), the map moves to the restaurant.
+  const [openedFromMap, setOpenedFromMap] = useState<string>();
+  const [shownDetail, setShownDetail] = useState(detailId);
+  if (detailId !== shownDetail) {
+    setShownDetail(detailId);
+    if (detailId !== undefined) {
+      setHovered('');
+      if (openedFromMap !== detailId) setFocusRequest((n) => n + 1);
+      // On a phone, the details need room in the sheet; the map may be covered.
+      setSheet((s) => (s === 'collapsed' ? 'half' : s));
+    }
+    setOpenedFromMap(undefined);
+  }
+  const openFromMap = (id: string) => {
+    if (id === '' || id === detailId) return;
+    setOpenedFromMap(id);
+    // Moving between restaurants on the map replaces the details entry.
+    navigate(detailHref(id), { replace: detailId !== undefined });
   };
+  // Back to the list, with the restaurant still selected on the map.
+  const backToList = () =>
+    navigate(browseHref(toSearchParams({ ...state, selected: detailId ?? '' })), {
+      replace: true,
+    });
 
   if (all.length === 0) {
     return (
@@ -191,7 +234,8 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
       distances={distanceSort ? distances : undefined}
       onChange={update}
       onSort={onSort}
-      onLocate={locate}
+      detailHref={detailHref}
+      onHover={setHovered}
       onSearchFocus={() => {
         // Keep the field and results above the on-screen keyboard.
         if (!wide && sheet !== 'expanded') setSheet('expanded');
@@ -199,14 +243,27 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
       footer={<FooterNotes className="px-3 py-4" />}
     />
   );
+  const known = detailId !== undefined && all.some((r) => r.id === detailId);
+  // The list stays mounted under the details, so going back finds it as it was.
+  const panel = (
+    <>
+      <div hidden={detailId !== undefined} className="contents">
+        {explorer}
+      </div>
+      {detailId !== undefined && (
+        <RestaurantDetails key={detailId} id={detailId} known={known} onBack={backToList} />
+      )}
+    </>
+  );
   const map = (
     <Suspense fallback={<Loading label="地图加载中…" />}>
       <DiscoveryMap
         restaurants={filtered}
         fitKey={fitKey}
-        selected={selectionGone ? '' : state.selected}
+        selected={selectionGone ? '' : selected}
+        hovered={hovered}
         focusRequest={focusRequest}
-        onSelect={(id) => update({ selected: id }, { replace: true })}
+        onSelect={openFromMap}
         insets={insets}
       />
     </Suspense>
@@ -221,7 +278,7 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
             aria-label="餐厅探索"
             className="flex min-h-0 w-[38%] max-w-[32rem] min-w-[20rem] flex-col border-r-2 border-ink bg-paper pt-2.5"
           >
-            {explorer}
+            {panel}
           </section>
           <div className="relative min-h-0 flex-1">{map}</div>
         </div>
@@ -229,7 +286,7 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0">{map}</div>
           <BottomSheet state={sheet} onState={setSheet} onHeight={onSheetHeight}>
-            {explorer}
+            {panel}
           </BottomSheet>
         </div>
       )}

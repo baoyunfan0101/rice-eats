@@ -19,20 +19,18 @@ export function Layout({ children, fill = false }: { children: ReactNode; fill?:
         跳到主要内容
       </a>
       <header className="border-b-2 border-ink bg-cream">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-1.5">
           <Link href={browseHref()} className="shrink-0" aria-label="Rice Eats 首页">
             <Logo />
           </Link>
-          <p className="hidden text-sm font-semibold text-muted sm:block">
-            莱斯大学周边的社区美食指南
-          </p>
+          <p className="hidden text-sm font-semibold text-muted sm:block">莱斯周边的美食地图</p>
           {submissionFormId() && (
             <nav aria-label="站点" className="ml-auto">
               <Link href={submitHref()} className="btn btn-primary btn-sm min-h-9 px-3.5">
-                <span aria-hidden="true" className="font-pixel text-base leading-none">
-                  +
+                <span aria-hidden="true" className="text-base leading-none">
+                  🖊️
                 </span>
-                投稿
+                我要投稿
               </Link>
             </nav>
           )}

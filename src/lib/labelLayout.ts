@@ -14,6 +14,10 @@ export interface LabelPin {
   y: number;
   name: string;
   selected: boolean;
+  /** The label starts with a cover thumbnail (the discovery map's labels). */
+  thumb?: boolean;
+  /** Among unselected pins, higher priorities are labelled first (default 0). */
+  priority?: number;
 }
 
 export interface LabelPlacement {
@@ -35,16 +39,24 @@ const EDGE = 4;
 /** Narrowest label worth showing for an unselected pin. */
 const MIN_WIDTH = 48;
 
-const labelHeight = (selected: boolean) => (selected ? 24 : 20);
+/** Thumbnail size (matches `.poi-thumb` in the CSS) and the gap after it. */
+const thumbSize = (selected: boolean) => (selected ? 24 : 20);
+const THUMB_GAP = 4;
+
+const labelHeight = (p: Pick<LabelPin, 'selected' | 'thumb'>) =>
+  p.thumb ? thumbSize(p.selected) + 4 : p.selected ? 24 : 20;
 /** Gap between the pin's center line and the label (the label overlaps the pin edge by 2px). */
 const labelOffset = (selected: boolean) => pinSize(selected).w / 2 - 2;
 
 /** Approximate rendered width of a name: CJK characters are about twice as wide. */
-export function labelWidth(name: string, selected = false): number {
+export function labelWidth(name: string, selected = false, thumb = false): number {
   let units = 0;
   for (const ch of name) units += /[⺀-￿]/.test(ch) ? 2 : 1.1;
-  const width = units * (selected ? 7.5 : 6.5) + 14;
-  return Math.min(LABEL_MAX_WIDTH, Math.ceil(width));
+  const width = units * (selected ? 7.5 : 6.5) + 14 + (thumb ? thumbSize(selected) + THUMB_GAP : 0);
+  return Math.min(
+    LABEL_MAX_WIDTH + (thumb ? thumbSize(selected) + THUMB_GAP : 0),
+    Math.ceil(width),
+  );
 }
 
 interface Box {
@@ -66,7 +78,7 @@ const baseTop = (p: LabelPin) => p.y - pinSize(p.selected).h + (p.selected ? -2 
 
 function labelBox(p: LabelPin, side: LabelSide, width: number, top: number): Box {
   const offset = labelOffset(p.selected);
-  const bottom = top + labelHeight(p.selected);
+  const bottom = top + labelHeight(p);
   return side === 'right'
     ? { left: p.x + offset, right: p.x + offset + width, top, bottom }
     : { left: p.x - offset - width, right: p.x - offset, top, bottom };
@@ -82,8 +94,8 @@ function labelBox(p: LabelPin, side: LabelSide, width: number, top: number): Box
  *
  * The selected pin is placed first and always gets a label: on the side with
  * room (truncated to fit when neither side has room for the whole name),
- * preferring a side that covers nothing. The others follow nearest the map
- * center first, on the right when the whole name fits there and on the left
+ * preferring a side that covers nothing. The others follow by priority, then
+ * nearest the map center first, on the right when the whole name fits there and on the left
  * otherwise (truncated only when neither side has room for it); a pin
  * with no free side keeps its pin without a label (its name is still its
  * tooltip, and the list below the map names every restaurant in view).
@@ -98,6 +110,7 @@ export function placeLabels(
   const ordered = [...pins].sort(
     (a, b) =>
       Number(b.selected) - Number(a.selected) ||
+      (b.priority ?? 0) - (a.priority ?? 0) ||
       Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy),
   );
   const inView = (p: LabelPin) =>
@@ -109,7 +122,7 @@ export function placeLabels(
   const room = (p: LabelPin, side: LabelSide) => {
     const offset = labelOffset(p.selected);
     const space = side === 'right' ? size.width - EDGE - (p.x + offset) : p.x - offset - EDGE;
-    return Math.min(labelWidth(p.name, p.selected), Math.floor(space));
+    return Math.min(labelWidth(p.name, p.selected, p.thumb), Math.floor(space));
   };
   // Pins stacked on this one cannot be avoided, so they do not count.
   const free = (p: LabelPin, box: Box) => {
@@ -122,10 +135,10 @@ export function placeLabels(
   const inside = (box: Box) => box.top >= 0 && box.bottom <= size.height;
   /** The label's top, kept inside the map vertically. */
   const topFor = (p: LabelPin) =>
-    Math.max(EDGE, Math.min(baseTop(p), size.height - EDGE - labelHeight(p.selected)));
+    Math.max(EDGE, Math.min(baseTop(p), size.height - EDGE - labelHeight(p)));
 
   for (const p of ordered.filter(inView)) {
-    const full = labelWidth(p.name, p.selected);
+    const full = labelWidth(p.name, p.selected, p.thumb);
     const top = topFor(p);
     const options = (['right', 'left'] as const).map((side) => {
       const maxWidth = room(p, side);
