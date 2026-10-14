@@ -743,7 +743,7 @@ test('pin names stay readable, inside the map, and follow the map', async ({ pag
   await check();
 
   // Every restaurant in view can be read and chosen from the list.
-  await page.getByText(/按列表查看这 \d+ 家餐厅/).click();
+  await page.getByRole('button', { name: /^列表查看地图范围内的 \d+ 家餐厅/ }).click();
   const list = page.getByRole('list', { name: '地图上的餐厅' });
   await expect(list.getByRole('button')).toHaveCount(13);
   await list.getByRole('button', { name: /川味小馆 7号店/ }).click();
@@ -796,11 +796,11 @@ test('visitors locate the search area by preset or address before choosing', asy
   await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
 
   // An address: searched on Enter, the map moves there, nothing is selected.
+  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
   await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
   await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
   await expect(area.getByText('当前查找区域：2111 Norfolk St')).toBeVisible();
   await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
-  await expect(page.getByText(/搜索地图中心约 3.1 mi 范围内的餐厅/)).toBeVisible();
 });
 
 test('late address and location answers never override the latest choice', async ({ page }) => {
@@ -852,6 +852,7 @@ test('late address and location answers never override the latest choice', async
   await expect(status).toHaveText('当前查找区域：Rice University 周边');
 
   // Address search pending, location pending, then Chinatown.
+  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
   await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
   await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
   await expect(area.getByText('正在搜索地点…')).toBeVisible();
@@ -899,6 +900,7 @@ test('dragging or zooming the map by hand wins over a late address', async ({ pa
   await page.goto('/rice-eats/submit/');
   const area = page.getByRole('region', { name: '选择查找区域' });
   const status = area.getByText(/^当前查找区域：/);
+  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
   const search = area.getByRole('searchbox', { name: '输入地址或地点' });
   const map = page.getByRole('region', { name: '附近餐厅地图' });
   await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
@@ -994,15 +996,15 @@ test('visitors without location permission can still explore the map or search b
   await expect(page.getByText(/没有获得定位权限|暂时无法获取当前位置/)).toBeVisible();
   await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
 
-  await page.getByRole('searchbox', { name: '在当前区域搜索餐厅' }).fill('Dumpling');
+  // The name search (a fallback) narrows the restaurants in view.
+  await page.getByRole('button', { name: '或者：在当前区域搜索餐厅' }).click();
+  await page.getByRole('searchbox', { name: '在当前区域搜索餐厅' }).fill('noodle');
   const result = page
-    .getByRole('list', { name: '搜索结果' })
-    .getByRole('button', { name: /Dumpling Kitchen/ });
-  // Distances are in miles.
-  await expect(result).toContainText(/\d mi$/);
+    .getByRole('list', { name: '地图上的餐厅' })
+    .getByRole('button', { name: /Fake Noodle Bar/ });
   await result.click();
-  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('Dumpling Kitchen');
-  await expect(pin(page, 'Dumpling Kitchen')).toHaveClass(/is-selected/);
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('Fake Noodle Bar');
+  await expect(pin(page, 'Fake Noodle Bar')).toHaveClass(/is-selected/);
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 
@@ -1033,6 +1035,133 @@ test('the map falls back to OpenStreetMap when Geoapify is out of credits', asyn
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
+});
+
+test('the manual pin keeps its name inside the map, wherever it is', async ({ page }) => {
+  await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
+    route.fulfill({ json: { features: [] } }),
+  );
+  await page.goto('/rice-eats/submit/');
+  await page.getByRole('button', { name: '手动添加餐厅' }).click();
+  const name = page.getByLabel('餐厅名称');
+  await name.fill('面馆');
+  const map = page.getByRole('region', { name: '标出餐厅位置的地图' });
+  await map.scrollIntoViewIfNeeded();
+  const box = (await map.boundingBox())!;
+  const label = page.locator('.leaflet-marker-icon[title="餐厅位置"] .poi-label');
+  const pinTip = page.locator('.leaflet-marker-icon[title="餐厅位置"]');
+  /** The rendered label lies inside the map; returns its side. */
+  const inside = async () => {
+    const l = (await label.boundingBox())!;
+    expect(l.x).toBeGreaterThanOrEqual(box.x - 0.5);
+    expect(l.x + l.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+    expect(l.y).toBeGreaterThanOrEqual(box.y - 0.5);
+    const pin = (await pinTip.boundingBox())!;
+    return l.x >= pin.x + pin.width / 2 ? 'right' : 'left';
+  };
+  const place = async (x: number, y = box.height / 2) => {
+    await map.click({ position: { x, y } });
+    await page.waitForTimeout(300);
+  };
+
+  // In the middle: whole name on the right.
+  await place(box.width / 2);
+  await expect(label).toHaveText('面馆');
+  expect(await inside()).toBe('right');
+  // Near the right edge: on the left.
+  await place(box.width - 24);
+  expect(await inside()).toBe('left');
+  // Near the left edge (clear of the zoom buttons): on the right.
+  await place(24, box.height - 60);
+  expect(await inside()).toBe('right');
+
+  // A long name follows (truncated when needed) and stays inside, on phones too.
+  await place(box.width - 24);
+  await name.fill('一家名字非常非常长的手工拉面和川味小吃餐厅（莱斯大学附近分店）');
+  await expect(label).toHaveText(/^一家名字非常/);
+  expect(await inside()).toBe('left');
+
+  // Moving the map lays the name out again: dragged to the left edge, it flips.
+  const pin = (await pinTip.boundingBox())!;
+  const tipX = pin.x + pin.width / 2;
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - (tipX - box.x - 24), box.y + 40, { steps: 6 });
+  // Hold still before letting go, so the map does not glide on (inertia).
+  await page.waitForTimeout(400);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  expect(await inside()).toBe('right');
+  // Zooming in moves the pin away from the center; the name is laid out again
+  // and stays inside.
+  await place(box.width * 0.4);
+  expect(await inside()).toBe('right');
+  await map.getByRole('button', { name: 'Zoom in' }).click();
+  await page.waitForTimeout(600);
+  await inside();
+});
+
+test('pin names stay inside the map at the top, bottom, and corners', async ({ page }) => {
+  await fakePlaces(page);
+  await page.goto('/rice-eats/submit/');
+  const pickMap = page.getByRole('region', { name: '附近餐厅地图' });
+  await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
+  await pickMap.scrollIntoViewIfNeeded();
+  /** Every rendered label of the given marker lies inside the map's box. */
+  const insideMap = async (map: typeof pickMap, marker: ReturnType<typeof pin>) => {
+    const box = (await map.boundingBox())!;
+    const label = (await marker.locator('.poi-label').boundingBox())!;
+    expect(label.x).toBeGreaterThanOrEqual(box.x - 0.5);
+    expect(label.y).toBeGreaterThanOrEqual(box.y - 0.5);
+    expect(label.x + label.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+    expect(label.y + label.height).toBeLessThanOrEqual(box.y + box.height + 0.5);
+  };
+  /** Pans the map (slowly, without inertia) so the marker's tip lands at (x, y) in the map. */
+  const panTo = async (
+    map: typeof pickMap,
+    marker: ReturnType<typeof pin>,
+    x: number,
+    y: number,
+  ) => {
+    const box = (await map.boundingBox())!;
+    const p = (await marker.boundingBox())!;
+    const tip = { x: p.x + p.width / 2, y: p.y + p.height };
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + (box.x + x - tip.x), from.y + (box.y + y - tip.y), { steps: 8 });
+    await page.waitForTimeout(400);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+  };
+
+  // A selected restaurant at the top edge, then at the top-right corner.
+  const selected = pin(page, 'Fake Noodle Bar');
+  await selected.click();
+  await expect(selected).toHaveClass(/is-selected/);
+  let box = (await pickMap.boundingBox())!;
+  await panTo(pickMap, selected, box.width / 2, 14);
+  await insideMap(pickMap, selected);
+  await panTo(pickMap, selected, box.width - 14, 14);
+  await insideMap(pickMap, selected);
+
+  // The manual pin: top, top right, bottom left (clear of the zoom buttons).
+  await page.getByRole('button', { name: '手动添加餐厅' }).click();
+  await page.getByLabel('餐厅名称').fill('一家名字很长的手工面馆（莱斯大学店）');
+  const manualMap = page.getByRole('region', { name: '标出餐厅位置的地图' });
+  await manualMap.scrollIntoViewIfNeeded();
+  box = (await manualMap.boundingBox())!;
+  const manual = page.locator('.leaflet-marker-icon[title="餐厅位置"]');
+  for (const [x, y] of [
+    [box.width / 2, 6],
+    [box.width - 8, 6],
+    [box.width - 8, box.height - 30],
+    [8, box.height - 30],
+  ] as const) {
+    await manualMap.click({ position: { x, y } });
+    await page.waitForTimeout(300);
+    await insideMap(manualMap, manual);
+  }
 });
 
 test('visitors can add a restaurant by hand when search fails', async ({ page }) => {

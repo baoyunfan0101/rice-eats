@@ -100,9 +100,6 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
             ← 返回餐厅页面
           </Link>
         )}
-        <p className="text-sm font-semibold text-chili-700">
-          {onForm ? '第二步 · 填写点评' : '第一步 · 选择餐厅'}
-        </p>
         <h1
           ref={heading}
           tabIndex={-1}
@@ -110,15 +107,20 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
         >
           {onForm ? `为「${selection.name}」投稿` : '投稿：分享你的用餐体验'}
         </h1>
-        {onForm && (
-          <button
-            type="button"
-            onClick={() => setStep('select')}
-            className="text-sm font-semibold text-chili-700 underline"
-          >
-            更换餐厅
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="text-sm font-semibold text-chili-700">
+            {onForm ? '第二步 · 填写点评' : '第一步 · 选择餐厅'}
+          </p>
+          {onForm && (
+            <button
+              type="button"
+              onClick={() => setStep('select')}
+              className="text-sm font-semibold text-muted underline hover:text-ink"
+            >
+              更换餐厅
+            </button>
+          )}
+        </div>
       </header>
 
       {onForm ? (

@@ -27,6 +27,7 @@ describe('placeLabels', () => {
     expect(placeLabels([pin('Taco Stop', 300, 200)], SIZE).get('Taco Stop')).toEqual({
       side: 'right',
       maxWidth: labelWidth('Taco Stop'),
+      dy: 0,
     });
   });
 
@@ -109,8 +110,55 @@ describe('placeLabels', () => {
       ],
       SIZE,
     );
-    expect(labels.get('en')).toEqual({ side: 'right', maxWidth: LABEL_MAX_WIDTH });
+    expect(labels.get('en')).toEqual({ side: 'right', maxWidth: LABEL_MAX_WIDTH, dy: 0 });
     expect(labels.get('zh')?.side).toBe('right');
+  });
+
+  /** The label's box in container pixels, as rendered. */
+  const rendered = (p: LabelPin, l: { side: string; maxWidth: number; dy: number }) => {
+    const h = p.selected ? 24 : 20;
+    const top = p.y - (p.selected ? 42 : 30) + l.dy;
+    const offset = p.selected ? 14 : 10;
+    const left = l.side === 'right' ? p.x + offset : p.x - offset - l.maxWidth;
+    return { left, top, right: left + l.maxWidth, bottom: top + h };
+  };
+  const within = (box: ReturnType<typeof rendered>, size: { width: number; height: number }) => {
+    expect(box.left).toBeGreaterThanOrEqual(0);
+    expect(box.top).toBeGreaterThanOrEqual(0);
+    expect(box.right).toBeLessThanOrEqual(size.width);
+    expect(box.bottom).toBeLessThanOrEqual(size.height);
+  };
+
+  it('keeps labels inside the map vertically near the top and bottom, the pin unmoved', () => {
+    for (const selected of [true, false]) {
+      const top = pin('Top', 300, 12, { selected });
+      const t = placeLabels([top], SIZE).get('Top')!;
+      expect(t.dy).toBeGreaterThan(0);
+      within(rendered(top, t), SIZE);
+      const bottom = pin('Bottom', 300, SIZE.height + 20, { selected });
+      const b = placeLabels([bottom], SIZE).get('Bottom')!;
+      expect(b.dy).toBeLessThan(0);
+      within(rendered(bottom, b), SIZE);
+    }
+    // In the middle, no shift.
+    expect(placeLabels([pin('Mid', 300, 200)], SIZE).get('Mid')!.dy).toBe(0);
+  });
+
+  it('handles the corners in both directions at once, on a phone too', () => {
+    const name = '一个名字非常非常长的川菜馆子（休斯顿莱斯大学店）';
+    for (const size of [SIZE, MOBILE]) {
+      for (const [x, y] of [
+        [8, 10],
+        [size.width - 8, 10],
+        [8, size.height + 30],
+        [size.width - 8, size.height + 30],
+      ] as const) {
+        const p = pin(name, x, y, { name, selected: true });
+        const l = placeLabels([p], size).get(name)!;
+        within(rendered(p, l), size);
+        expect(l.side).toBe(x < size.width / 2 ? 'right' : 'left');
+      }
+    }
   });
 
   it('skips pins outside the map without labelling them into view', () => {

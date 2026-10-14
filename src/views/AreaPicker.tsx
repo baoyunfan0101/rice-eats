@@ -4,6 +4,7 @@ import { PLACE_ZOOM, PRESET_AREAS, type SearchArea } from '../lib/areas';
 import { GEOCODE_ATTRIBUTION, geocode, geocodingAvailable, type Place } from '../lib/geocode';
 import type { LocateIntent } from '../lib/locateIntent';
 import { PoiError } from '../lib/poi';
+import { Alternative } from '../components/Alternative';
 
 type Locating = 'idle' | 'locating' | 'denied' | 'unavailable';
 
@@ -50,6 +51,8 @@ export function AreaPicker({
   const [locating, setLocating] = useState<Locating>('idle');
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState<Search>({ status: 'idle' });
+  /** The address search is a fallback, shown when asked for. */
+  const [addressOpen, setAddressOpen] = useState(false);
   useEffect(() => {
     const unsubscribe = intent.onInterrupt(() => {
       // The contributor moved the map: nothing pending applies any more.
@@ -156,6 +159,21 @@ export function AreaPicker({
         <p className="text-sm text-muted">{description}</p>
       </div>
       <div className="flex flex-wrap gap-2">
+        {/* The current location is the first choice; the presets follow. */}
+        <button
+          type="button"
+          onClick={useMyLocation}
+          disabled={locating === 'locating'}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700 disabled:opacity-60"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true" className="size-4">
+            <path
+              d="M10 1.5a.75.75 0 0 1 .75.75v1.3a6.5 6.5 0 0 1 5.7 5.7h1.3a.75.75 0 0 1 0 1.5h-1.3a6.5 6.5 0 0 1-5.7 5.7v1.3a.75.75 0 0 1-1.5 0v-1.3a6.5 6.5 0 0 1-5.7-5.7h-1.3a.75.75 0 0 1 0-1.5h1.3a6.5 6.5 0 0 1 5.7-5.7v-1.3A.75.75 0 0 1 10 1.5Zm0 3.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 2.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z"
+              fill="currentColor"
+            />
+          </svg>
+          {locating === 'locating' ? '正在定位…' : '使用当前位置'}
+        </button>
         {Object.values(PRESET_AREAS).map((area) => (
           <button
             key={area.label}
@@ -166,52 +184,49 @@ export function AreaPicker({
             {area.label}
           </button>
         ))}
-        <button
-          type="button"
-          onClick={useMyLocation}
-          disabled={locating === 'locating'}
-          className={button}
-        >
-          {locating === 'locating' ? '正在定位…' : '使用当前位置'}
-        </button>
       </div>
       {(locating === 'denied' || locating === 'unavailable') && (
         <p role="status" className="text-sm text-chili-700">
           {locating === 'denied'
-            ? '没有获得定位权限。可以选择上面的区域、输入地址，或直接拖动地图。'
-            : '暂时无法获取当前位置。可以选择上面的区域、输入地址，或直接拖动地图。'}
+            ? '没有获得定位权限。可以选择 Rice 或 Chinatown、输入地址，或直接拖动地图。'
+            : '暂时无法获取当前位置。可以选择 Rice 或 Chinatown、输入地址，或直接拖动地图。'}
         </p>
       )}
 
       {geocodingAvailable() ? (
-        <form role="search" aria-label="搜索地址或地点" onSubmit={onSubmit} className="space-y-1">
-          <label htmlFor="area-query" className="block text-sm font-semibold">
-            输入地址或地点
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="area-query"
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="例如 2111 Norfolk St"
-              className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3"
-            />
-            <button
-              type="submit"
-              disabled={!query.trim()}
-              className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700 disabled:opacity-50"
-            >
-              搜索
-            </button>
-          </div>
-        </form>
+        <Alternative
+          label="输入地址或地点"
+          open={addressOpen}
+          onToggle={() => setAddressOpen((o) => !o)}
+        >
+          <form role="search" aria-label="搜索地址或地点" onSubmit={onSubmit} className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="search"
+                aria-label="输入地址或地点"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="例如 2111 Norfolk St"
+                // Shown on request, so focus goes straight to it.
+                autoFocus
+                className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3"
+              />
+              <button
+                type="submit"
+                disabled={!query.trim()}
+                className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-ink px-4 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                搜索
+              </button>
+            </div>
+            <SearchResults search={search} onChoose={choosePlace} onRetry={runSearch} />
+          </form>
+        </Alternative>
       ) : (
         <p className="text-sm text-muted">
-          地址搜索暂不可用。可以选择上面的区域、使用当前位置，或直接拖动地图。
+          地址搜索暂不可用。可以使用当前位置、选择上面的区域，或直接拖动地图。
         </p>
       )}
-      <SearchResults search={search} onChoose={choosePlace} onRetry={runSearch} />
 
       <p role="status" className="text-sm font-semibold text-chili-700">
         当前查找区域：{current}

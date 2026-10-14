@@ -33,12 +33,15 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   fresh form and check.
 - **Search area** (`src/views/AreaPicker.tsx`, `src/lib/areas.ts`,
   `src/lib/geocode.ts`): step 1 starts with "选择查找区域" (A), then the
-  restaurant is chosen (B) on the same page. One group of controls moves the
-  map: "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in southwest
-  Houston, between Dun Huang Plaza and Hong Kong City Mall; static
-  coordinates, no request), "使用当前位置" (the browser asks only after that
-  click; a denial leaves the other ways), and "输入地址或地点" (a street
-  address, landmark, or other place, searched only when submitted). A single
+  restaurant is chosen (B) on the same page, each in its own box under the
+  page title and the step ("投稿：分享你的用餐体验", then "第一步 · 选择餐厅").
+  One group of controls moves the map: "使用当前位置" first and highlighted
+  (the browser asks only after that click; a denial leaves the other ways),
+  then "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in
+  southwest Houston, between Dun Huang Plaza and Hong Kong City Mall; static
+  coordinates, no request). "或者：输入地址或地点" is a fallback that opens
+  an address, landmark, or place search when clicked (searched only when
+  submitted). A single
   match moves the map at once; several are listed by name and address to
   choose from; a failed search offers "重试", and the presets, the current
   location, the map, and manual entry keep working. The last request wins:
@@ -69,9 +72,9 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   always shown (truncated only if neither side has room); the others are
   named nearest the map center first, and a pin without room keeps its name
   as a tooltip. The layout follows pans, zooms, resizes, and newly loaded
-  pins. Where pins are dense (or the screen is small), "按列表查看这 N
-  家餐厅" lists every restaurant in view, nearest the map center first, to
-  read and choose from. Choosing a restaurant focuses the map on it; going
+  pins. Below the map, a collapsed list ("列表查看地图范围内的 N 家餐厅",
+  with an expand chevron) names every restaurant in view, nearest the map
+  center first, to read and choose from. Choosing a restaurant focuses the map on it; going
   back from step 2 restores the last view instead. Distances are shown in
   miles. Panning or zooming updates the pins
   once the map settles. "使用当前位置" only moves the map (the browser asks
@@ -92,17 +95,19 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
     and "重试" (or moving the map) loads only the failed tiles again (failures
     are not cached). When nothing loads, the previous pins stay with an error
     and "重试". Results for an area the map has already left are ignored.
-  - "在当前区域搜索餐厅" finds a specific restaurant within 5 km (shown as
-    "约 3.1 mi") of the map center, snapped to a ~2 km grid: moving the map
-    or choosing another area searches again, and results are only shown for
-    the query and area they were made for, so late answers never replace
-    newer ones. If the place is missing, or search is unavailable,
-    "手动添加餐厅" takes the 餐厅名称, an optional 餐厅地址, and a map marker;
+  - "或者：在当前区域搜索餐厅" is the fallback to picking on the map, shown
+    the same way as the address search. It narrows the pins and the list to
+    the restaurants in view whose name contains the text (no request), so the
+    list is always the map's area AND the name; it opens by itself while
+    searching. The selected restaurant with "下一步：填写点评 →" closes the
+    page, below the boxes and the data-source line. If the place is missing,
+    "手动添加餐厅" takes the 餐厅名称 and a map marker (drawn like a selected
+    restaurant pin, with the name beside it);
     a name alone ("我不确定具体位置") is allowed and is marked for location
     verification. Manual entry has the same area controls but no restaurant
     pins. The area is never the restaurant's location: only the
     contributor's marker is, or a searched place after "用这个地点作为餐厅位置"
-    (which also fills an empty address).
+    (whose address is then sent; there is no separate address field).
   - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
     (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
     the rest of the session), or a Geoapify request fails, the search goes to
@@ -120,9 +125,10 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
     at once, and a busy answer (504) is retried once. If Overpass still
     fails, the page shows an error with "重试", and manual entry still works.
   - Arriving from a restaurant page opens step 2 directly (with "更换餐厅" to
-    choose another, and "← 返回餐厅页面" while that restaurant is selected). The page shows the data attribution (Geoapify and
-    OpenStreetMap, or OpenStreetMap alone without a key) and a short note that
-    the map area and name searches are sent to these services.
+    choose another, and "← 返回餐厅页面" while that restaurant is selected). The page names the data sources once
+    (Geoapify and OpenStreetMap, or OpenStreetMap alone without a key), in
+    one line that also says the map area is sent to them and the device
+    position is not submitted.
 - **Requests** (cheapest that does the job first): the preset areas need no
   request and the current location comes from the browser. Address search
   uses the Geoapify Geocoding API (same key; one credit per search), biased
@@ -134,8 +140,8 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   enforce across visitors. Without a key, the page says address search is
   unavailable and sends nothing; when Geoapify refuses or fails, it says so
   and offers "重试". Nearby
-  restaurants use Geoapify Places by cached tiles, and name searches a
-  bounded circle; Overpass is only the fallback (one batched request per
+  restaurants use Geoapify Places by cached tiles, and the name search only
+  filters what is already loaded; Overpass is only the fallback (one batched request per
   view), never queried alongside Geoapify. No details service is needed:
   the places already carry name, address, and coordinates.
 - **Tally**: collects the rating, text, photos, dishes, credit, contact email,
