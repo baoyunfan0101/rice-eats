@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import type { LatLngValue } from '../../shared/submission';
 import { PLACE_ZOOM, PRESET_AREAS, type SearchArea } from '../lib/areas';
 import { GEOCODE_ATTRIBUTION, geocode, geocodingAvailable, type Place } from '../lib/geocode';
+import type { LocateIntent } from '../lib/locateIntent';
 import { PoiError } from '../lib/poi';
 
 type Locating = 'idle' | 'locating' | 'denied' | 'unavailable';
@@ -23,17 +24,23 @@ type Search =
  *
  * The last thing the contributor asked for wins, whatever order answers
  * arrive in: every action (a preset, "使用当前位置", a search, choosing a
- * result) starts a new generation and cancels the pending search; a search
- * answer or location callback from an older generation (or after unmount)
- * changes nothing, neither the map nor the messages.
+ * result) starts a new generation of the shared `intent` and cancels the
+ * pending search; so does moving the map by hand (the map calls
+ * `intent.interrupt()`), which also clears a pending "searching" or
+ * "locating" state. A search answer or location callback from an older
+ * generation (or after unmount) changes nothing, neither the map nor the
+ * messages.
  */
 export function AreaPicker({
   description,
   current,
   near,
+  intent,
   onLocate,
 }: {
   description: string;
+  /** Shared with the map, so that moving the map by hand also counts as an action. */
+  intent: LocateIntent;
   /** Name of the area the map is showing now. */
   current: string;
   /** Searches prefer results near here (the map center). */
@@ -43,24 +50,22 @@ export function AreaPicker({
   const [locating, setLocating] = useState<Locating>('idle');
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState<Search>({ status: 'idle' });
-  const controller = useRef<AbortController>(undefined);
-  const generation = useRef(0);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const unsubscribe = intent.onInterrupt(() => {
+      // The contributor moved the map: nothing pending applies any more.
+      setSearch((s) => (s.status === 'loading' || s.status === 'error' ? { status: 'idle' } : s));
+      setLocating((l) => (l === 'locating' ? 'idle' : l));
+    });
+    return () => {
+      unsubscribe();
       // Answers arriving after unmount are ignored.
-      generation.current++;
-      controller.current?.abort();
-    },
-    [],
-  );
+      intent.begin();
+    };
+  }, [intent]);
 
   /** Starts a new action: older pending answers no longer count. */
-  const begin = () => {
-    controller.current?.abort();
-    controller.current = undefined;
-    return ++generation.current;
-  };
-  const isCurrent = (gen: number) => gen === generation.current;
+  const begin = () => intent.begin();
+  const isCurrent = (gen: number) => intent.isCurrent(gen);
 
   const choosePreset = (area: SearchArea) => {
     begin();
@@ -71,7 +76,7 @@ export function AreaPicker({
   };
 
   const useMyLocation = () => {
-    const gen = begin();
+    const { generation: gen } = begin();
     setSearch({ status: 'idle' });
     if (!('geolocation' in navigator)) {
       setLocating('unavailable');
@@ -106,12 +111,10 @@ export function AreaPicker({
   const runSearch = (text: string) => {
     const q = text.trim();
     if (!q) return;
-    const gen = begin();
-    const c = new AbortController();
-    controller.current = c;
+    const { generation: gen, signal } = begin();
     setLocating('idle');
     setSearch({ status: 'loading', query: q });
-    geocode(q, near, c.signal).then(
+    geocode(q, near, signal).then(
       (places) => {
         if (!isCurrent(gen)) return;
         setSearch({ status: 'ready', query: q, places });

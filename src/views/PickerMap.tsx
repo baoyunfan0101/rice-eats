@@ -1,6 +1,6 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngValue } from '../../shared/submission';
 import { placeLabels, type LabelPlacement } from '../lib/labelLayout';
@@ -51,6 +51,11 @@ interface Props {
   onMapClick?: (point: LatLngValue) => void;
   /** The visible area, reported when the map is ready and after every pan or zoom. */
   onMove?: (area: MapArea) => void;
+  /**
+   * The contributor starts moving the map by hand (drag, wheel, pinch, double
+   * click, zoom buttons, or keyboard), as opposed to a programmatic setView.
+   */
+  onUserMove?: () => void;
   onSelect?: (candidate: RestaurantCandidate) => void;
   label: string;
   className?: string;
@@ -64,6 +69,7 @@ export default function PickerMap({
   marker,
   onMapClick,
   onMove,
+  onUserMove,
   onSelect,
   label,
   className = 'h-72 sm:h-96',
@@ -78,6 +84,7 @@ export default function PickerMap({
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
       {/* Events first: its handlers must be attached before FollowView moves the map. */}
       <Events onMapClick={onMapClick} onMove={onMove} />
+      {onUserMove && <UserMoves onUserMove={onUserMove} />}
       <FollowView view={view} />
       <CandidateMarkers candidates={candidates} selectedKey={selectedKey} onSelect={onSelect} />
       {marker && (
@@ -179,6 +186,52 @@ const areaOf = (map: L.Map): MapArea => {
     zoom: map.getZoom(),
   };
 };
+
+/** Keys Leaflet's keyboard handler pans or zooms with. */
+const MAP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', '+', '-', '=', '_']);
+
+/**
+ * Reports the start of a move by the contributor. Leaflet's movestart,
+ * moveend, and zoomend also fire for programmatic setView calls, so they are
+ * not used: a drag is Leaflet's dragstart (never fired by setView), and a
+ * zoom or keyboard pan is recognized from the input that causes it (wheel,
+ * double click, a two-finger touch, the zoom buttons, or the map's keys).
+ */
+function UserMoves({ onUserMove }: { onUserMove: () => void }) {
+  const map = useMap();
+  const latest = useRef(onUserMove);
+  useEffect(() => {
+    latest.current = onUserMove;
+  }, [onUserMove]);
+  useEffect(() => {
+    const report = () => latest.current();
+    const container = map.getContainer();
+    const onTouch = (e: TouchEvent) => {
+      if (e.touches.length > 1) report();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (MAP_KEYS.has(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey) report();
+    };
+    const onClick = (e: MouseEvent) => {
+      if ((e.target as Element).closest('.leaflet-control-zoom')) report();
+    };
+    map.on('dragstart', report);
+    container.addEventListener('wheel', report, { passive: true });
+    container.addEventListener('dblclick', report);
+    container.addEventListener('touchstart', onTouch, { passive: true });
+    container.addEventListener('keydown', onKey);
+    container.addEventListener('click', onClick, true);
+    return () => {
+      map.off('dragstart', report);
+      container.removeEventListener('wheel', report);
+      container.removeEventListener('dblclick', report);
+      container.removeEventListener('touchstart', onTouch);
+      container.removeEventListener('keydown', onKey);
+      container.removeEventListener('click', onClick, true);
+    };
+  }, [map]);
+  return null;
+}
 
 function Events({ onMapClick, onMove }: Pick<Props, 'onMapClick' | 'onMove'>) {
   const map = useMapEvents({

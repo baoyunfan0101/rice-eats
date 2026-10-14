@@ -38,6 +38,7 @@ vi.mock('./views/PickerMap', async () => {
     candidates?: { key: string; name: string }[];
     onMapClick?: (p: Point) => void;
     onMove?: (area: Area) => void;
+    onUserMove?: () => void;
     onSelect?: (c: unknown) => void;
   }) {
     const { view, onMove } = props;
@@ -58,13 +59,32 @@ vi.mock('./views/PickerMap', async () => {
         )}
         {onMove && (
           <>
+            {/* By hand: Leaflet reports the gesture's start, then the new area. */}
             <button
               type="button"
-              onClick={() => onMove(areaAround({ lat: 29.735, lng: -95.39 }, 15))}
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround({ lat: 29.735, lng: -95.39 }, 15));
+              }}
             >
               拖动地图
             </button>
-            <button type="button" onClick={() => onMove(areaAround(view.center, 11))}>
+            <button
+              type="button"
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround(view.center, 17));
+              }}
+            >
+              放大地图
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                props.onUserMove?.();
+                onMove(areaAround(view.center, 11));
+              }}
+            >
               缩小地图
             </button>
           </>
@@ -1033,6 +1053,109 @@ describe('submissions', () => {
         await user.click(screen.getByRole('button', { name: NEXT }));
         expect(formParams()).toMatchObject({
           restaurant_name: 'Marker Cafe',
+          restaurant_lat: '29.700000',
+          restaurant_lng: '-95.400000',
+        });
+      });
+
+      it('keeps the view the contributor dragged to over a late address', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        // The drag ends the pending search at once.
+        expect(screen.queryByText('正在搜索地点…')).not.toBeInTheDocument();
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        // No programmatic move: the map stays where it was dragged.
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('地图当前位置附近');
+        expect(screen.queryByRole('list', { name: '地点搜索结果' })).not.toBeInTheDocument();
+        // A new search still works afterwards.
+        await user.clear(input);
+        await user.type(input, 'Westheimer{Enter}');
+        await waitFor(() => expect(mapView()).toBe('29.7375,-95.4422,16'));
+      });
+
+      it('keeps the view the contributor zoomed to over a late address', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '放大地图' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('Rice University 周边');
+      });
+
+      it('does not jump back to the device location after a drag', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        await ready();
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        expect(screen.getByRole('button', { name: '使用当前位置' })).toBeEnabled();
+        location.succeed();
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('地图当前位置附近');
+      });
+
+      it('shows no stale error after a drag', async () => {
+        const user = userEvent.setup();
+        geocodeStatus = 503;
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(screen.queryByText(/地点搜索暂时不可用/)).not.toBeInTheDocument();
+      });
+
+      it('keeps the focus on a restaurant chosen while an address search was pending', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '图钉：Noodle Corner' }));
+        expect(mapView()).toBe('29.7183,-95.4012,16');
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe('29.7183,-95.4012,16');
+        expect(
+          within(screen.getByRole('region', { name: '已选餐厅' })).getByText('Noodle Corner'),
+        ).toBeInTheDocument();
+      });
+
+      it('keeps a placed marker and its view when the map is dragged or answers come late', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        visit('submit/');
+        await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
+        await user.type(screen.getByLabelText('餐厅名称'), 'Drag Cafe');
+        const manualMap = () =>
+          screen.getByLabelText('标出餐厅位置的地图').getAttribute('data-view');
+        const before = manualMap();
+        await user.type(
+          screen.getByRole('searchbox', { name: '输入地址或地点' }),
+          'Norfolk{Enter}',
+        );
+        // Placing the marker is the latest intent.
+        await user.click(screen.getByRole('button', { name: '在地图上点一下' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(manualMap()).toBe(before);
+        expect(
+          screen.queryByRole('button', { name: '用这个地点作为餐厅位置' }),
+        ).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '拖动地图' }));
+        expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '下一步' }));
+        await user.click(screen.getByRole('button', { name: NEXT }));
+        expect(formParams()).toMatchObject({
+          restaurant_name: 'Drag Cafe',
           restaurant_lat: '29.700000',
           restaurant_lng: '-95.400000',
         });

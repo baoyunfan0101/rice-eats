@@ -3,6 +3,7 @@ import { RICE_CENTER } from '../../shared/content/model';
 import type { LatLngValue } from '../../shared/submission';
 import { currentAreaLabel, PRESET_AREAS, type SearchArea } from '../lib/areas';
 import type { Place } from '../lib/geocode';
+import { LocateIntent } from '../lib/locateIntent';
 import {
   DISCOVERY_MIN_ZOOM,
   distanceMeters,
@@ -122,6 +123,8 @@ export function RestaurantSelector({
         ? { label: `「${selection.name}」附近`, center: selection.location, zoom: FOCUS_ZOOM }
         : PRESET_AREAS.rice),
   );
+  /** Shared by the area controls and the map: the last thing the contributor did wins. */
+  const [intent] = useState(() => new LocateIntent());
   const locate = (a: SearchArea) => {
     setSearchArea(a);
     onAreaChange?.(a);
@@ -208,6 +211,8 @@ export function RestaurantSelector({
 
   /** Selects a restaurant in place and brings it into focus on the map. */
   const choose = (s: Selection) => {
+    // Choosing a restaurant is the latest intent: no pending area answer may move the map away.
+    intent.interrupt();
     onSelect(s);
     if (s.location) {
       setView({ center: s.location, zoom: Math.max(area?.zoom ?? FOCUS_ZOOM, FOCUS_ZOOM) });
@@ -263,6 +268,7 @@ export function RestaurantSelector({
         description="先将地图定位到餐厅附近，再从地图上选择餐厅。"
         current={currentAreaLabel(searchArea, area?.center ?? view.center)}
         near={area?.center ?? view.center}
+        intent={intent}
         onLocate={locate}
       />
       <div className="space-y-1">
@@ -280,6 +286,7 @@ export function RestaurantSelector({
             setArea(a);
             onViewChange?.({ center: a.center, zoom: a.zoom });
           }}
+          onUserMove={() => intent.interrupt()}
           onSelect={(c) => {
             // The selected pin itself keeps its selection (e.g. an existing restaurant).
             if (c.key !== selectedKey) choose(fromCandidate(c));
@@ -572,6 +579,7 @@ function ManualEntry({
   const [searchArea, setSearchArea] = useState(startArea);
   /** A searched place the contributor may use as the restaurant's location. */
   const [found, setFound] = useState<Place>();
+  const [intent] = useState(() => new LocateIntent());
   const canContinue = name.trim() !== '' && (marker !== undefined || noLocation);
 
   return (
@@ -604,6 +612,7 @@ function ManualEntry({
             description="先将地图定位到餐厅附近，再在地图上点出餐厅的位置。"
             current={currentAreaLabel(searchArea, center)}
             near={center}
+            intent={intent}
             onLocate={(a, place) => {
               setSearchArea(a);
               setView({ center: a.center, zoom: a.zoom });
@@ -633,8 +642,13 @@ function ManualEntry({
               label="标出餐厅位置的地图"
               view={view}
               marker={marker}
-              onMapClick={setMarker}
+              onMapClick={(point) => {
+                // Placing the restaurant is the latest intent: no pending answer may move the map.
+                intent.interrupt();
+                setMarker(point);
+              }}
               onMove={(a) => setCenter(a.center)}
+              onUserMove={() => intent.interrupt()}
             />
           </Suspense>
         </div>

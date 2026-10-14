@@ -42,10 +42,17 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   match moves the map at once; several are listed by name and address to
   choose from; a failed search offers "重试", and the presets, the current
   location, the map, and manual entry keep working. The last request wins:
-  each action (a preset, "使用当前位置", a search, choosing a result)
-  cancels the pending search and makes any older answer, including a late
+  each action (a preset, "使用当前位置", a search, choosing a result,
+  choosing a restaurant, placing a manual marker, or dragging or zooming the
+  map by hand) cancels the pending search and makes any older answer, including a late
   device location or a late error, change nothing, so the map always ends
-  where the contributor last asked for. "当前查找区域：…" names the area while the map is within about
+  where the contributor last asked for. Hand moves are recognized
+  from their input (`src/views/PickerMap.tsx`: Leaflet's `dragstart`, the
+  wheel, a double click, a two-finger touch, the zoom buttons, and the map's
+  keys), never from `moveend`/`zoomend`, which programmatic `setView` calls
+  (a preset, a search result, a selection, restoring the view) also fire;
+  the area controls and the map share one `LocateIntent`
+  (`src/lib/locateIntent.ts`). "当前查找区域：…" names the area while the map is within about
   1.2 km of its center, and "地图当前位置附近" once the contributor has moved
   away. Choosing an area only moves the map: it never selects a restaurant,
   and the selected restaurant and the area are separate (both are kept when

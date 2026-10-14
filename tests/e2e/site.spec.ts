@@ -460,6 +460,100 @@ test('late address and location answers never override the latest choice', async
   expect(nominatim).toEqual([]);
 });
 
+test('dragging or zooming the map by hand wins over a late address', async ({ page }) => {
+  const places = await fakePlaces(page);
+  // A slow geocoder whose answer (Sugar Land) is far from Rice.
+  let release = () => {};
+  await page.route(/^https:\/\/api\.geoapify\.com\/v1\/geocode\//, async (route) => {
+    const text = new URL(route.request().url()).searchParams.get('text');
+    if (text !== 'Slow Place') await new Promise<void>((resolve) => (release = resolve));
+    await route
+      .fulfill({
+        json: {
+          results: [
+            {
+              place_id: `e2e-${text}`,
+              address_line1: text,
+              address_line2: 'Sugar Land, TX',
+              lat: 29.62,
+              lon: -95.63,
+            },
+          ],
+        },
+      })
+      .catch(() => {});
+  });
+  await page.goto('/rice-eats/submit/');
+  const area = page.getByRole('region', { name: '选择查找区域' });
+  const status = area.getByText(/^当前查找区域：/);
+  const search = area.getByRole('searchbox', { name: '输入地址或地点' });
+  const map = page.getByRole('region', { name: '附近餐厅地图' });
+  await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
+  const west = (u: URL) => Number(u.searchParams.get('filter')!.slice(5).split(',')[0]);
+  const lastTileWest = () =>
+    west(places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:')).at(-1)!);
+  const settle = () => page.waitForTimeout(1200);
+
+  const gestures: [string, () => Promise<void>][] = [
+    [
+      'drag',
+      async () => {
+        await map.scrollIntoViewIfNeeded();
+        const box = (await map.boundingBox())!;
+        // Away from the pins (near the center), which take their own clicks.
+        await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height - 40);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height - 70, { steps: 8 });
+        await page.mouse.up();
+      },
+    ],
+    [
+      'wheel zoom',
+      async () => {
+        await map.scrollIntoViewIfNeeded();
+        const box = (await map.boundingBox())!;
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.wheel(0, -200);
+      },
+    ],
+    [
+      'zoom button',
+      async () => {
+        await map.getByRole('button', { name: 'Zoom out' }).click();
+      },
+    ],
+    [
+      'keyboard pan',
+      async () => {
+        await map.focus();
+        await page.keyboard.press('ArrowRight');
+      },
+    ],
+  ];
+  for (const [name, gesture] of gestures) {
+    await search.fill(`Late ${name}`);
+    await search.press('Enter');
+    await expect(area.getByText('正在搜索地点…')).toBeVisible();
+    await gesture();
+    // The gesture ends the pending search at once.
+    await expect(area.getByText('正在搜索地点…'), name).toHaveCount(0);
+    release();
+    await settle();
+    // The late answer did not move the map to Sugar Land.
+    await expect(status, name).not.toContainText(`Late ${name}`);
+    expect(lastTileWest(), name).toBeGreaterThan(-95.5);
+  }
+
+  // Programmatic moves still apply and are not taken for gestures.
+  await search.fill('Slow Place');
+  await search.press('Enter');
+  await expect(status).toHaveText('当前查找区域：Slow Place');
+  await expect.poll(lastTileWest).toBeLessThan(-95.6);
+  await area.getByRole('button', { name: 'Chinatown 周边' }).click();
+  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
+  await expect.poll(lastTileWest).toBeGreaterThan(-95.58);
+});
+
 test('the current location moves the map and the pins follow', async ({ page, context }) => {
   await fakePlaces(page);
   await context.grantPermissions(['geolocation']);
