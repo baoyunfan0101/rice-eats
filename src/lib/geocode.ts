@@ -3,12 +3,15 @@
 // locates the search area (or, when the contributor confirms it, a manually
 // added restaurant); it never selects a restaurant by itself.
 //
-// The Geoapify Geocoding API (same key and project as the Places API) is the
-// main provider. Without a key, or when Geoapify refuses or fails, the public
-// OpenStreetMap Nominatim service is the fallback. Its usage policy allows no
-// autocomplete and at most one request per second, so searches only run when
-// the contributor submits the search (never per keystroke), identical searches
-// are cached for the session, and requests are spaced at least a second apart.
+// The Geoapify Geocoding API (same key and project as the Places API, whose
+// plan allows browser use with a domain-restricted key) is the only provider.
+// There is deliberately no fallback to the public OpenStreetMap Nominatim
+// service: its limit (one request a second) applies to the whole site, which
+// a static site cannot enforce across visitors. Without a key, or when
+// Geoapify refuses or fails, the page says address search is unavailable and
+// the presets, the current location, and the map itself still work. Searches
+// run only when the contributor submits one (never per keystroke), and
+// successful results are cached for the session.
 
 import { isValidLatLng, type LatLngValue } from '../../shared/submission';
 import { isAbort, PoiError, poiApiKey, request } from './poi';
@@ -26,11 +29,8 @@ export interface Place {
 }
 
 export const GEOAPIFY_GEOCODE_ENDPOINT = 'https://api.geoapify.com/v1/geocode/search';
-export const NOMINATIM_ENDPOINT = 'https://nominatim.openstreetmap.org/search';
 /** Results offered when a search is ambiguous. */
 const LIMIT = 5;
-/** Greater Houston (west, south, east, north): results here come first. */
-const HOUSTON = { west: -95.95, south: 29.4, east: -94.95, north: 30.15 };
 
 const text = (value: unknown) =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -46,19 +46,6 @@ export function geoapifyGeocodeUrl(query: string, near: LatLngValue, apiKey: str
     apiKey,
   });
   return `${GEOAPIFY_GEOCODE_ENDPOINT}?${params}`;
-}
-
-/** Builds the Nominatim request, preferring (not limited to) the Houston area. */
-export function nominatimUrl(query: string): string {
-  const params = new URLSearchParams({
-    q: query,
-    format: 'jsonv2',
-    limit: String(LIMIT),
-    countrycodes: 'us',
-    viewbox: `${HOUSTON.west},${HOUSTON.north},${HOUSTON.east},${HOUSTON.south}`,
-    bounded: '0',
-  });
-  return `${NOMINATIM_ENDPOINT}?${params}`;
 }
 
 function place(
@@ -112,77 +99,32 @@ export function normalizeGeoapifyGeocode(body: unknown): Place[] {
   );
 }
 
-/** Turns a Nominatim response (format=jsonv2) into places. */
-export function normalizeNominatim(body: unknown): Place[] {
-  if (!Array.isArray(body)) return [];
-  return dedupe(
-    body.map((r: Record<string, unknown>, i) => {
-      const display = text(r.display_name)?.replace(/, United States$/, '');
-      const parts = display?.split(',').map((s) => s.trim()) ?? [];
-      const name = text(r.name) ?? parts[0];
-      const isAddress =
-        r.addresstype === 'building' || r.category === 'building' || /^\d/.test(parts[0] ?? '');
-      // A house number on its own is not a readable name.
-      const label =
-        isAddress && parts.length > 1 && /^\d+$/.test(parts[0]!) ? `${parts[0]} ${parts[1]}` : name;
-      return place(
-        `osm:${text(r.osm_type) ?? 'place'}/${String(r.osm_id ?? i)}`,
-        label,
-        // The address without the place name it starts with.
-        label && display?.startsWith(`${label}, `) ? display.slice(label.length + 2) : display,
-        r.lat,
-        r.lon,
-        isAddress,
-      );
-    }),
-  );
+/** Data attribution for address search results. */
+export const GEOCODE_ATTRIBUTION = 'Powered by Geoapify · © OpenStreetMap contributors';
+
+/** Whether address search can run (a Geoapify key is configured). */
+export function geocodingAvailable(): boolean {
+  return !!poiApiKey();
 }
 
-/** Data attribution for the geocoding provider that answered. */
-export function geocodeAttribution(provider: 'geoapify' | 'osm'): string {
-  return provider === 'geoapify'
-    ? 'Powered by Geoapify · © OpenStreetMap contributors'
-    : '地址搜索：© OpenStreetMap contributors（Nominatim）';
-}
-
-export interface GeocodeResult {
-  places: Place[];
-  provider: 'geoapify' | 'osm';
-}
-
-const cache = new Map<string, Promise<GeocodeResult>>();
-let geoapifyRefused = false;
-/** Nominatim allows one request per second. */
-const NOMINATIM_SPACING_MS = 1000;
-let nominatimNext = 0;
+const cache = new Map<string, Promise<Place[]>>();
 
 export function clearGeocodeCache() {
   cache.clear();
-  geoapifyRefused = false;
-  nominatimNext = 0;
-}
-
-async function fromNominatim(query: string, signal?: AbortSignal): Promise<GeocodeResult> {
-  const wait = nominatimNext - Date.now();
-  nominatimNext = Math.max(Date.now(), nominatimNext) + NOMINATIM_SPACING_MS;
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  return {
-    places: normalizeNominatim(await request(nominatimUrl(query), { signal })),
-    provider: 'osm',
-  };
 }
 
 /**
- * Finds places matching an address or place name, nearest `near` first when
- * the provider supports it. Results are cached per query (and, for Geoapify,
- * per ~10 km of map position); failed searches are not cached.
+ * Finds places matching an address or place name, nearest `near` first.
+ * Results are cached per query and ~10 km of map position; failed or
+ * cancelled searches are not cached. Without a key it fails at once (no
+ * request). Pass an AbortSignal to cancel a superseded search: a search
+ * shared with another caller is cancelled only for this caller.
  */
 export async function geocode(
   query: string,
   near: LatLngValue,
   signal?: AbortSignal,
-): Promise<GeocodeResult> {
+): Promise<Place[]> {
   try {
     return await cachedGeocode(query, near, signal);
   } catch (e) {
@@ -192,29 +134,17 @@ export async function geocode(
   }
 }
 
-function cachedGeocode(
-  query: string,
-  near: LatLngValue,
-  signal?: AbortSignal,
-): Promise<GeocodeResult> {
+function cachedGeocode(query: string, near: LatLngValue, signal?: AbortSignal): Promise<Place[]> {
   const q = query.trim().replace(/\s+/g, ' ');
-  if (!q) return Promise.resolve({ places: [], provider: poiApiKey() ? 'geoapify' : 'osm' });
+  if (!q) return Promise.resolve([]);
+  const apiKey = poiApiKey();
+  if (!apiKey) return Promise.reject(new PoiError('quota', 'no Geoapify key'));
   const key = `${q.toLowerCase()}|${near.lat.toFixed(1)},${near.lng.toFixed(1)}`;
   let promise = cache.get(key);
   if (!promise) {
-    promise = (async () => {
-      const apiKey = poiApiKey();
-      if (apiKey && !geoapifyRefused) {
-        try {
-          const body = await request(geoapifyGeocodeUrl(q, near, apiKey), { signal });
-          return { places: normalizeGeoapifyGeocode(body), provider: 'geoapify' as const };
-        } catch (e) {
-          if (isAbort(e)) throw e;
-          if (e instanceof PoiError && e.kind === 'quota') geoapifyRefused = true;
-        }
-      }
-      return fromNominatim(q, signal);
-    })();
+    promise = request(geoapifyGeocodeUrl(q, near, apiKey), { signal }).then(
+      normalizeGeoapifyGeocode,
+    );
     promise.catch(() => cache.delete(key));
     cache.set(key, promise);
   }

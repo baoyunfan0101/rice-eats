@@ -3,10 +3,10 @@ import {
   clearGeocodeCache,
   geocode,
   geoapifyGeocodeUrl,
+  geocodingAvailable,
   normalizeGeoapifyGeocode,
-  normalizeNominatim,
-  nominatimUrl,
 } from './geocode';
+import { PoiError } from './poi';
 
 const RICE = { lat: 29.7174, lng: -95.4018 };
 
@@ -21,13 +21,6 @@ describe('geocoding requests', () => {
       bias: 'proximity:-95.4018,29.7174',
       format: 'json',
     });
-  });
-
-  it('asks Nominatim with Houston preferred but not required', () => {
-    const url = new URL(nominatimUrl('Rice Village'));
-    expect(url.searchParams.get('viewbox')).toBe('-95.95,30.15,-94.95,29.4');
-    expect(url.searchParams.get('bounded')).toBe('0');
-    expect(url.searchParams.get('limit')).toBe('5');
   });
 });
 
@@ -73,103 +66,90 @@ describe('normalizing results', () => {
     ]);
     expect(normalizeGeoapifyGeocode({})).toEqual([]);
   });
-
-  it('turns Nominatim house numbers into a street address', () => {
-    expect(
-      normalizeNominatim([
-        {
-          osm_type: 'way',
-          osm_id: 1,
-          name: '',
-          addresstype: 'building',
-          display_name: '2111, Norfolk Street, Houston, Harris County, Texas, 77098, United States',
-          lat: '29.7333',
-          lon: '-95.4123',
-        },
-      ]),
-    ).toEqual([
-      {
-        key: 'osm:way/1',
-        name: '2111 Norfolk Street',
-        address: '2111, Norfolk Street, Houston, Harris County, Texas, 77098',
-        location: { lat: 29.7333, lng: -95.4123 },
-        isAddress: true,
-      },
-    ]);
-    expect(
-      normalizeNominatim([
-        {
-          osm_type: 'node',
-          osm_id: 3,
-          name: 'Star Pizza',
-          display_name: 'Star Pizza, 2111, Norfolk Street, Houston, Texas, 77098, United States',
-          lat: '29.7333',
-          lon: '-95.4123',
-        },
-      ])[0],
-    ).toMatchObject({ name: 'Star Pizza', address: '2111, Norfolk Street, Houston, Texas, 77098' });
-    expect(normalizeNominatim('oops')).toEqual([]);
-  });
 });
 
 describe('geocode', () => {
   let calls: string[];
-  let geoapifyStatus: number;
+  let respond: (url: string) => Promise<Response>;
   beforeEach(() => {
     clearGeocodeCache();
     calls = [];
-    geoapifyStatus = 200;
+    respond = async () =>
+      Response.json({ results: [{ place_id: 'g', name: 'Place', lat: 29.7, lon: -95.4 }] });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
+      vi.fn(async (url: string, init?: RequestInit) => {
         calls.push(url);
-        if (url.includes('geoapify')) {
-          if (geoapifyStatus !== 200) return new Response('', { status: geoapifyStatus });
-          return Response.json({
-            results: [{ place_id: 'g', name: 'Place', lat: 29.7, lon: -95.4 }],
-          });
-        }
-        return Response.json([
-          { osm_type: 'node', osm_id: 2, name: 'OSM Place', lat: '29.7', lon: '-95.4' },
-        ]);
+        const response = respond(url);
+        // Like fetch: an abort rejects the pending request.
+        return new Promise<Response>((resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+          response.then(resolve, reject);
+        });
       }),
     );
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', 'key');
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
 
-  it('uses Geoapify with a key and caches repeated searches', async () => {
-    vi.stubEnv('VITE_GEOAPIFY_API_KEY', 'key');
-    const first = await geocode('Place', RICE);
-    expect(first.provider).toBe('geoapify');
+  it('returns Geoapify results and caches repeated searches', async () => {
+    expect((await geocode('Place', RICE))[0]!.name).toBe('Place');
     await geocode('  place ', RICE);
     expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(/^https:\/\/api\.geoapify\.com\/v1\/geocode\/search\?/);
   });
 
-  it('falls back to Nominatim once Geoapify refuses the key, for the rest of the session', async () => {
-    vi.stubEnv('VITE_GEOAPIFY_API_KEY', 'key');
-    geoapifyStatus = 429;
-    expect((await geocode('Place', RICE)).places[0]!.name).toBe('OSM Place');
-    await geocode('Other', RICE);
-    expect(calls.filter((u) => u.includes('geoapify'))).toHaveLength(1);
-    expect(calls.filter((u) => u.includes('nominatim'))).toHaveLength(2);
-  });
-
-  it('spaces Nominatim requests at least a second apart', async () => {
-    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
-    vi.useFakeTimers();
-    try {
-      await geocode('One', RICE);
-      const second = geocode('Two', RICE);
-      await vi.advanceTimersByTimeAsync(500);
+  it.each([401, 403, 429, 500])(
+    'reports HTTP %i as unavailable, never asks another service, and does not cache it',
+    async (status) => {
+      respond = async () => new Response('', { status });
+      await expect(geocode('Place', RICE)).rejects.toBeInstanceOf(PoiError);
       expect(calls).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(600);
-      await second;
+      // A later search (e.g. "重试" once the service is back) asks again.
+      respond = async () => Response.json({ results: [] });
+      await expect(geocode('Place', RICE)).resolves.toEqual([]);
       expect(calls).toHaveLength(2);
-    } finally {
-      vi.useRealTimers();
-    }
+      expect(calls.every((u) => u.startsWith('https://api.geoapify.com/'))).toBe(true);
+    },
+  );
+
+  it('reports network failures', async () => {
+    respond = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await expect(geocode('Place', RICE)).rejects.toMatchObject({ kind: 'network' });
+  });
+
+  it('sends nothing without a key', async () => {
+    vi.stubEnv('VITE_GEOAPIFY_API_KEY', '');
+    expect(geocodingAvailable()).toBe(false);
+    await expect(geocode('Place', RICE)).rejects.toBeInstanceOf(PoiError);
+    expect(calls).toEqual([]);
+  });
+
+  it('cancels a search for one caller only, without caching the cancellation', async () => {
+    let release!: () => void;
+    respond = () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve(
+            Response.json({ results: [{ place_id: 'g', name: 'Place', lat: 29.7, lon: -95.4 }] }),
+          );
+      });
+    const first = new AbortController();
+    const a = geocode('Place', RICE, first.signal);
+    const b = geocode('Place', RICE);
+    first.abort();
+    await expect(a).rejects.toMatchObject({ name: 'AbortError' });
+    // The other caller still gets its answer (asking again once).
+    await Promise.resolve();
+    release();
+    await expect(b).resolves.toHaveLength(1);
+    expect(calls).toHaveLength(2);
   });
 });

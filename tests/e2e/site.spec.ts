@@ -390,6 +390,76 @@ test('visitors locate the search area by preset or address before choosing', asy
   await expect(page.getByText(/搜索地图中心约 3.1 mi 范围内的餐厅/)).toBeVisible();
 });
 
+test('late address and location answers never override the latest choice', async ({ page }) => {
+  const places = await fakePlaces(page);
+  // A slow geocoder: answers only when the test releases it.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const geocodeRequests: string[] = [];
+  await page.route(/^https:\/\/api\.geoapify\.com\/v1\/geocode\//, async (route) => {
+    geocodeRequests.push(route.request().url());
+    await held;
+    await route
+      .fulfill({
+        json: {
+          results: [
+            {
+              place_id: 'e2e-late',
+              address_line1: '2111 Norfolk St',
+              address_line2: 'Houston, TX 77098',
+              lat: 29.7333,
+              lon: -95.4123,
+            },
+          ],
+        },
+      })
+      .catch(() => {}); // the page may have cancelled the request
+  });
+  // A slow device location: the test decides when it answers.
+  await page.addInitScript(() => {
+    const pending: PositionCallback[] = [];
+    Object.assign(window, {
+      __locate: () =>
+        pending.shift()?.({
+          coords: { latitude: 29.76, longitude: -95.37 },
+        } as GeolocationPosition),
+    });
+    Object.defineProperty(navigator, 'geolocation', {
+      value: { getCurrentPosition: (ok: PositionCallback) => pending.push(ok) },
+    });
+  });
+  const nominatim: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('nominatim')) nominatim.push(r.url());
+  });
+
+  await page.goto('/rice-eats/submit/');
+  const area = page.getByRole('region', { name: '选择查找区域' });
+  const status = area.getByText(/^当前查找区域：/);
+  await expect(status).toHaveText('当前查找区域：Rice University 周边');
+
+  // Address search pending, location pending, then Chinatown.
+  await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
+  await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
+  await expect(area.getByText('正在搜索地点…')).toBeVisible();
+  await area.getByRole('button', { name: '使用当前位置' }).click();
+  await area.getByRole('button', { name: 'Chinatown 周边' }).click();
+  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
+
+  // The late answers arrive out of order: the location, then the address.
+  await page.evaluate(() => (window as unknown as { __locate: () => void }).__locate());
+  release();
+  await page.waitForTimeout(1500);
+  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
+  await expect(area.getByRole('list', { name: '地点搜索结果' })).toHaveCount(0);
+  // The map really stayed at Chinatown: the last restaurant tiles requested are there.
+  const west = (u: URL) => Number(u.searchParams.get('filter')!.slice(5).split(',')[0]);
+  const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
+  expect(west(rects.at(-1)!)).toBeLessThan(-95.54);
+  expect(geocodeRequests).toHaveLength(1);
+  expect(nominatim).toEqual([]);
+});
+
 test('the current location moves the map and the pins follow', async ({ page, context }) => {
   await fakePlaces(page);
   await context.grantPermissions(['geolocation']);

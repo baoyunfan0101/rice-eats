@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { ContentIndex, RestaurantDetail, RestaurantSummary } from '../shared/content/model';
 import { clearContentCache } from './lib/content';
-import { clearGeocodeCache, GEOAPIFY_GEOCODE_ENDPOINT, NOMINATIM_ENDPOINT } from './lib/geocode';
+import { clearGeocodeCache, GEOAPIFY_GEOCODE_ENDPOINT } from './lib/geocode';
 import { clearPoiCache, OVERPASS_ENDPOINT, setOverpassRetryDelay } from './lib/poi';
 
 // Leaflet does not run in jsdom: the picker map is a stub whose button is a
@@ -484,8 +484,15 @@ describe('submissions', () => {
     let tileStatus: ((filter: string) => number) | undefined;
     let geocodes: URL[];
     let geocodeStatus = 200;
-    let nominatim: URL[];
-    let nominatimStatus = 200;
+    /** Requests to any other host (e.g. a public geocoder) — there must be none. */
+    let unexpected: string[];
+    /** Holds a geocoding answer (by query) until resolved, for out-of-order answers. */
+    let geocodeHold: Map<string, Promise<void>>;
+    const holdGeocode = (query: string) => {
+      let release!: () => void;
+      geocodeHold.set(query, new Promise<void>((resolve) => (release = resolve)));
+      return release;
+    };
     /** Fake geocoder: one match, two matches, or none, by query. */
     const GEOCODED: Record<string, object[]> = {
       norfolk: [
@@ -497,6 +504,16 @@ describe('submissions', () => {
           result_type: 'building',
           lat: 29.7333,
           lon: -95.4123,
+        },
+      ],
+      westheimer: [
+        {
+          place_id: 'g-westheimer',
+          address_line1: 'Westheimer Rd',
+          address_line2: 'Houston, TX, United States',
+          result_type: 'street',
+          lat: 29.7375,
+          lon: -95.4422,
         },
       ],
       'main st': [
@@ -533,8 +550,8 @@ describe('submissions', () => {
       clearGeocodeCache();
       geocodes = [];
       geocodeStatus = 200;
-      nominatim = [];
-      nominatimStatus = 200;
+      unexpected = [];
+      geocodeHold = new Map();
       const indexFetch = vi.mocked(fetch);
       vi.stubGlobal(
         'fetch',
@@ -559,14 +576,14 @@ describe('submissions', () => {
           if (url.startsWith(GEOAPIFY_GEOCODE_ENDPOINT)) {
             const u = new URL(url);
             geocodes.push(u);
-            if (geocodeStatus !== 200) return new Response('', { status: geocodeStatus });
+            const status = geocodeStatus;
+            await geocodeHold.get(u.searchParams.get('text')!.toLowerCase());
+            if (status !== 200) return new Response('', { status });
             const results = GEOCODED[u.searchParams.get('text')!.toLowerCase()] ?? [];
             return Response.json({ results });
           }
-          if (url.startsWith(NOMINATIM_ENDPOINT)) {
-            nominatim.push(new URL(url));
-            if (nominatimStatus !== 200) return new Response('', { status: nominatimStatus });
-            return Response.json([]);
+          if (/^https?:\/\//.test(url) && !url.startsWith('https://api.geoapify.com/')) {
+            unexpected.push(url);
           }
           if (!url.startsWith('https://api.geoapify.com/')) return indexFetch(url, init);
           const u = new URL(url);
@@ -857,15 +874,23 @@ describe('submissions', () => {
 
     it('explains failed or empty address searches and retries', async () => {
       const user = userEvent.setup();
-      geocodeStatus = 500;
-      nominatimStatus = 500;
+      geocodeStatus = 429;
       visit('submit/');
       await screen.findByRole('button', { name: '图钉：Noodle Corner' });
       const input = screen.getByRole('searchbox', { name: '输入地址或地点' });
       await user.type(input, 'Norfolk{Enter}');
-      // Geoapify failed, so the free fallback was tried before giving up.
+      // Geoapify refused: no other geocoder is asked.
       expect(await screen.findByText(/地点搜索暂时不可用/)).toBeInTheDocument();
-      expect(nominatim).toHaveLength(1);
+      expect(geocodes).toHaveLength(1);
+      expect(unexpected).toEqual([]);
+      // The presets and the map still work, and the old message goes away.
+      await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+      expect(mapView()).toBe('29.7040,-95.5560,15');
+      expect(screen.queryByText(/地点搜索暂时不可用/)).not.toBeInTheDocument();
+      // Failures are not cached: searching again asks again.
+      await user.type(input, '{Enter}');
+      expect(await screen.findByText(/地点搜索暂时不可用/)).toBeInTheDocument();
+      expect(geocodes).toHaveLength(2);
       geocodeStatus = 200;
       await user.click(screen.getByRole('button', { name: '重试' }));
       await waitFor(() => expect(mapView()).toBe('29.7333,-95.4123,16'));
@@ -875,6 +900,166 @@ describe('submissions', () => {
       // The map stays where it was, and usable.
       expect(mapView()).toBe('29.7333,-95.4123,16');
       expect(screen.getByRole('button', { name: '拖动地图' })).toBeInTheDocument();
+    });
+
+    describe('the last location request wins', () => {
+      const status = () => screen.getByText(/^当前查找区域：/);
+      const CHINATOWN = '29.7040,-95.5560,15';
+      /** Geolocation that answers only when the test says so. */
+      const pendingLocation = () => {
+        const pending: { ok: PositionCallback; fail: PositionErrorCallback }[] = [];
+        geolocation.getCurrentPosition.mockImplementation(
+          (ok: PositionCallback, fail: PositionErrorCallback) => pending.push({ ok, fail }),
+        );
+        return {
+          succeed: () => act(() => pending.shift()!.ok({ coords: DEVICE } as GeolocationPosition)),
+          deny: () =>
+            act(() =>
+              pending.shift()!.fail({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError),
+            ),
+        };
+      };
+      const ready = async () => {
+        visit('submit/');
+        await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+        return screen.getByRole('searchbox', { name: '输入地址或地点' });
+      };
+
+      it('keeps a preset chosen while an address search was pending', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        expect(screen.getByText('正在搜索地点…')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        expect(mapView()).toBe(CHINATOWN);
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe(CHINATOWN);
+        expect(status()).toHaveTextContent('Chinatown 周边');
+        expect(screen.queryByText('正在搜索地点…')).not.toBeInTheDocument();
+        expect(screen.queryByRole('list', { name: '地点搜索结果' })).not.toBeInTheDocument();
+      });
+
+      it('uses the later of two searches when the earlier answers last', async () => {
+        const user = userEvent.setup();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.clear(input);
+        await user.type(input, 'Westheimer{Enter}');
+        await waitFor(() => expect(mapView()).toBe('29.7375,-95.4422,16'));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(mapView()).toBe('29.7375,-95.4422,16');
+        expect(status()).toHaveTextContent('Westheimer Rd');
+        expect(screen.queryByText('2111 Norfolk St')).not.toBeInTheDocument();
+      });
+
+      it('ignores a location that arrives after a preset was chosen', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        await ready();
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        expect(screen.getByRole('button', { name: '正在定位…' })).toBeDisabled();
+        await user.click(screen.getByRole('button', { name: 'Rice University 周边' }));
+        // The preset applies at once, without waiting for the location.
+        expect(screen.getByRole('button', { name: '使用当前位置' })).toBeEnabled();
+        location.succeed();
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(status()).toHaveTextContent('Rice University 周边');
+        // A late failure shows no message either.
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        location.deny();
+        expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
+        expect(mapView()).toBe(CHINATOWN);
+      });
+
+      it('shows no stale error after the contributor moved on', async () => {
+        const user = userEvent.setup();
+        geocodeStatus = 503;
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(screen.queryByText(/地点搜索暂时不可用/)).not.toBeInTheDocument();
+        expect(mapView()).toBe(CHINATOWN);
+      });
+
+      it('keeps the result the contributor chose over a later location answer', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        const input = await ready();
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.type(input, 'Main St{Enter}');
+        await user.click(
+          within(await screen.findByRole('list', { name: '地点搜索结果' })).getByRole('button', {
+            name: /Sugar Land/,
+          }),
+        );
+        location.succeed();
+        expect(mapView()).toBe('29.6200,-95.6300,16');
+        expect(status()).toHaveTextContent('Main St');
+      });
+
+      it('never moves a manually placed marker, whatever answers late', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        const release = holdGeocode('norfolk');
+        visit('submit/');
+        await user.click(await screen.findByRole('button', { name: '手动添加餐厅' }));
+        await user.type(screen.getByLabelText('餐厅名称'), 'Marker Cafe');
+        await user.click(screen.getByRole('button', { name: '在地图上点一下' }));
+        expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
+        await user.type(
+          screen.getByRole('searchbox', { name: '输入地址或地点' }),
+          'Norfolk{Enter}',
+        );
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        await user.click(screen.getByRole('button', { name: 'Chinatown 周边' }));
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        location.succeed();
+        const manualMap = screen.getByLabelText('标出餐厅位置的地图');
+        expect(manualMap.getAttribute('data-view')).toBe(CHINATOWN);
+        // No offer to use the stale search result as the location.
+        expect(
+          screen.queryByRole('button', { name: '用这个地点作为餐厅位置' }),
+        ).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '下一步' }));
+        await user.click(screen.getByRole('button', { name: NEXT }));
+        expect(formParams()).toMatchObject({
+          restaurant_name: 'Marker Cafe',
+          restaurant_lat: '29.700000',
+          restaurant_lng: '-95.400000',
+        });
+      });
+
+      it('ignores answers that arrive after the area controls are gone', async () => {
+        const user = userEvent.setup();
+        const location = pendingLocation();
+        const release = holdGeocode('norfolk');
+        const input = await ready();
+        await user.type(input, 'Norfolk{Enter}');
+        await user.click(screen.getByRole('button', { name: '使用当前位置' }));
+        // Leaving the selection map unmounts its area controls.
+        await user.click(screen.getByRole('button', { name: '手动添加餐厅' }));
+        const manualMap = () =>
+          screen.getByLabelText('标出餐厅位置的地图').getAttribute('data-view');
+        const before = manualMap();
+        await act(async () => release());
+        await new Promise((r) => setTimeout(r, 20));
+        location.succeed();
+        expect(manualMap()).toBe(before);
+        expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('Rice University 周边');
+        // Back on the selection map, nothing moved it while it was gone.
+        await user.click(screen.getByRole('button', { name: '返回搜索' }));
+        expect(mapView()).toBe('29.7174,-95.4018,15');
+        expect(screen.getByText(/^当前查找区域：/)).toHaveTextContent('Rice University 周边');
+      });
     });
 
     it('searches restaurant names around the current area', async () => {

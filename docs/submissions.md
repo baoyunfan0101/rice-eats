@@ -40,8 +40,12 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   click; a denial leaves the other ways), and "输入地址或地点" (a street
   address, landmark, or other place, searched only when submitted). A single
   match moves the map at once; several are listed by name and address to
-  choose from; a failed search offers "重试", and the map can always be
-  dragged. "当前查找区域：…" names the area while the map is within about
+  choose from; a failed search offers "重试", and the presets, the current
+  location, the map, and manual entry keep working. The last request wins:
+  each action (a preset, "使用当前位置", a search, choosing a result)
+  cancels the pending search and makes any older answer, including a late
+  device location or a late error, change nothing, so the map always ends
+  where the contributor last asked for. "当前查找区域：…" names the area while the map is within about
   1.2 km of its center, and "地图当前位置附近" once the contributor has moved
   away. Choosing an area only moves the map: it never selects a restaurant,
   and the selected restaurant and the area are separate (both are kept when
@@ -116,10 +120,13 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   request and the current location comes from the browser. Address search
   uses the Geoapify Geocoding API (same key; one credit per search), biased
   to the map center, only on submit, cached per query and area for the
-  session; without a key or when Geoapify refuses or fails, it uses
-  OpenStreetMap [Nominatim](https://nominatim.org/) within its
+  session (failures are not cached). There is deliberately no fallback to
+  the public OpenStreetMap Nominatim service: its
   [usage policy](https://operations.osmfoundation.org/policies/nominatim/)
-  (no autocomplete, at most one request a second, cached). Nearby
+  limits the whole site to one request a second, which a static site cannot
+  enforce across visitors. Without a key, the page says address search is
+  unavailable and sends nothing; when Geoapify refuses or fails, it says so
+  and offers "重试". Nearby
   restaurants use Geoapify Places by cached tiles, and name searches a
   bounded circle; Overpass is only the fallback (one batched request per
   view), never queried alongside Geoapify. No details service is needed:
