@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { RestaurantSummary } from '../../shared/content/model';
 import type { Rating } from '../../shared/content/vocabulary';
 import {
@@ -399,26 +399,42 @@ function PriceRange({ state, onChange }: { state: BrowseState; onChange: Change 
   const low = Math.min(state.priceMin ?? 0, PRICE_SLIDER_MAX);
   const high =
     state.priceMax === undefined ? PRICE_SLIDER_MAX : Math.min(state.priceMax, PRICE_SLIDER_MAX);
-  const text = (v: number) => (v >= PRICE_SLIDER_MAX ? `$${PRICE_SLIDER_MAX}+` : `$${v}`);
+  // The tags show the actual values, also beyond the slider's end (from a link).
+  const lowText = `$${state.priceMin ?? 0}`;
+  const highText = state.priceMax === undefined ? `$${PRICE_SLIDER_MAX}+` : `$${state.priceMax}`;
   // Thumb centers (the thumbs are 20px wide): keeps the value tags on their thumbs.
   const at = (v: number) =>
     `calc(${(v / PRICE_SLIDER_MAX) * 100}% + ${10 - (v / PRICE_SLIDER_MAX) * 20}px)`;
+  // Near either end, a tag aligns with that end instead of overflowing it.
+  const tagAt = (v: number): CSSProperties =>
+    v < PRICE_SLIDER_MAX * 0.15
+      ? { left: 0 }
+      : v > PRICE_SLIDER_MAX * 0.85
+        ? { right: 0 }
+        : { left: at(v), transform: 'translateX(-50%)' };
+  // Close values share one tag, so the tags never overlap.
   const close = high - low < PRICE_SLIDER_MAX * 0.2;
+  const together =
+    state.priceMax !== undefined && (state.priceMin ?? 0) === state.priceMax
+      ? lowText
+      : state.priceMax === undefined && low >= PRICE_SLIDER_MAX
+        ? `${lowText}+`
+        : `${lowText}–${highText.slice(1)}`;
   const tag =
-    'absolute top-0 -translate-x-1/2 rounded bg-ink px-1.5 text-[11px] leading-5 font-semibold whitespace-nowrap text-white';
+    'absolute top-0 rounded bg-ink px-1.5 text-[11px] leading-5 font-semibold whitespace-nowrap text-white';
   return (
     <div className="relative h-12">
       {close ? (
-        <span aria-hidden="true" className={tag} style={{ left: at((low + high) / 2) }}>
-          {low === high ? text(low) : `${text(low)}–${text(high).slice(1)}`}
+        <span aria-hidden="true" className={tag} style={tagAt((low + high) / 2)}>
+          {together}
         </span>
       ) : (
         <>
-          <span aria-hidden="true" className={tag} style={{ left: at(low) }}>
-            {text(low)}
+          <span aria-hidden="true" className={tag} style={tagAt(low)}>
+            {lowText}
           </span>
-          <span aria-hidden="true" className={tag} style={{ left: at(high) }}>
-            {text(high)}
+          <span aria-hidden="true" className={tag} style={tagAt(high)}>
+            {highText}
           </span>
         </>
       )}
@@ -430,7 +446,9 @@ function PriceRange({ state, onChange }: { state: BrowseState; onChange: Change 
       <input
         type="range"
         aria-label="最低人均"
-        aria-valuetext={text(low)}
+        aria-valuetext={lowText}
+        // When the handles meet at the top end, the lower one must stay reachable.
+        style={low >= high && low > 0 ? { zIndex: 1 } : undefined}
         min={0}
         max={PRICE_SLIDER_MAX}
         step={PRICE_STEP}
@@ -444,7 +462,7 @@ function PriceRange({ state, onChange }: { state: BrowseState; onChange: Change 
       <input
         type="range"
         aria-label="最高人均"
-        aria-valuetext={high >= PRICE_SLIDER_MAX ? '不限' : text(high)}
+        aria-valuetext={state.priceMax === undefined ? '不限' : highText}
         min={0}
         max={PRICE_SLIDER_MAX}
         step={PRICE_STEP}

@@ -113,6 +113,24 @@ test('the price range and the sort work together without changing the map', asyn
   await expect(markers(page)).toHaveCount(3);
 });
 
+test('a price beyond the slider reads as it is and can be lowered by dragging', async ({
+  page,
+}) => {
+  await page.goto('/rice-eats/?min=150');
+  await expect(page.getByText('没有符合条件的餐厅')).toBeVisible();
+  await page.getByRole('button', { name: /^\$150 以上/ }).click();
+  const panel = page.locator('#filter-panel');
+  await expect(panel.getByText('$150+')).toBeVisible();
+  // Both handles sit at the end; the lower one is on top and drags back.
+  const slider = (await panel.getByRole('slider', { name: '最低人均' }).boundingBox())!;
+  await page.mouse.move(slider.x + slider.width - 10, slider.y + slider.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(slider.x + slider.width * 0.25, slider.y + slider.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\?min=2\d$/);
+  await expect(markers(page)).not.toHaveCount(0);
+});
+
 test('distance sorting asks for the location only when chosen', async ({ page, context }) => {
   await context.grantPermissions(['geolocation']);
   await context.setGeolocation({ latitude: 29.7053, longitude: -95.5465 }); // at the Sichuan fixture
@@ -148,6 +166,41 @@ test('using the map never changes the explorer', async ({ page }) => {
   await expect(page).toHaveURL(/\?tag=group&sort=name$/);
   expect(await listNames(page)).toEqual(names);
   await expect(markers(page)).toHaveCount(3);
+});
+
+test('a map gesture during the refit delay wins over the pending refit', async ({ page }) => {
+  await page.goto('/rice-eats/');
+  await expect(markers(page)).toHaveCount(WITH_LOCATION);
+  await page.waitForTimeout(500);
+  const map = page.getByRole('region', { name: '餐厅地图' });
+  const box = (await map.boundingBox())!;
+  /** How far the only marker is from the map's horizontal center (a refit centers it). */
+  const offCenter = async () => {
+    const pin = (await markers(page).first().boundingBox())!;
+    return Math.abs(pin.x + pin.width / 2 - (box.x + box.width / 2));
+  };
+
+  // Change the results (one restaurant), then drag at once, inside the refit delay.
+  await page.getByRole('searchbox').fill('拉面');
+  await page.mouse.move(box.x + box.width / 2, box.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 160, box.y + 80, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(1200);
+  await expect(markers(page)).toHaveCount(1);
+  // The pending refit was dropped: the restaurant was not centered.
+  expect(await offCenter()).toBeGreaterThan(60);
+
+  // The zoom buttons count too.
+  await page.getByRole('searchbox').fill('蜀味');
+  await map.getByRole('button', { name: 'Zoom out' }).click();
+  await page.waitForTimeout(1200);
+  await expect(markers(page)).toHaveCount(1);
+  expect(await offCenter()).toBeGreaterThan(60);
+
+  // Without a gesture, a change of results refits: the restaurant is centered.
+  await page.getByRole('searchbox').fill('灯笼');
+  await expect.poll(offCenter, { timeout: 3000 }).toBeLessThan(20);
 });
 
 test('map shows located restaurants and opens details from a marker', async ({ page }) => {
@@ -195,6 +248,68 @@ test('the list shows a restaurant on the map', async ({ page }) => {
     0,
   );
 });
+
+for (const [name, size] of [
+  ['small', { width: 320, height: 568 }],
+  ['large', { width: 430, height: 932 }],
+] as const) {
+  test(`mobile (${name}): the pin preview always fits above the bottom sheet`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'mobile', 'mobile layout');
+    await page.setViewportSize(size);
+    await page.goto('/rice-eats/');
+    await expect(markers(page)).toHaveCount(WITH_LOCATION);
+    const sheet = page.getByRole('region', { name: '餐厅列表面板' });
+    const preview = page.getByRole('region', { name: '灯笼拉面（虚构示例） 预览' });
+    const handle = () => sheet.getByRole('button', { name: /^列表/ });
+    /** The preview is entirely inside the map, above the sheet. */
+    const fits = async () => {
+      const card = (await preview.boundingBox())!;
+      const map = (await page.getByRole('region', { name: '餐厅地图' }).boundingBox())!;
+      const top = (await sheet.boundingBox())!.y;
+      expect(card.y).toBeGreaterThanOrEqual(map.y);
+      expect(card.y + card.height).toBeLessThanOrEqual(top);
+      await expect(preview.getByRole('button', { name: '关闭预览' })).toBeVisible();
+    };
+    const marker = page.getByRole('button', { name: '灯笼拉面（虚构示例）', exact: true });
+    await marker.focus();
+    await marker.press('Enter');
+    // Half expanded (the default).
+    await expect(preview).toBeVisible();
+    await fits();
+    // Expanded: no room above the sheet, so no preview; the selection stays.
+    await handle().click();
+    await expect(sheet).toHaveAttribute('data-state', 'expanded');
+    await expect(preview).toHaveCount(0);
+    await expect(page).toHaveURL(/id=fixture-lantern-noodles/);
+    // Back to half: the preview returns.
+    await handle().click();
+    await expect(sheet).toHaveAttribute('data-state', 'half');
+    await page.waitForTimeout(300);
+    await expect(preview).toBeVisible();
+    await fits();
+    // Collapsed: still there.
+    const bar = (await handle().boundingBox())!;
+    await page.mouse.move(bar.x + bar.width / 2, bar.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(bar.x + bar.width / 2, size.height - 4, { steps: 6 });
+    await page.mouse.up();
+    await expect(sheet).toHaveAttribute('data-state', 'collapsed');
+    await page.waitForTimeout(300);
+    await fits();
+    // A filter that excludes it removes the preview.
+    await handle().click();
+    await filter(page, /^菜系/, '川菜');
+    await expect(preview).toHaveCount(0);
+    await expect(page).not.toHaveURL(/id=/);
+    // Details from the preview.
+    await page.goto('/rice-eats/?id=fixture-lantern-noodles');
+    await expect(preview).toBeVisible();
+    await preview.getByRole('link', { name: '查看详情' }).click();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('灯笼拉面（虚构示例）');
+  });
+}
 
 test('desktop: explorer and map side by side, the list scrolls on its own', async ({
   page,

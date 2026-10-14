@@ -1,12 +1,13 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
 import { RICE_CENTER, type LatLng, type RestaurantSummary } from '../../shared/content/model';
 import { RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { metaLine } from '../lib/format';
+import { onUserMove } from '../lib/mapGestures';
 import { restaurantHref } from '../lib/router';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
@@ -24,6 +25,8 @@ const MAX_FIT_ZOOM = 15;
 const MIN_FIT_ZOOM = 10;
 /** Zoom used when the list asks to show one restaurant. */
 const FOCUS_ZOOM = 16;
+/** Height the preview card needs above the overlays, with its margins. */
+const PREVIEW_SPACE = 160;
 /** Typing changes the results often; the map refits once the results settle. */
 const FIT_DELAY_MS = 250;
 
@@ -72,9 +75,30 @@ export default function DiscoveryMap({
   const missing = restaurants.length - located.length;
   const current = restaurants.find((r) => r.id === selected);
   const [tilesFailed, setTilesFailed] = useState(false);
+  const pendingFitRef = useRef<() => void>(undefined);
+  // The preview needs room above the overlays (the expanded bottom sheet
+  // leaves almost none): without it, the pin stays selected and the preview
+  // comes back when there is room again.
+  const frame = useRef<HTMLDivElement>(null);
+  const [frameHeight, setFrameHeight] = useState(0);
+  useEffect(() => {
+    const element = frame.current;
+    if (!element) return;
+    const update = () => setFrameHeight(element.clientHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const previewFits = frameHeight - insets.top - insets.bottom >= PREVIEW_SPACE;
 
   return (
-    <div role="region" aria-label="餐厅地图" className="relative h-full w-full overflow-hidden">
+    <div
+      ref={frame}
+      role="region"
+      aria-label="餐厅地图"
+      className="relative h-full w-full overflow-hidden"
+    >
       <MapContainer
         center={[RICE_CENTER.lat, RICE_CENTER.lng]}
         zoom={13}
@@ -88,11 +112,17 @@ export default function DiscoveryMap({
         />
         <FocusWithoutScrolling />
         <KeepSize />
-        <FitToResults located={located} fitKey={fitKey} insets={insets} />
+        <FitToResults
+          located={located}
+          fitKey={fitKey}
+          insets={insets}
+          pendingRef={pendingFitRef}
+        />
         <FocusSelected
           restaurant={current?.location ? (current as Located) : undefined}
           request={focusRequest}
           insets={insets}
+          pendingFitRef={pendingFitRef}
         />
         {located.map((r) => (
           <Marker
@@ -138,7 +168,7 @@ export default function DiscoveryMap({
         )}
       </div>
 
-      {current && (
+      {current && previewFits && (
         <Preview restaurant={current} bottom={insets.bottom} onClose={() => onSelect('')} />
       )}
     </div>
@@ -230,10 +260,13 @@ function FitToResults({
   located,
   fitKey,
   insets,
+  pendingRef,
 }: {
   located: Located[];
   fitKey: string;
   insets: Insets;
+  /** Cancels the fit waiting for its delay, if any. */
+  pendingRef: RefObject<(() => void) | undefined>;
 }) {
   const map = useMap();
   const fitted = useRef<string>(undefined);
@@ -261,9 +294,30 @@ function FitToResults({
       fit();
       return;
     }
-    const timer = setTimeout(fit, FIT_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [map, fitKey]);
+    // Last user intent wins: moving the map by hand, or asking the list to
+    // show a restaurant, before the delay ends cancels this fit for good (a
+    // later change of results fits again).
+    let stopWatching = () => {};
+    const cancel = () => {
+      clearTimeout(timer);
+      stopWatching();
+      fitted.current = fitKey;
+      if (pendingRef.current === cancel) pendingRef.current = undefined;
+    };
+    const timer = setTimeout(() => {
+      stopWatching();
+      pendingRef.current = undefined;
+      fit();
+    }, FIT_DELAY_MS);
+    stopWatching = onUserMove(map, cancel);
+    pendingRef.current = cancel;
+    return () => {
+      // Unmounted or superseded by newer results: nothing runs later.
+      clearTimeout(timer);
+      stopWatching();
+      if (pendingRef.current === cancel) pendingRef.current = undefined;
+    };
+  }, [map, fitKey, pendingRef]);
   return null;
 }
 
@@ -272,22 +326,26 @@ function FocusSelected({
   restaurant,
   request,
   insets,
+  pendingFitRef,
 }: {
   restaurant?: Located;
   request: number;
   insets: Insets;
+  pendingFitRef: RefObject<(() => void) | undefined>;
 }) {
   const map = useMap();
   const handled = useRef(0);
   useEffect(() => {
     if (request === handled.current || !restaurant) return;
     handled.current = request;
+    // The visitor asked for this restaurant: a pending fit must not move away from it.
+    pendingFitRef.current?.();
     const zoom = Math.max(map.getZoom(), FOCUS_ZOOM);
     // Center the restaurant in the part of the map that overlays leave visible.
     const point = map
       .project([restaurant.location.lat, restaurant.location.lng], zoom)
       .add([0, (insets.bottom - insets.top) / 2]);
     map.setView(map.unproject(point, zoom), zoom);
-  }, [map, request, restaurant, insets]);
+  }, [map, request, restaurant, insets, pendingFitRef]);
   return null;
 }

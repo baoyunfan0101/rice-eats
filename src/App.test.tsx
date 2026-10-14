@@ -335,6 +335,21 @@ describe('browsing', () => {
     expect(window.location.search).toBe('?min=20');
   });
 
+  it('shows a price from a link beyond the slider as it is', async () => {
+    const user = userEvent.setup();
+    visit('?min=150');
+    await screen.findByRole('region', { name: '餐厅地图' });
+    expect(screen.getByRole('button', { name: /^\$150 以上/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^\$150 以上/ }));
+    // The handles sit at the slider's end, but the tag says what is filtered.
+    expect(screen.getByText('$150+')).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: '最低人均' })).toHaveAttribute(
+      'aria-valuetext',
+      '$150',
+    );
+    expect(screen.getByText('没有符合条件的餐厅')).toBeInTheDocument();
+  });
+
   it('restores state from a shared or older URL and handles no results', async () => {
     const user = userEvent.setup();
     visit('?view=grid&q=zzz');
