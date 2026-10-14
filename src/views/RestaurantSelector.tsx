@@ -14,6 +14,7 @@ import {
   type RestaurantCandidate,
 } from '../lib/poi';
 import { Alternative } from '../components/Alternative';
+import { PixelCheck, PixelChevron, PixelPin } from '../components/PixelIcons';
 import { AreaPicker } from './AreaPicker';
 import type { MapArea } from './PickerMap';
 import type { Selection } from './submitTypes';
@@ -269,17 +270,15 @@ export function RestaurantSelector({
         intent={intent}
         onLocate={locate}
       />
-      <section
-        aria-labelledby="pick-title"
-        className="space-y-3 rounded-2xl border border-line bg-white p-4"
-      >
-        <div className="space-y-1">
-          <h2 id="pick-title" className="text-base font-bold">
+      <section aria-labelledby="pick-title" className="card space-y-3 p-4">
+        <div className="window-bar -mx-4 -mt-4">
+          <PixelPin className="size-4 text-chili-600" />
+          <h2 id="pick-title" className="text-base font-black">
             选择餐厅
           </h2>
-          <p className="text-sm text-muted">点地图上的餐厅图钉或名字来选择。</p>
         </div>
-        <Suspense fallback={<div className="h-80 rounded-xl bg-line sm:h-[28rem]" />}>
+        <p className="text-sm text-muted">点地图上的餐厅图钉或名字来选择。</p>
+        <Suspense fallback={<div className="h-80 border-2 border-ink bg-sand sm:h-[28rem]" />}>
           <PickerMap
             label="附近餐厅地图"
             className="h-80 sm:h-[28rem]"
@@ -320,7 +319,7 @@ export function RestaurantSelector({
             placeholder="输入餐厅名称"
             // Shown on request, so focus goes straight to it.
             autoFocus
-            className="min-h-11 w-full rounded-xl border border-line bg-white px-3"
+            className="field w-full"
           />
           <p className="mt-1 text-xs text-muted">
             只在当前地图范围内查找；拖动或缩放地图后结果会更新。
@@ -329,22 +328,16 @@ export function RestaurantSelector({
 
         {/* While searching by name the list always shows, with an accurate state. */}
         {(discovered.length > 0 || searching) && (
-          <div className="rounded-xl border border-line">
+          <div className="border-2 border-ink">
             <button
               type="button"
               aria-expanded={showList}
               aria-controls="candidate-list"
               onClick={() => setListOpen((o) => !o)}
               disabled={searching}
-              className="group flex min-h-11 w-full items-center gap-2 px-3 text-left text-sm font-semibold disabled:cursor-default"
+              className="group flex min-h-11 w-full items-center gap-2 px-3 text-left text-sm font-bold hover:bg-gold-100 disabled:cursor-default disabled:hover:bg-transparent"
             >
-              <svg
-                viewBox="0 0 20 20"
-                aria-hidden="true"
-                className="size-4 shrink-0 transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none"
-              >
-                <path d="M7.5 4.5 13 10l-5.5 5.5-1.1-1.1L10.8 10 6.4 5.6z" fill="currentColor" />
-              </svg>
+              <PixelChevron className="size-3.5 shrink-0 transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
               <span className="flex-1">
                 {!searching
                   ? `列表查看地图范围内的 ${discovered.length} 家餐厅`
@@ -357,7 +350,7 @@ export function RestaurantSelector({
               (nameState !== 'results' ? (
                 <p
                   role="status"
-                  className={`border-t border-line px-3 py-3 text-sm ${nameState === 'error' ? 'text-chili-700' : 'text-muted'}`}
+                  className={`border-t-2 border-ink px-3 py-3 text-sm ${nameState === 'error' ? 'text-chili-700' : 'text-muted'}`}
                 >
                   {nameState === 'too-wide'
                     ? '地图范围太大，放大地图后才能按名称查找。'
@@ -370,7 +363,7 @@ export function RestaurantSelector({
                     <button
                       type="button"
                       onClick={() => setAttempt((n) => n + 1)}
-                      className="ml-1 font-semibold text-chili-700 underline"
+                      className="text-action ml-1"
                     >
                       重试
                     </button>
@@ -383,7 +376,7 @@ export function RestaurantSelector({
                   candidates={area ? byDistance(listed, area.center) : listed}
                   selectedKey={selectedKey}
                   onSelect={(c) => choose(fromCandidate(c))}
-                  className="max-h-80 overflow-y-auto border-t border-line"
+                  className="max-h-80 overflow-y-auto border-t-2 border-ink"
                 />
               ))}
           </div>
@@ -391,11 +384,7 @@ export function RestaurantSelector({
 
         <p className="text-sm">
           还是找不到？
-          <button
-            type="button"
-            onClick={() => setManual(true)}
-            className="ml-1 font-semibold text-chili-700 underline"
-          >
+          <button type="button" onClick={() => setManual(true)} className="text-action ml-1">
             手动添加餐厅
           </button>
         </p>
@@ -426,7 +415,7 @@ function DiscoveryStatus({
   onRetry: () => void;
 }) {
   const retry = (
-    <button type="button" onClick={onRetry} className="ml-1 font-semibold text-chili-700 underline">
+    <button type="button" onClick={onRetry} className="text-action ml-1">
       重试
     </button>
   );
@@ -490,21 +479,20 @@ function SelectedRestaurant({
   return (
     <section
       aria-label="已选餐厅"
-      className="flex flex-wrap items-end justify-between gap-3 rounded-2xl border-2 border-chili-600 bg-white p-4"
+      className="card flex flex-wrap items-end justify-between gap-3 bg-gold-100 p-4 shadow-px-lg"
     >
       <div className="min-w-0 space-y-0.5">
-        <p className="text-xs font-semibold text-chili-700">已选餐厅</p>
-        <p className="text-lg leading-snug font-bold">{s.name}</p>
+        <p className="flex items-center gap-1.5 text-xs font-bold text-chili-700">
+          <PixelCheck className="size-3.5" />
+          已选餐厅
+        </p>
+        <p className="text-lg leading-snug font-black">{s.name}</p>
         {s.address && <p className="text-sm text-muted">{s.address}</p>}
         {!s.location && (
           <p className="text-sm text-chili-700">没有位置信息，审核时会再核实餐厅的位置。</p>
         )}
       </div>
-      <button
-        type="button"
-        onClick={onNext}
-        className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-5 text-sm font-semibold text-white hover:bg-chili-700"
-      >
+      <button type="button" onClick={onNext} className="btn btn-primary px-5">
         下一步：填写点评 →
       </button>
     </section>
@@ -538,17 +526,17 @@ function CandidateList({
   className: string;
 }) {
   return (
-    <ul id={id} aria-label={label} className={`divide-y divide-line ${className}`}>
+    <ul id={id} aria-label={label} className={`divide-y-2 divide-sand ${className}`}>
       {candidates.map((c) => (
         <li key={c.key}>
           <button
             type="button"
             onClick={() => onSelect(c)}
             aria-pressed={c.key === selectedKey}
-            className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-chili-50 aria-pressed:bg-chili-50"
+            className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-gold-100 aria-pressed:bg-gold-300"
           >
             <span className="min-w-0 flex-1">
-              <span className="block font-semibold">{c.name}</span>
+              <span className="block font-bold">{c.name}</span>
               {c.address && <span className="block text-sm text-muted">{c.address}</span>}
             </span>
             {c.distance !== undefined && (
@@ -596,17 +584,17 @@ function ManualEntry({
   return (
     <section aria-labelledby="manual-title" className="space-y-4">
       <div className="space-y-1">
-        <h2 id="manual-title" className="text-lg font-bold">
+        <h2 id="manual-title" className="section-title text-lg">
           手动添加餐厅
         </h2>
         <p className="text-sm text-muted">填写餐厅名称，并在地图上点出餐厅的位置。</p>
       </div>
       <label className="block">
-        <span className="text-sm font-semibold">餐厅名称</span>
+        <span className="text-sm font-bold">餐厅名称</span>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="mt-1 min-h-11 w-full rounded-xl border border-line bg-white px-3"
+          className="field mt-1 w-full"
         />
       </label>
       {!noLocation && (
@@ -623,17 +611,17 @@ function ManualEntry({
         />
       )}
       {/* Marking the restaurant is a box like "选择餐厅" on the selection page. */}
-      <section
-        aria-labelledby="mark-title"
-        className="space-y-3 rounded-2xl border border-line bg-white p-4"
-      >
-        <h2 id="mark-title" className="text-base font-bold">
-          标出餐厅位置
-        </h2>
+      <section aria-labelledby="mark-title" className="card space-y-3 p-4">
+        <div className="window-bar -mx-4 -mt-4">
+          <PixelPin className="size-4 text-chili-600" />
+          <h2 id="mark-title" className="text-base font-black">
+            标出餐厅位置
+          </h2>
+        </div>
         {!noLocation && (
           <>
             {found && !sameLocation(found.location, marker) && (
-              <div className="flex flex-wrap items-center gap-2 rounded-xl bg-chili-50 p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2 border-2 border-ink bg-gold-100 p-3 text-sm">
                 <span>「{found.name}」就是餐厅的位置吗？</span>
                 <button
                   type="button"
@@ -641,17 +629,17 @@ function ManualEntry({
                     setMarker(found.location);
                     setAddress(found.address ?? found.name);
                   }}
-                  className="font-semibold text-chili-700 underline"
+                  className="text-action"
                 >
                   用这个地点作为餐厅位置
                 </button>
               </div>
             )}
-            <p className="text-sm">
+            <p className="text-sm font-semibold">
               {marker ? '已标出位置，可以再点一下修改。' : '在地图上点一下餐厅所在的位置：'}
               {marker && address && <span className="block text-xs text-muted">{address}</span>}
             </p>
-            <Suspense fallback={<div className="h-72 rounded-2xl bg-line sm:h-96" />}>
+            <Suspense fallback={<div className="h-72 border-2 border-ink bg-sand sm:h-96" />}>
               <PickerMap
                 label="标出餐厅位置的地图"
                 view={view}
@@ -678,7 +666,7 @@ function ManualEntry({
               setNoLocation(e.target.checked);
               if (e.target.checked) setMarker(undefined);
             }}
-            className="mt-1 size-4"
+            className="mt-0.5 size-4 accent-chili-600"
           />
           <span>我不确定具体位置（审核时会再核实位置）</span>
         </label>
@@ -695,15 +683,11 @@ function ManualEntry({
               location: noLocation ? undefined : marker,
             })
           }
-          className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700 disabled:opacity-50"
+          className="btn btn-primary"
         >
           下一步
         </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600"
-        >
+        <button type="button" onClick={onCancel} className="btn">
           返回搜索
         </button>
       </div>

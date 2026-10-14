@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { PixelChevron } from './PixelIcons';
 
 /**
  * A fallback way to do something, collapsed until asked for: a small
@@ -25,15 +26,9 @@ export function Alternative({
         aria-expanded={open}
         aria-controls={id}
         onClick={onToggle}
-        className="group inline-flex min-h-8 items-center gap-1 text-sm font-semibold text-chili-700 hover:underline"
+        className="group inline-flex min-h-8 items-center gap-1 text-sm font-bold text-chili-700 hover:underline hover:decoration-2 hover:underline-offset-4"
       >
-        <svg
-          viewBox="0 0 20 20"
-          aria-hidden="true"
-          className="size-4 transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none"
-        >
-          <path d="M7.5 4.5 13 10l-5.5 5.5-1.1-1.1L10.8 10 6.4 5.6z" fill="currentColor" />
-        </svg>
+        <PixelChevron className="size-3.5 transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
         或者：{label}
       </button>
       {open && <div id={id}>{children}</div>}

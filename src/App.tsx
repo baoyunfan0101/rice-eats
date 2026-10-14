@@ -28,7 +28,7 @@ export function App() {
           icon="🧭"
           title="页面不存在"
           action={
-            <Link href={browseHref()} className="font-semibold text-chili-700 underline">
+            <Link href={browseHref()} className="btn btn-primary">
               返回首页
             </Link>
           }

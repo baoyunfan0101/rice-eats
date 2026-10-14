@@ -5,20 +5,22 @@ import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
 import { RICE_CENTER, type LatLng, type RestaurantSummary } from '../../shared/content/model';
 import { RatingBadge } from '../components/Badges';
 import { Link } from '../components/Link';
+import { PixelChevron, PixelCross } from '../components/PixelIcons';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { metaLine } from '../lib/format';
 import { onUserMove } from '../lib/mapGestures';
+import { pinIconOptions } from '../lib/pin';
 import { restaurantHref } from '../lib/router';
 import { TILE_ATTRIBUTION, TILE_URL } from '../lib/tiles';
 
+/** Pins anchored at their tip (src/lib/pin.ts), like the submission map's. */
 const pinIcons = {
-  normal: L.divIcon({ className: 'map-pin', html: '<span></span>', iconSize: [32, 32] }),
-  selected: L.divIcon({
-    className: 'map-pin is-selected',
-    html: '<span></span>',
-    iconSize: [32, 32],
-  }),
+  normal: L.divIcon(pinIconOptions(false)),
+  selected: L.divIcon(pinIconOptions(true)),
 };
+
+/** Notes over the map (no locations, failed tiles). */
+const NOTE = 'border-2 border-ink bg-cream px-2.5 py-1 text-xs font-semibold shadow-px-sm';
 
 /** Fitting never zooms in closer than this (one restaurant), nor out further than MIN_FIT_ZOOM. */
 const MAX_FIT_ZOOM = 15;
@@ -102,7 +104,7 @@ export default function DiscoveryMap({
       <MapContainer
         center={[RICE_CENTER.lat, RICE_CENTER.lng]}
         zoom={13}
-        className="h-full w-full bg-line"
+        className="h-full w-full bg-sand"
       >
         <TileLayer
           url={TILE_URL}
@@ -149,20 +151,15 @@ export default function DiscoveryMap({
         style={{ top: insets.top + 12 }}
       >
         {located.length === 0 && restaurants.length > 0 && (
-          <p role="status" className="rounded-full bg-white/95 px-3 py-1 text-xs text-muted shadow">
+          <p role="status" className={`${NOTE} text-muted`}>
             当前结果都没有位置信息
           </p>
         )}
         {missing > 0 && located.length > 0 && (
-          <p className="rounded-full bg-white/95 px-3 py-1 text-xs text-muted shadow">
-            {missing} 家餐厅暂无位置信息，未在地图上显示
-          </p>
+          <p className={`${NOTE} text-muted`}>{missing} 家餐厅暂无位置信息，未在地图上显示</p>
         )}
         {tilesFailed && (
-          <p
-            role="status"
-            className="rounded-full bg-white/95 px-3 py-1 text-xs text-chili-700 shadow"
-          >
+          <p role="status" className={`${NOTE} text-chili-700`}>
             部分地图底图加载失败，标记位置仍然有效
           </p>
         )}
@@ -187,36 +184,35 @@ function Preview({
   return (
     <section
       aria-label={`${r.name} 预览`}
-      className="absolute right-3 left-3 z-[1000] mx-auto flex max-w-md gap-3 rounded-2xl bg-white p-3 shadow-xl sm:right-auto sm:left-4 sm:w-96"
+      className="card absolute right-3 left-3 z-[1000] mx-auto flex max-w-md gap-3 p-2.5 shadow-px-lg sm:right-auto sm:left-4 sm:w-96"
       style={{ bottom: bottom + 16 }}
     >
+      {/* The real photo, unpixelated, in a pixel frame. */}
       <RestaurantImage
         decorative
         image={r.cover}
         sizes="96px"
-        className="aspect-square w-20 shrink-0 rounded-xl sm:w-24"
+        className="aspect-square w-20 shrink-0 border-2 border-ink sm:w-24"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-start gap-2">
-          <h2 className="min-w-0 flex-1 leading-snug font-bold">{r.name}</h2>
+          <h2 className="min-w-0 flex-1 leading-snug font-black">{r.name}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="关闭预览"
-            className="-mt-1 -mr-1 flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-line/60"
+            className="btn btn-sm -mt-0.5 -mr-0.5 size-8 shrink-0 p-0"
           >
-            ✕
+            <PixelCross className="size-3.5" />
           </button>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted">
           <RatingBadge rating={r.rating} />
           <span className="truncate">{metaLine(r)}</span>
         </div>
-        <Link
-          href={restaurantHref(r.id)}
-          className="mt-auto self-start rounded-full bg-chili-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-chili-700"
-        >
+        <Link href={restaurantHref(r.id)} className="btn btn-primary btn-sm mt-auto self-start">
           查看详情
+          <PixelChevron className="size-2.5" />
         </Link>
       </div>
     </section>

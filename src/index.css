@@ -1,19 +1,45 @@
 @import 'tailwindcss';
 
+/*
+ * Campus Quest: a warm, light, retro-RPG design system. Pixel character comes
+ * from solid ink outlines, hard offset shadows (never blurred), stepped
+ * corners on small tags, and a pixel display face for Latin text and numbers.
+ * Body text stays in the system CJK sans for readability; photos are never
+ * pixelated.
+ */
 @theme {
   --font-sans:
     -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
     'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
-  --color-paper: #fbf7f2;
-  --color-ink: #231d19;
-  --color-muted: #6f655d;
-  --color-line: #e8dfd5;
-  --color-chili-50: #fdf2ec;
-  --color-chili-100: #fae0d3;
-  --color-chili-600: #b4441f;
-  --color-chili-700: #943417;
-  --color-basil-600: #3f7a4f;
-  --color-basil-50: #ecf5ee;
+  /* Latin letters and digits only; Chinese falls through to the sans stack. */
+  --font-pixel:
+    'Silkscreen', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+
+  --color-paper: #fbf5e8;
+  --color-cream: #fffcf4;
+  --color-sand: #f3e6c9;
+  --color-ink: #242238;
+  --color-muted: #5c566b;
+  --color-line: #e2d3b3;
+  /* Primary: tomato. 500 decorates; 600 carries white text; 700 is text on paper. */
+  --color-chili-50: #fdeee7;
+  --color-chili-100: #f8d8cb;
+  --color-chili-500: #da6548;
+  --color-chili-600: #bf4a2f;
+  --color-chili-700: #973620;
+  /* Accent: gold, for selection and highlights (always with ink text). */
+  --color-gold-100: #fdf0c8;
+  --color-gold-300: #f6c858;
+  --color-gold-700: #7a5a10;
+  /* Secondary: sage. */
+  --color-basil-50: #eaf3e8;
+  --color-basil-300: #90b88e;
+  --color-basil-600: #3d6b45;
+
+  --shadow-px-sm: 2px 2px 0 0 var(--color-ink);
+  --shadow-px: 3px 3px 0 0 var(--color-ink);
+  --shadow-px-lg: 5px 5px 0 0 var(--color-ink);
 }
 
 @layer base {
@@ -25,11 +51,233 @@
     @apply bg-paper text-ink antialiased;
   }
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-chili-600;
+    outline: 3px solid var(--color-chili-600);
+    outline-offset: 2px;
+  }
+  ::selection {
+    @apply bg-gold-300 text-ink;
   }
 }
 
-/* Editorial content rendered from review.md. */
+/* ---------------------------------------------------------------------------
+ * Components. Each is a utility, so Tailwind's variants and overrides apply.
+ */
+
+/* Stepped corners: the corner pixel of a 2px border is cut away. */
+@utility px-corners {
+  clip-path: polygon(
+    2px 0,
+    calc(100% - 2px) 0,
+    calc(100% - 2px) 2px,
+    100% 2px,
+    100% calc(100% - 2px),
+    calc(100% - 2px) calc(100% - 2px),
+    calc(100% - 2px) 100%,
+    2px 100%,
+    2px calc(100% - 2px),
+    0 calc(100% - 2px),
+    0 2px,
+    2px 2px
+  );
+}
+
+/* A surface: cream, ink outline, hard shadow. */
+@utility card {
+  background-color: var(--color-cream);
+  border: 2px solid var(--color-ink);
+  box-shadow: var(--shadow-px);
+}
+
+/* A quest window: a card whose first child is a gold title bar (`window-bar`). */
+@utility window-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: var(--color-gold-300);
+  border-bottom: 2px solid var(--color-ink);
+  padding: 0.5rem 1rem;
+}
+
+/* Buttons and button-like links. */
+@utility btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+  border: 2px solid var(--color-ink);
+  background-color: var(--color-cream);
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: var(--shadow-px);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    transform 80ms steps(2),
+    box-shadow 80ms steps(2),
+    background-color 80ms;
+  &:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 0 var(--color-ink);
+  }
+  &:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 0 var(--color-ink);
+  }
+  &:disabled,
+  &[aria-disabled='true'] {
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+    border-color: var(--color-muted);
+    color: var(--color-muted);
+    background-color: var(--color-sand);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+@utility btn-primary {
+  background-color: var(--color-chili-600);
+  color: #fff;
+  &:hover:not(:disabled) {
+    background-color: var(--color-chili-700);
+  }
+}
+@utility btn-accent {
+  background-color: var(--color-gold-300);
+  &:hover:not(:disabled) {
+    background-color: #f2bb3c;
+  }
+}
+@utility btn-dark {
+  background-color: var(--color-ink);
+  color: var(--color-cream);
+  &:hover:not(:disabled) {
+    background-color: #36334f;
+  }
+}
+@utility btn-sm {
+  min-height: 2rem;
+  padding-inline: 0.625rem;
+  font-size: 0.8125rem;
+  box-shadow: var(--shadow-px-sm);
+  &:hover {
+    box-shadow: 3px 3px 0 0 var(--color-ink);
+  }
+  &:active {
+    box-shadow: none;
+  }
+}
+
+/* Toggles (filter options, pressed and active states) and small buttons. */
+@utility chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2rem;
+  padding-inline: 0.625rem;
+  border: 2px solid var(--color-ink);
+  background-color: var(--color-cream);
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  &:hover {
+    background-color: var(--color-gold-100);
+  }
+  &[aria-pressed='true'],
+  &[data-active] {
+    background-color: var(--color-gold-300);
+    font-weight: 700;
+  }
+  &[aria-expanded='true'] {
+    background-color: var(--color-ink);
+    color: var(--color-cream);
+  }
+}
+
+/* Text inputs and selects: a sunken field. */
+@utility field {
+  min-height: 2.75rem;
+  border: 2px solid var(--color-ink);
+  background-color: var(--color-cream);
+  color: var(--color-ink);
+  padding-inline: 0.75rem;
+  box-shadow: inset 2px 2px 0 0 var(--color-sand);
+  &::placeholder {
+    color: color-mix(in srgb, var(--color-muted) 85%, transparent);
+  }
+  &:hover {
+    background-color: #fff;
+  }
+}
+
+/* Inline text actions (重试, 手动添加餐厅, …). */
+@utility text-action {
+  font-weight: 700;
+  color: var(--color-chili-700);
+  text-decoration-line: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--color-chili-100);
+  cursor: pointer;
+  &:hover {
+    text-decoration-color: var(--color-chili-600);
+  }
+}
+
+/* A small stepped label (ratings, verdicts, tags). */
+@utility tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.0625rem 0.5rem;
+  border: 2px solid var(--color-ink);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-weight: 700;
+  @apply px-corners;
+}
+
+/* An eyebrow line in the pixel face ("QUEST 1", counts). */
+@utility eyebrow {
+  font-family: var(--font-pixel);
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* A loading bar of marching pixel blocks. */
+@utility pixel-loader {
+  display: inline-block;
+  width: 3.5rem;
+  height: 0.875rem;
+  border: 2px solid var(--color-ink);
+  background-color: var(--color-cream);
+  background-image: linear-gradient(90deg, var(--color-chili-500) 50%, transparent 50%);
+  background-size: 0.75rem 100%;
+  background-repeat: repeat-x;
+  animation: pixel-march 0.8s steps(4) infinite;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@keyframes pixel-march {
+  to {
+    background-position: 0.75rem 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Editorial content rendered from review.md.
+ */
 .review {
   @apply text-[1.0625rem] leading-8 text-ink;
 }
@@ -37,19 +285,19 @@
   @apply mt-5;
 }
 .review h2 {
-  @apply mt-10 text-xl font-bold leading-snug;
+  @apply mt-10 border-b-2 border-ink pb-1 text-xl leading-snug font-black;
 }
 .review h3,
 .review h4,
 .review h5,
 .review h6 {
-  @apply mt-8 text-lg font-semibold;
+  @apply mt-8 text-lg font-bold;
 }
 .review a {
-  @apply font-medium text-chili-700 underline decoration-chili-100 decoration-2 underline-offset-4 hover:decoration-chili-600;
+  @apply text-action font-medium;
 }
 .review ul {
-  @apply list-disc pl-6;
+  @apply list-[square] pl-6;
 }
 .review ol {
   @apply list-decimal pl-6;
@@ -58,7 +306,7 @@
   @apply mt-1;
 }
 .review blockquote {
-  @apply border-l-4 border-chili-100 pl-4 text-muted;
+  @apply border-l-4 border-gold-300 bg-gold-100/50 py-1 pl-4 text-muted;
 }
 .review figure,
 .review img {
@@ -68,7 +316,7 @@
   @apply my-0;
 }
 .review img {
-  @apply h-auto max-h-[80vh] w-auto max-w-full rounded-xl bg-line object-contain;
+  @apply h-auto max-h-[80vh] w-auto max-w-full border-2 border-ink bg-sand object-contain;
 }
 .review figure {
   @apply flex flex-col items-center;
@@ -81,57 +329,102 @@
 }
 .review th,
 .review td {
-  @apply border border-line px-3 py-1.5 text-left;
+  @apply border-2 border-ink px-3 py-1.5 text-left;
+}
+.review th {
+  @apply bg-gold-100;
 }
 .review hr {
-  @apply my-10 border-line;
+  @apply my-10 border-t-2 border-dashed border-ink/40;
 }
 .review code {
-  @apply rounded bg-line/60 px-1 py-0.5 text-[0.9em];
+  @apply bg-sand px-1 py-0.5 text-[0.9em];
 }
 
-/* Leaflet: keep map controls below the sticky header and visible focus. */
+/* ---------------------------------------------------------------------------
+ * Leaflet: the map itself (tiles) is unchanged; its controls and pins follow
+ * the design system.
+ */
 .leaflet-container {
   @apply font-sans;
 }
 .leaflet-container :focus-visible {
-  @apply outline-2 outline-chili-600;
+  outline: 3px solid var(--color-chili-600);
+  outline-offset: 1px;
 }
-.map-pin {
-  @apply flex items-center justify-center;
+.leaflet-container .leaflet-bar,
+.leaflet-container.leaflet-touch .leaflet-bar {
+  border: 2px solid var(--color-ink);
+  border-radius: 0;
+  box-shadow: var(--shadow-px);
 }
-.map-pin span {
-  @apply block size-4 rounded-full border-2 border-white bg-chili-600 shadow-md transition-transform;
+.leaflet-container .leaflet-bar a {
+  border-radius: 0 !important;
+  background-color: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-pixel);
+  border-bottom-color: var(--color-ink);
 }
-.map-pin.is-selected span {
-  @apply size-6 bg-ink ring-4 ring-chili-600/40;
+.leaflet-container .leaflet-bar a:hover {
+  background-color: var(--color-gold-300);
+}
+.leaflet-container .leaflet-bar a.leaflet-disabled {
+  background-color: var(--color-sand);
+  color: var(--color-muted);
+}
+.leaflet-container .leaflet-control-attribution {
+  background-color: color-mix(in srgb, var(--color-cream) 90%, transparent);
+  color: var(--color-muted);
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--color-chili-700);
 }
 
-/* Restaurant pins with names on the submission map (PickerMap). */
-.poi-marker {
-  @apply relative;
+/*
+ * Map pins (src/lib/pin.ts). The icon box is exactly the drawn pin, its tip
+ * at the bottom center, which is the icon anchor: nothing here may move or
+ * resize the pin (no transforms, margins, or padding), or the tip would no
+ * longer mark the restaurant's location.
+ */
+.map-pin {
+  @apply cursor-pointer;
 }
-.poi-marker .poi-pin {
-  @apply absolute bottom-0 left-1/2 block size-6 -translate-x-1/2 rounded-full rounded-br-none border-2 border-white bg-chili-600 shadow-md;
-  transform: translateX(-50%) translateY(-6px) rotate(45deg);
+.map-pin .pin-shape {
+  @apply absolute inset-0 block size-full;
+  filter: drop-shadow(1px 1px 0 rgb(36 34 56 / 0.35));
 }
-.poi-marker .poi-pin::after {
-  @apply absolute top-1/2 left-1/2 block size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white;
-  content: '';
+.map-pin .pin-fill {
+  fill: var(--color-chili-500);
 }
-.poi-marker .poi-label {
-  @apply absolute left-full block max-w-44 cursor-pointer truncate rounded-md border border-line bg-white/95 px-1.5 text-xs leading-5 font-semibold whitespace-nowrap text-ink shadow-sm;
+.map-pin .pin-dot {
+  fill: var(--color-cream);
+}
+.map-pin:hover .pin-fill,
+.map-pin:focus-visible .pin-fill {
+  fill: var(--color-chili-700);
+}
+.map-pin.is-selected .pin-fill {
+  fill: var(--color-gold-300);
+}
+.map-pin.is-selected .pin-dot {
+  fill: var(--color-ink);
+}
+
+/* Restaurant names beside pins (PickerMap); placed by src/lib/labelLayout.ts. */
+.map-pin .poi-label {
+  @apply absolute left-full block max-w-44 cursor-pointer truncate border-2 border-ink bg-cream px-1 text-xs leading-4 font-bold whitespace-nowrap text-ink;
   top: 0;
   margin-left: -2px;
+  box-shadow: var(--shadow-px-sm);
 }
-.poi-marker.is-selected .poi-pin {
-  @apply size-8 bg-ink ring-4 ring-chili-600/40;
+.map-pin:hover .poi-label {
+  @apply bg-gold-100;
 }
-.poi-marker.is-selected .poi-label {
-  @apply border-chili-600 bg-chili-600 text-sm leading-6 text-white;
+.map-pin.is-selected .poi-label {
+  @apply bg-ink text-sm leading-5 text-cream;
   top: -2px;
 }
-.poi-marker .poi-label.is-left {
+.map-pin .poi-label.is-left {
   @apply right-full left-auto;
   margin-left: 0;
   margin-right: -2px;
@@ -142,12 +435,32 @@
   @apply pointer-events-none appearance-none bg-transparent;
 }
 .price-thumb::-webkit-slider-thumb {
-  @apply pointer-events-auto size-5 cursor-pointer appearance-none rounded-full border-2 border-white bg-chili-600 shadow;
+  @apply pointer-events-auto size-5 cursor-pointer appearance-none border-2 border-ink bg-gold-300;
+  box-shadow: var(--shadow-px-sm);
 }
 .price-thumb::-moz-range-thumb {
-  @apply pointer-events-auto size-5 cursor-pointer rounded-full border-2 border-white bg-chili-600 shadow;
+  @apply pointer-events-auto size-5 cursor-pointer rounded-none border-2 border-ink bg-gold-300;
+  box-shadow: var(--shadow-px-sm);
 }
 .price-thumb::-webkit-slider-runnable-track,
 .price-thumb::-moz-range-track {
   @apply bg-transparent;
+}
+
+/* A section heading with a pixel bullet. */
+@utility section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+  font-weight: 900;
+  &::before {
+    content: '';
+    flex-shrink: 0;
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 2px solid var(--color-ink);
+    background-color: var(--color-chili-500);
+  }
 }

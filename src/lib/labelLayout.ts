@@ -3,6 +3,8 @@
  * Pure (no Leaflet) so it can be tested directly.
  */
 
+import { pinSize } from './pin';
+
 export type LabelSide = 'right' | 'left';
 
 export interface LabelPin {
@@ -33,7 +35,6 @@ const EDGE = 4;
 /** Narrowest label worth showing for an unselected pin. */
 const MIN_WIDTH = 48;
 
-const pinSize = (selected: boolean) => (selected ? { w: 32, h: 40 } : { w: 24, h: 30 });
 const labelHeight = (selected: boolean) => (selected ? 24 : 20);
 /** Gap between the pin's center line and the label (the label overlaps the pin edge by 2px). */
 const labelOffset = (selected: boolean) => pinSize(selected).w / 2 - 2;

@@ -6,10 +6,10 @@ export { RATING_LABELS };
 
 export const RATING_STYLES: Record<Rating, string> = {
   5: 'bg-chili-600 text-white',
-  4: 'bg-chili-100 text-chili-700',
-  3: 'bg-amber-100 text-amber-800',
-  2: 'bg-stone-200 text-stone-700',
-  1: 'bg-stone-700 text-stone-100',
+  4: 'bg-chili-100 text-ink',
+  3: 'bg-gold-300 text-ink',
+  2: 'bg-sand text-ink',
+  1: 'bg-ink text-cream',
 };
 
 export const RATING_HINT = `个人评级，从高到低：${RATINGS.map((r) => RATING_LABELS[r]).join(' > ')}`;

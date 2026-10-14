@@ -1,4 +1,5 @@
 import type { ImageAsset } from '../../shared/content/model';
+import { BowlMark } from './Logo';
 
 interface Props {
   image?: ImageAsset;
@@ -10,7 +11,10 @@ interface Props {
   decorative?: boolean;
 }
 
-/** Responsive photo with reserved space; shows a neutral placeholder when there is no photo. */
+/**
+ * Responsive photo with reserved space (photos keep their own look: never
+ * pixelated); shows the pixel bowl as a placeholder when there is no photo.
+ */
 export function RestaurantImage({
   image,
   sizes,
@@ -20,19 +24,8 @@ export function RestaurantImage({
 }: Props) {
   if (!image) {
     return (
-      <div
-        className={`flex items-center justify-center bg-gradient-to-br from-chili-50 to-line text-chili-600/50 ${className}`}
-        aria-hidden="true"
-      >
-        <svg viewBox="0 0 48 48" className="size-1/4 max-h-16 max-w-16" fill="none">
-          <path d="M8 24h32a16 16 0 0 1-32 0z" fill="currentColor" />
-          <path
-            d="M18 16c0-3 3-3 3-6M27 16c0-3 3-3 3-6"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          />
-        </svg>
+      <div className={`flex items-center justify-center bg-sand ${className}`} aria-hidden="true">
+        <BowlMark className="size-1/3 max-h-16 max-w-16 opacity-60" />
       </div>
     );
   }
@@ -46,7 +39,7 @@ export function RestaurantImage({
       alt={decorative ? '' : image.alt}
       loading={eager ? 'eager' : 'lazy'}
       decoding="async"
-      className={`bg-line object-cover ${className}`}
+      className={`bg-sand object-cover ${className}`}
     />
   );
 }

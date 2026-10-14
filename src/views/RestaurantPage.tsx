@@ -31,7 +31,7 @@ export function RestaurantPage({ id }: { id: string }) {
         icon="🧭"
         title="找不到这家餐厅"
         action={
-          <Link href={browseHref()} className="font-semibold text-chili-700 underline">
+          <Link href={browseHref()} className="btn btn-primary">
             浏览全部餐厅
           </Link>
         }
@@ -71,7 +71,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
             image={hero}
             sizes="(min-width: 1024px) 1024px, 100vw"
             eager
-            className="aspect-[16/9] max-h-[60vh] w-full sm:rounded-2xl"
+            className="aspect-[16/9] max-h-[60vh] w-full border-y-2 border-ink sm:border-2 sm:shadow-px-lg"
           />
         </div>
       )}
@@ -80,7 +80,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
         <div className="flex flex-wrap items-center gap-2">
           {r.status === 'draft' && <DraftBadge />}
           {r.cuisines.map((c) => (
-            <span key={c} className="text-sm font-semibold text-chili-700">
+            <span key={c} className="tag bg-chili-50 text-chili-700">
               {cuisineLabel(c)}
             </span>
           ))}
@@ -93,7 +93,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           <p className="text-muted">{secondaryNames(r).join(' / ')}</p>
         )}
 
-        <dl className="grid gap-x-6 gap-y-2 rounded-2xl border border-line bg-white p-4 text-sm sm:grid-cols-2">
+        <dl className="card grid gap-x-6 gap-y-2 p-4 text-sm sm:grid-cols-2">
           {r.rating !== undefined && (
             <Fact label="评级" value={RATING_LABELS[r.rating]} title={RATING_HINT} />
           )}
@@ -126,14 +126,14 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
 
       {r.dishes.length > 0 && (
         <section className="mx-auto mt-10 max-w-3xl px-4" aria-labelledby="dishes">
-          <h2 id="dishes" className="text-xl font-bold">
+          <h2 id="dishes" className="section-title">
             菜品
           </h2>
           <DishList dishes={recommended} />
           <DishList dishes={unrated} />
           {avoided.length > 0 && (
             <>
-              <h3 className="mt-6 text-base font-semibold text-muted">{VERDICT_LABELS[-1]}</h3>
+              <h3 className="mt-8 text-base font-bold text-muted">{VERDICT_LABELS[-1]}</h3>
               <DishList dishes={avoided} />
             </>
           )}
@@ -149,7 +149,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
 
       {gallery.length > 0 && (
         <section className="mx-auto mt-10 max-w-3xl px-4" aria-labelledby="photos">
-          <h2 id="photos" className="text-xl font-bold">
+          <h2 id="photos" className="section-title">
             照片
           </h2>
           <ul className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -158,7 +158,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
                 <RestaurantImage
                   image={image}
                   sizes="(min-width: 640px) 360px, 100vw"
-                  className="h-auto w-full rounded-2xl"
+                  className="h-auto w-full border-2 border-ink"
                 />
               </li>
             ))}
@@ -168,24 +168,21 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
 
       {submissionFormId() && (
         <aside className="mx-auto mt-12 max-w-3xl px-4" aria-labelledby="contribute">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white p-4">
+          <div className="card flex flex-wrap items-center justify-between gap-3 bg-gold-100 p-4">
             <div>
-              <h2 id="contribute" className="font-bold">
+              <h2 id="contribute" className="font-black">
                 吃过这家店？
               </h2>
               <p className="text-sm text-muted">欢迎补充你的点评或照片，审核后可能会更新到这里。</p>
             </div>
-            <Link
-              href={submitHref(r.id)}
-              className="inline-flex min-h-11 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700"
-            >
+            <Link href={submitHref(r.id)} className="btn btn-primary">
               补充点评或照片
             </Link>
           </div>
         </aside>
       )}
 
-      <footer className="mx-auto mt-12 max-w-3xl space-y-1 border-t border-line px-4 pt-6 text-sm text-muted">
+      <footer className="mx-auto mt-12 max-w-3xl space-y-1 border-t-2 border-dashed border-ink/30 px-4 pt-6 text-sm text-muted">
         {r.contributors.length > 0 && <p>撰稿：{r.contributors.map((c) => c.name).join('、')}</p>}
         <p>点评内容和照片代表作者个人体验，版权归作者所有，不适用本项目代码的 MIT 许可。</p>
       </footer>
@@ -195,7 +192,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
 
 function BackLink() {
   const className =
-    'inline-flex min-h-10 items-center gap-1 text-sm font-semibold text-muted hover:text-ink';
+    'inline-flex min-h-10 items-center gap-1 text-sm font-bold text-muted hover:text-chili-700';
   if (canGoBack()) {
     return (
       <button type="button" onClick={() => window.history.back()} className={className}>
@@ -213,8 +210,8 @@ function BackLink() {
 function Fact({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="flex gap-3" title={title}>
-      <dt className="w-10 shrink-0 text-muted">{label}</dt>
-      <dd className="min-w-0 font-medium">{value}</dd>
+      <dt className="w-10 shrink-0 font-bold text-muted">{label}</dt>
+      <dd className="min-w-0 font-semibold">{value}</dd>
     </div>
   );
 }
@@ -230,9 +227,7 @@ function ActionLink({
   primary?: boolean;
   children: string;
 }) {
-  const className = primary
-    ? 'inline-flex min-h-11 items-center rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700'
-    : 'inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600';
+  const className = primary ? 'btn btn-primary' : 'btn';
   if (external) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
@@ -253,20 +248,17 @@ function DishList({ dishes }: { dishes: { dish: Dish; image?: ImageAsset }[] }) 
   return (
     <ul className="mt-4 grid gap-4 sm:grid-cols-2">
       {dishes.map(({ dish, image }, i) => (
-        <li
-          key={`${dish.name}-${i}`}
-          className="overflow-hidden rounded-2xl border border-line bg-white"
-        >
+        <li key={`${dish.name}-${i}`} className="card overflow-hidden">
           {image && (
             <RestaurantImage
               image={image}
               sizes="(min-width: 640px) 360px, 100vw"
-              className="aspect-[4/3] w-full"
+              className="aspect-[4/3] w-full border-b-2 border-ink"
             />
           )}
           <div className="space-y-1.5 p-4">
             <div className="flex items-start justify-between gap-2">
-              <h3 className="font-bold">{dish.name}</h3>
+              <h3 className="font-black">{dish.name}</h3>
               <VerdictBadge verdict={dish.verdict} />
             </div>
             {dish.comment && <p className="text-sm leading-6 text-muted">{dish.comment}</p>}

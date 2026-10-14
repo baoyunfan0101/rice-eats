@@ -2,13 +2,17 @@ import type { ReactNode } from 'react';
 
 export function Loading({ label = '加载中…' }: { label?: string }) {
   return (
-    <div role="status" className="flex items-center justify-center gap-3 py-24 text-muted">
-      <span className="size-5 animate-spin rounded-full border-2 border-line border-t-chili-600 motion-reduce:animate-none" />
+    <div
+      role="status"
+      className="flex flex-col items-center justify-center gap-3 py-24 text-sm font-semibold text-muted"
+    >
+      <span aria-hidden="true" className="pixel-loader" />
       {label}
     </div>
   );
 }
 
+/** A centered notice (empty, not found, error), its icon framed like an item tile. */
 export function Message({
   title,
   children,
@@ -22,10 +26,13 @@ export function Message({
 }) {
   return (
     <div className="mx-auto flex max-w-md flex-col items-center px-6 py-20 text-center">
-      <div className="mb-4 text-5xl" aria-hidden="true">
+      <div
+        className="mb-5 flex size-20 items-center justify-center border-2 border-ink bg-gold-100 text-4xl shadow-px"
+        aria-hidden="true"
+      >
         {icon}
       </div>
-      <h2 className="text-xl font-bold">{title}</h2>
+      <h2 className="text-xl font-black">{title}</h2>
       {children && <div className="mt-2 leading-7 text-muted">{children}</div>}
       {action && <div className="mt-6">{action}</div>}
     </div>
@@ -53,11 +60,7 @@ export function Button({
     <button
       type="button"
       onClick={onClick}
-      className={
-        variant === 'primary'
-          ? 'min-h-11 rounded-full bg-chili-600 px-5 font-semibold text-white hover:bg-chili-700'
-          : 'min-h-11 rounded-full border border-line bg-white px-5 font-semibold hover:border-chili-600'
-      }
+      className={variant === 'primary' ? 'btn btn-primary px-5' : 'btn px-5'}
     >
       {children}
     </button>

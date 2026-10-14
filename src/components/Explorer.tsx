@@ -16,6 +16,7 @@ import { PRICE_SLIDER_MAX, PRICE_STEP, priceRangeLabel } from '../lib/price';
 import { restaurantHref } from '../lib/router';
 import { DraftBadge, RatingBadge, Tags } from './Badges';
 import { Link } from './Link';
+import { PixelCheck, PixelChevron, PixelPin, PixelSearch } from './PixelIcons';
 import { RestaurantImage } from './RestaurantImage';
 
 export type Change = (next: Partial<BrowseState>, options?: { replace?: boolean }) => void;
@@ -79,7 +80,7 @@ export function Explorer({
       {/* On phones the bottom sheet is dragged by this bar too (its non-control parts). */}
       <div
         data-sheet-drag
-        className="shrink-0 touch-pan-x space-y-1.5 border-b border-line px-3 pt-0.5 pb-2"
+        className="shrink-0 touch-pan-x space-y-2 border-b-2 border-ink px-3 pt-1 pb-2.5"
       >
         <SearchBox
           value={state.query}
@@ -99,19 +100,19 @@ export function Explorer({
             onClose={() => setPanel(undefined)}
           />
         )}
-        <div className="flex items-center justify-between gap-2 px-3 pt-2 pb-0.5">
-          <p className="text-xs text-muted" aria-live="polite">
+        <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-1">
+          <p className="text-xs font-semibold text-muted" aria-live="polite">
             {filtered ? `找到 ${results.length} 家 / 共 ${total} 家` : `共 ${total} 家`}
           </p>
           <div className="flex items-center gap-1">
-            <label htmlFor={sortId} className="text-xs text-muted">
+            <label htmlFor={sortId} className="text-xs font-semibold text-muted">
               排序
             </label>
             <select
               id={sortId}
               value={sort}
               onChange={(e) => onSort(e.target.value as Sort)}
-              className="h-8 rounded-full border border-line bg-white pr-7 pl-2.5 text-sm hover:border-chili-600"
+              className="field h-8 min-h-8 pr-7 pl-2 text-sm"
             >
               {(Object.keys(SORT_LABELS) as Sort[]).map((s) => (
                 <option key={s} value={s}>
@@ -122,7 +123,7 @@ export function Explorer({
           </div>
         </div>
         {(locating === 'denied' || locating === 'unavailable') && (
-          <p role="status" className="px-3 pb-1 text-xs text-chili-700">
+          <p role="status" className="px-3 pb-1 text-xs font-semibold text-chili-700">
             {locating === 'denied'
               ? '没有获得定位权限，无法按距离排序，已改回之前的排序。'
               : '暂时无法获取当前位置，无法按距离排序，已改回之前的排序。'}
@@ -130,22 +131,25 @@ export function Explorer({
         )}
 
         {results.length === 0 ? (
-          <div className="space-y-3 px-4 py-10 text-center">
-            <p className="text-3xl" aria-hidden="true">
+          <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
+            <p
+              className="flex size-14 items-center justify-center border-2 border-ink bg-gold-100 text-2xl shadow-px-sm"
+              aria-hidden="true"
+            >
               🔍
             </p>
-            <h2 className="font-bold">没有符合条件的餐厅</h2>
+            <h2 className="font-black">没有符合条件的餐厅</h2>
             <p className="text-sm text-muted">换个关键词，或者放宽筛选条件试试。</p>
             <button
               type="button"
               onClick={() => onChange(clearFilters(state))}
-              className="rounded-full bg-chili-600 px-4 py-2 text-sm font-semibold text-white hover:bg-chili-700"
+              className="btn btn-primary btn-sm px-4"
             >
               清除全部筛选
             </button>
           </div>
         ) : (
-          <ul aria-label="餐厅列表" className="divide-y divide-line px-1.5 pb-2">
+          <ul aria-label="餐厅列表" className="space-y-1 px-2 pt-1 pb-2">
             {results.map((r) => (
               <RestaurantCard
                 key={r.id}
@@ -175,16 +179,7 @@ function SearchBox({
   return (
     <label className="relative block">
       <span className="sr-only">搜索餐厅名称</span>
-      <svg
-        viewBox="0 0 20 20"
-        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted"
-        aria-hidden="true"
-      >
-        <path
-          d="M9 3a6 6 0 1 0 3.9 10.6l3.3 3.2 1.1-1.1-3.2-3.3A6 6 0 0 0 9 3Zm0 1.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"
-          fill="currentColor"
-        />
-      </svg>
+      <PixelSearch className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
       <input
         type="search"
         value={value}
@@ -192,7 +187,7 @@ function SearchBox({
         onFocus={onFocus}
         placeholder="搜索餐厅名称"
         enterKeyHint="search"
-        className="h-10 w-full rounded-full border border-line bg-white pr-4 pl-9 text-base placeholder:text-muted/80 hover:border-chili-600"
+        className="field h-10 min-h-10 w-full pr-3 pl-9 text-base"
       />
     </label>
   );
@@ -218,7 +213,7 @@ function FilterButtons({
   ];
   return (
     <div
-      className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 [scrollbar-width:none]"
+      className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none]"
       role="group"
       aria-label="筛选"
     >
@@ -233,12 +228,10 @@ function FilterButtons({
             aria-controls="filter-panel"
             data-active={active ? '' : undefined}
             onClick={() => onPanel(panel === id ? undefined : id)}
-            className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-full border border-line bg-white px-2.5 text-[13px] font-semibold hover:border-chili-600 aria-expanded:border-ink data-active:border-chili-600 data-active:bg-chili-50 data-active:text-chili-700"
+            className="chip group h-8 shrink-0 gap-1"
           >
             {text}
-            <span aria-hidden="true" className="text-xs">
-              ▾
-            </span>
+            <PixelChevron className="size-2.5 rotate-90 group-aria-expanded:-rotate-90" />
           </button>
         );
       })}
@@ -249,7 +242,7 @@ function FilterButtons({
             onPanel(undefined);
             onChange(clearFilters(state));
           }}
-          className="h-8 shrink-0 rounded-full px-1.5 text-[13px] font-semibold text-chili-700 hover:bg-chili-50"
+          className="text-action h-8 shrink-0 px-1 text-[13px]"
         >
           清除全部
         </button>
@@ -333,18 +326,14 @@ function FilterPanel({
     active = values.length > 0;
   }
   return (
-    <section
-      id="filter-panel"
-      aria-label={PANEL_TITLES[panel]}
-      className="mx-3 mt-2 space-y-2 rounded-xl border border-line bg-white p-3 shadow-sm"
-    >
-      <div className="flex items-center gap-2">
-        <h2 className="flex-1 text-xs font-bold text-muted">{PANEL_TITLES[panel]}</h2>
+    <section id="filter-panel" aria-label={PANEL_TITLES[panel]} className="card mx-3 mt-2.5">
+      <div className="window-bar py-1.5 pr-1.5 pl-3">
+        <h2 className="flex-1 text-xs font-black">{PANEL_TITLES[panel]}</h2>
         {active && (
           <button
             type="button"
             onClick={() => onChange(reset)}
-            className="h-7 rounded-full px-2 text-xs font-semibold text-chili-700 hover:bg-chili-50"
+            className="h-7 px-2 text-xs font-bold underline decoration-2 underline-offset-2 hover:text-chili-700"
           >
             重置
           </button>
@@ -352,12 +341,12 @@ function FilterPanel({
         <button
           type="button"
           onClick={onClose}
-          className="h-7 rounded-full bg-ink px-3 text-xs font-semibold text-white"
+          className="btn btn-dark btn-sm min-h-7 px-3 text-xs"
         >
           完成
         </button>
       </div>
-      {body}
+      <div className="p-3">{body}</div>
     </section>
   );
 }
@@ -380,8 +369,9 @@ function Chips<T extends string | number>({
           type="button"
           aria-pressed={selected.includes(value)}
           onClick={() => onToggle(value)}
-          className="min-h-8 rounded-full border border-line px-2.5 text-[13px] hover:border-chili-600 aria-pressed:border-chili-600 aria-pressed:bg-chili-600 aria-pressed:text-white"
+          className="chip"
         >
+          {selected.includes(value) && <PixelCheck className="size-3" />}
           {text}
         </button>
       ))}
@@ -421,7 +411,7 @@ function PriceRange({ state, onChange }: { state: BrowseState; onChange: Change 
         ? `${lowText}+`
         : `${lowText}–${highText.slice(1)}`;
   const tag =
-    'absolute top-0 rounded bg-ink px-1.5 text-[11px] leading-5 font-semibold whitespace-nowrap text-white';
+    'absolute top-0 bg-ink px-1.5 font-pixel text-xs leading-5 whitespace-nowrap text-cream';
   return (
     <div className="relative h-12">
       {close ? (
@@ -438,9 +428,9 @@ function PriceRange({ state, onChange }: { state: BrowseState; onChange: Change 
           </span>
         </>
       )}
-      <div className="absolute right-2.5 bottom-[9px] left-2.5 h-1 rounded bg-line" />
+      <div className="absolute right-2.5 bottom-[7px] left-2.5 h-2 border-2 border-ink bg-sand" />
       <div
-        className="absolute bottom-[9px] h-1 rounded bg-chili-600"
+        className="absolute bottom-[7px] h-2 border-y-2 border-ink bg-chili-500"
         style={{ left: at(low), right: `calc(100% - ${at(high)})` }}
       />
       <input
@@ -491,21 +481,21 @@ function RestaurantCard({
   return (
     <li
       data-selected={selected ? '' : undefined}
-      className="relative flex gap-2.5 rounded-xl px-1.5 py-2 hover:bg-white data-selected:bg-white data-selected:ring-2 data-selected:ring-chili-600"
+      className="relative flex gap-2.5 border-2 border-transparent px-1.5 py-2 hover:border-ink hover:bg-cream data-selected:border-ink data-selected:bg-gold-100 data-selected:shadow-px"
     >
       <RestaurantImage
         decorative
         image={r.cover}
         sizes="64px"
-        className="aspect-square w-16 shrink-0 rounded-lg"
+        className="aspect-square w-16 shrink-0 border-2 border-ink"
       />
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <h2 className="leading-snug font-bold">
+          <h2 className="leading-snug font-black">
             {/* The card links to the details page; the link covers the card. */}
             <Link
               href={restaurantHref(r.id)}
-              className="after:absolute after:inset-0 after:rounded-xl hover:text-chili-700"
+              className="after:absolute after:inset-0 hover:text-chili-700"
             >
               {r.name}
             </Link>
@@ -529,14 +519,9 @@ function RestaurantCard({
           onClick={() => onLocate(r.id)}
           aria-label={`在地图上显示${r.name}`}
           title="在地图上显示"
-          className="relative z-10 flex size-9 shrink-0 items-center justify-center self-center rounded-full border border-line bg-white text-chili-700 hover:border-chili-600"
+          className="btn btn-sm relative z-10 size-9 shrink-0 self-center p-0 text-chili-600"
         >
-          <svg viewBox="0 0 20 20" className="size-5" aria-hidden="true">
-            <path
-              d="M10 2a6 6 0 0 0-6 6c0 4.5 6 10 6 10s6-5.5 6-10a6 6 0 0 0-6-6Zm0 8.2A2.2 2.2 0 1 1 10 5.8a2.2 2.2 0 0 1 0 4.4Z"
-              fill="currentColor"
-            />
-          </svg>
+          <PixelPin className="size-5" />
         </button>
       )}
     </li>

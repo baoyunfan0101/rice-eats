@@ -667,7 +667,7 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
   expect(rects.length).toBeGreaterThan(0);
   expect(rects[0]!.searchParams.get('categories')).toContain('catering.restaurant');
-  await expect(page.getByText('第一步 · 选择餐厅')).toBeVisible();
+  await expect(page.locator('[aria-current="step"]')).toContainText('选择餐厅');
   // Names are on the map without clicking.
   await expect(pin(page, 'Fake Noodle Bar').locator('.poi-label')).toHaveText('Fake Noodle Bar');
   await pin(page, 'Fake Noodle Bar').click();
@@ -679,7 +679,7 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   await expect(selected).toContainText('1 Fake St');
   await expect(page.getByRole('button', { name: '确认餐厅' })).toHaveCount(0);
   await page.getByRole('button', { name: NEXT }).click();
-  await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
+  await expect(page.locator('[aria-current="step"]')).toContainText('填写点评');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('为「Fake Noodle Bar」投稿');
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
   const query = formQuery(page);
@@ -1047,7 +1047,7 @@ test('the manual pin keeps its name inside the map, wherever it is', async ({ pa
   await name.fill('面馆');
   const map = page.getByRole('region', { name: '标出餐厅位置的地图' });
   await map.scrollIntoViewIfNeeded();
-  const box = (await map.boundingBox())!;
+  let box = (await map.boundingBox())!;
   const label = page.locator('.leaflet-marker-icon[title="餐厅位置"] .poi-label');
   const pinTip = page.locator('.leaflet-marker-icon[title="餐厅位置"]');
   /** The rendered label lies inside the map; returns its side. */
@@ -1079,6 +1079,9 @@ test('the manual pin keeps its name inside the map, wherever it is', async ({ pa
   await place(box.width - 24);
   await name.fill('一家名字非常非常长的手工拉面和川味小吃餐厅（莱斯大学附近分店）');
   await expect(label).toHaveText(/^一家名字非常/);
+  // Typing may scroll the name field into view: measure the map again.
+  await map.scrollIntoViewIfNeeded();
+  box = (await map.boundingBox())!;
   expect(await inside()).toBe('left');
 
   // Moving the map lays the name out again: dragged to the left edge, it flips.
@@ -1099,6 +1102,111 @@ test('the manual pin keeps its name inside the map, wherever it is', async ({ pa
   await map.getByRole('button', { name: 'Zoom in' }).click();
   await page.waitForTimeout(600);
   await inside();
+});
+
+test('the manual pin tip marks exactly the clicked point, through zooms, pans, and resizes', async ({
+  page,
+}) => {
+  await page.route(/^https:\/\/api\.geoapify\.com\//, (route) =>
+    route.fulfill({ json: { features: [] } }),
+  );
+  await page.goto('/rice-eats/submit/');
+  await page.getByRole('button', { name: '手动添加餐厅' }).click();
+  await page.getByLabel('餐厅名称').fill('面馆');
+  const map = page.getByRole('region', { name: '标出餐厅位置的地图' });
+  await map.scrollIntoViewIfNeeded();
+  const marker = page.locator('.leaflet-marker-icon[title="餐厅位置"]');
+  /** The tip of the drawn pin (bottom center of the visible shape), in page pixels. */
+  const tip = async () => {
+    const shape = (await marker.locator('.pin-shape').boundingBox())!;
+    return { x: shape.x + shape.width / 2, y: shape.y + shape.height };
+  };
+  /** The map's inner area (Leaflet's container points start inside the border). */
+  const inner = () =>
+    map.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        x: r.x + el.clientLeft,
+        y: r.y + el.clientTop,
+        width: el.clientWidth,
+        height: el.clientHeight,
+      };
+    });
+  const expectAt = async (x: number, y: number) => {
+    const t = await tip();
+    // Leaflet rounds marker positions to whole pixels.
+    expect(Math.abs(t.x - x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(t.y - y)).toBeLessThanOrEqual(1);
+  };
+
+  // Repeated clicks anywhere in the map: the tip lands on each one.
+  const box = await inner();
+  for (const [fx, fy] of [
+    [0.5, 0.5],
+    [0.2, 0.8],
+    [0.85, 0.25],
+    [0.6, 0.9],
+  ] as const) {
+    const x = box.x + box.width * fx;
+    const y = box.y + box.height * fy;
+    await page.mouse.click(x, y);
+    await page.waitForTimeout(150);
+    await expectAt(x, y);
+  }
+
+  // At the map center the stored location is the map center: Rice, where the map opened.
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.click(center.x, center.y);
+  await page.waitForTimeout(150);
+  await expectAt(center.x, center.y);
+
+  // Zooming keeps the center, so the tip stays on it at every zoom level.
+  for (const control of ['Zoom in', 'Zoom in', 'Zoom out', 'Zoom out', 'Zoom out']) {
+    await map.getByRole('button', { name: control }).click();
+    await page.waitForTimeout(400);
+    await expectAt(center.x, center.y);
+  }
+  await map.getByRole('button', { name: 'Zoom in' }).click();
+  await page.waitForTimeout(400);
+
+  // Panning moves the tip with the map, pixel for pixel.
+  const before = await tip();
+  await page.mouse.move(center.x + 40, center.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(center.x - 20, center.y - 10, { steps: 6 });
+  await page.waitForTimeout(400);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  await expectAt(before.x - 60, before.y - 40);
+
+  // A resized window keeps the map's center, and the pin stays on its place
+  // relative to it.
+  const fromCenter = async () => {
+    const [t, b] = [await tip(), await inner()];
+    return { x: t.x - (b.x + b.width / 2), y: t.y - (b.y + b.height / 2) };
+  };
+  const offset = await fromCenter();
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: size.width - 37, height: size.height - 23 });
+  await page.waitForTimeout(500);
+  const resized = await fromCenter();
+  expect(Math.abs(resized.x - offset.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(resized.y - offset.y)).toBeLessThanOrEqual(1);
+  await page.setViewportSize(size);
+
+  // The location reaches the form: a fresh manual entry opens where the
+  // selection map is (Rice), and a click at its center stores Rice's center.
+  await page.getByRole('button', { name: '返回搜索' }).click();
+  await page.getByRole('button', { name: '手动添加餐厅' }).click();
+  await page.getByLabel('餐厅名称').fill('面馆');
+  await map.scrollIntoViewIfNeeded();
+  const start = await inner();
+  await page.mouse.click(start.x + start.width / 2, start.y + start.height / 2);
+  await page.getByRole('button', { name: '下一步', exact: true }).click();
+  await page.getByRole('button', { name: NEXT }).click();
+  const query = new URLSearchParams((await formQuery(page).textContent()) ?? '');
+  expect(Math.abs(Number(query.get('restaurant_lat')) - 29.7174)).toBeLessThan(0.00003);
+  expect(Math.abs(Number(query.get('restaurant_lng')) - -95.4018)).toBeLessThan(0.00003);
 });
 
 test('pin names stay inside the map at the top, bottom, and corners', async ({ page }) => {
@@ -1215,13 +1323,13 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await expect(query).toContainText('restaurant_id=fixture-sichuan-house');
   await expect(query).toContainText('restaurant_lat=29.705300&restaurant_lng=-95.546500');
   await expect(query).toContainText('selection_method=existing&source=restaurant-page');
-  await expect(page.getByText('第二步 · 填写点评')).toBeVisible();
+  await expect(page.locator('[aria-current="step"]')).toContainText('填写点评');
   // Tally reports the form loaded: no loading note and no fallback link.
   await expect(page.getByText('正在加载投稿表单…')).toHaveCount(0);
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
 
   await page.getByRole('button', { name: '更换餐厅' }).click();
-  await expect(page.getByText('第一步 · 选择餐厅')).toBeVisible();
+  await expect(page.locator('[aria-current="step"]')).toContainText('选择餐厅');
   await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('蜀味小馆');
   await page.getByRole('link', { name: '投稿', exact: true }).click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/$/);

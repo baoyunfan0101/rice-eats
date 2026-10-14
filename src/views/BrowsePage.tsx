@@ -168,7 +168,7 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
         title="餐厅点评正在准备中"
         action={
           submissionFormId() && (
-            <Link href={submitHref()} className="font-semibold text-chili-700 underline">
+            <Link href={submitHref()} className="btn btn-primary">
               推荐一家餐厅或分享照片
             </Link>
           )
@@ -219,7 +219,7 @@ function Discovery({ index, params }: { index: ContentIndex; params: URLSearchPa
         <div className="flex min-h-0 flex-1">
           <section
             aria-label="餐厅探索"
-            className="flex min-h-0 w-[38%] max-w-[32rem] min-w-[20rem] flex-col border-r border-line bg-paper pt-2"
+            className="flex min-h-0 w-[38%] max-w-[32rem] min-w-[20rem] flex-col border-r-2 border-ink bg-paper pt-2.5"
           >
             {explorer}
           </section>
@@ -242,7 +242,7 @@ function SourceNotice({ index }: { index: ContentIndex }) {
   return (
     <div
       role="note"
-      className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm text-amber-900"
+      className="shrink-0 border-b-2 border-ink bg-gold-100 px-4 py-1.5 text-center text-sm font-semibold text-gold-700"
     >
       {index.source === 'fixtures'
         ? '开发预览：当前显示的是虚构的示例数据，不是真实的餐厅推荐。'

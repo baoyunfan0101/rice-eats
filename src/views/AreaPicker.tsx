@@ -5,6 +5,7 @@ import { GEOCODE_ATTRIBUTION, geocode, geocodingAvailable, type Place } from '..
 import type { LocateIntent } from '../lib/locateIntent';
 import { PoiError } from '../lib/poi';
 import { Alternative } from '../components/Alternative';
+import { PixelTarget } from '../components/PixelIcons';
 
 type Locating = 'idle' | 'locating' | 'denied' | 'unavailable';
 
@@ -145,48 +146,34 @@ export function AreaPicker({
     runSearch(query);
   };
 
-  const button =
-    'inline-flex min-h-11 items-center rounded-full border border-line bg-white px-4 text-sm font-semibold hover:border-chili-600 disabled:opacity-60';
   return (
-    <section
-      aria-labelledby="area-title"
-      className="space-y-3 rounded-2xl border border-line bg-white p-4"
-    >
-      <div className="space-y-1">
-        <h2 id="area-title" className="text-base font-bold">
+    <section aria-labelledby="area-title" className="card space-y-3 p-4">
+      <div className="window-bar -mx-4 -mt-4">
+        <PixelTarget className="size-4 text-chili-600" />
+        <h2 id="area-title" className="text-base font-black">
           选择查找区域
         </h2>
-        <p className="text-sm text-muted">{description}</p>
       </div>
+      <p className="text-sm text-muted">{description}</p>
       <div className="flex flex-wrap gap-2">
         {/* The current location is the first choice; the presets follow. */}
         <button
           type="button"
           onClick={useMyLocation}
           disabled={locating === 'locating'}
-          className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-chili-600 px-4 text-sm font-semibold text-white hover:bg-chili-700 disabled:opacity-60"
+          className="btn btn-primary"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="size-4">
-            <path
-              d="M10 1.5a.75.75 0 0 1 .75.75v1.3a6.5 6.5 0 0 1 5.7 5.7h1.3a.75.75 0 0 1 0 1.5h-1.3a6.5 6.5 0 0 1-5.7 5.7v1.3a.75.75 0 0 1-1.5 0v-1.3a6.5 6.5 0 0 1-5.7-5.7h-1.3a.75.75 0 0 1 0-1.5h1.3a6.5 6.5 0 0 1 5.7-5.7v-1.3A.75.75 0 0 1 10 1.5Zm0 3.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 2.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z"
-              fill="currentColor"
-            />
-          </svg>
+          <PixelTarget className="size-4" />
           {locating === 'locating' ? '正在定位…' : '使用当前位置'}
         </button>
         {Object.values(PRESET_AREAS).map((area) => (
-          <button
-            key={area.label}
-            type="button"
-            onClick={() => choosePreset(area)}
-            className={button}
-          >
+          <button key={area.label} type="button" onClick={() => choosePreset(area)} className="btn">
             {area.label}
           </button>
         ))}
       </div>
       {(locating === 'denied' || locating === 'unavailable') && (
-        <p role="status" className="text-sm text-chili-700">
+        <p role="status" className="text-sm font-semibold text-chili-700">
           {locating === 'denied'
             ? '没有获得定位权限。可以选择 Rice 或 Chinatown、输入地址，或直接拖动地图。'
             : '暂时无法获取当前位置。可以选择 Rice 或 Chinatown、输入地址，或直接拖动地图。'}
@@ -209,13 +196,9 @@ export function AreaPicker({
                 placeholder="例如 2111 Norfolk St"
                 // Shown on request, so focus goes straight to it.
                 autoFocus
-                className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3"
+                className="field min-w-0 flex-1"
               />
-              <button
-                type="submit"
-                disabled={!query.trim()}
-                className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-ink px-4 text-sm font-semibold text-white disabled:opacity-50"
-              >
+              <button type="submit" disabled={!query.trim()} className="btn btn-dark shrink-0">
                 搜索
               </button>
             </div>
@@ -228,7 +211,10 @@ export function AreaPicker({
         </p>
       )}
 
-      <p role="status" className="text-sm font-semibold text-chili-700">
+      <p
+        role="status"
+        className="border-t-2 border-dashed border-ink/25 pt-2.5 text-sm font-bold text-chili-700"
+      >
         当前查找区域：{current}
       </p>
     </section>
@@ -256,11 +242,7 @@ function SearchResults({
     return (
       <p role="status" className="text-sm text-chili-700">
         {search.message}可以
-        <button
-          type="button"
-          onClick={() => onRetry(search.query)}
-          className="mx-1 font-semibold underline"
-        >
+        <button type="button" onClick={() => onRetry(search.query)} className="text-action mx-1">
           重试
         </button>
         ，或直接拖动地图。
@@ -278,15 +260,15 @@ function SearchResults({
   return (
     <div className="space-y-1">
       {places.length > 1 && <p className="text-sm text-muted">找到多个地点，请选择：</p>}
-      <ul aria-label="地点搜索结果" className="divide-y divide-line rounded-xl border border-line">
+      <ul aria-label="地点搜索结果" className="divide-y-2 divide-sand border-2 border-ink">
         {places.map((p) => (
           <li key={p.key}>
             <button
               type="button"
               onClick={() => onChoose(p)}
-              className="block w-full px-3 py-2 text-left hover:bg-chili-50"
+              className="block w-full px-3 py-2 text-left hover:bg-gold-100"
             >
-              <span className="block text-sm font-semibold">{p.name}</span>
+              <span className="block text-sm font-bold">{p.name}</span>
               {p.address && <span className="block text-xs text-muted">{p.address}</span>}
             </button>
           </li>

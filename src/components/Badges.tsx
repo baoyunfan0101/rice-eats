@@ -7,9 +7,7 @@ export function RatingBadge({ rating, size = 'sm' }: { rating?: Rating; size?: '
   return (
     <span
       title={RATING_HINT}
-      className={`inline-flex shrink-0 items-center rounded-full font-bold ${RATING_STYLES[rating]} ${
-        size === 'lg' ? 'px-3 py-1 text-base' : 'px-2 py-0.5 text-xs'
-      }`}
+      className={`tag ${RATING_STYLES[rating]} ${size === 'lg' ? 'px-3 py-1 text-base' : ''}`}
     >
       <span className="sr-only">评级：</span>
       {RATING_LABELS[rating]}
@@ -21,11 +19,7 @@ export function VerdictBadge({ verdict }: { verdict?: Verdict }) {
   if (verdict === undefined) return null;
   const good = verdict === 1;
   return (
-    <span
-      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
-        good ? 'bg-basil-50 text-basil-600' : 'bg-stone-200 text-stone-600'
-      }`}
-    >
+    <span className={`tag ${good ? 'bg-basil-50 text-basil-600' : 'bg-sand text-muted'}`}>
       {VERDICT_LABELS[verdict]}
     </span>
   );
@@ -33,9 +27,7 @@ export function VerdictBadge({ verdict }: { verdict?: Verdict }) {
 
 export function DraftBadge() {
   return (
-    <span className="inline-flex shrink-0 items-center rounded-full border border-dashed border-amber-500 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
-      草稿预览
-    </span>
+    <span className="tag border-dashed border-gold-700 bg-gold-100 text-gold-700">草稿预览</span>
   );
 }
 
@@ -44,7 +36,10 @@ export function Tags({ tags }: { tags: string[] }) {
   return (
     <ul className="flex flex-wrap gap-1.5" aria-label="标签">
       {tags.map((tag) => (
-        <li key={tag} className="rounded-md bg-line/70 px-2 py-0.5 text-xs text-muted">
+        <li
+          key={tag}
+          className="px-corners bg-sand px-2 py-0.5 text-xs leading-4 font-semibold text-muted"
+        >
           {tagLabel(tag)}
         </li>
       ))}
