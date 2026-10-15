@@ -58,3 +58,25 @@ export async function findSensitiveMetadata(file: string): Promise<string[]> {
 
 export const PRIVACY_FIX =
   'import the photo with "npm run content:add-images", which writes a clean copy';
+
+/**
+ * Obvious contact details and private links in text that is about to become
+ * public (review.md, dish comments, names): email addresses, phone numbers,
+ * Tally file links (which carry access tokens), and social-media handles.
+ * A heuristic for the reviewer, not a guarantee; each finding names its kind
+ * and a short excerpt.
+ */
+export function findContactDetails(text: string): string[] {
+  const found: string[] = [];
+  const add = (kind: string, match: string) => found.push(`${kind} "${match.slice(0, 40)}"`);
+  for (const m of text.matchAll(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g)) add('email address', m[0]);
+  for (const m of text.matchAll(/https?:\/\/[^\s)]*tally\.so\/[^\s)]*/gi)) add('Tally link', m[0].split('?')[0]!);
+  // Phone numbers: +1 / US formats and 11-digit mainland China mobile numbers.
+  for (const m of text.matchAll(/(?<![\w.])(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)|(?<!\d)1[3-9]\d{9}(?!\d)/g)) {
+    add('phone number', m[0]);
+  }
+  for (const m of text.matchAll(/(?:微信|wechat|vx|weixin|qq|whatsapp|telegram|instagram|ig)\s*(?:号)?\s*[:：]\s*[\w.-]{3,}/gi)) {
+    add('contact handle', m[0]);
+  }
+  return found;
+}

@@ -2,13 +2,21 @@
 // - nothing under the git-ignored private/ folder (drafts, raw submissions,
 //   contributor contact details) is tracked by Git;
 // - no tracked image carries EXIF, XMP, or IPTC metadata (GPS location, camera,
-//   timestamps). Images are recognized by content, not by file extension.
+//   timestamps). Images are recognized by content, not by file extension;
+// - no public content text (content/**/*.json, *.md) contains an email address
+//   or a Tally file link (which carries an access token).
 // Untracked local files (e.g. originals in private/submissions/) are not checked.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { findSensitiveMetadata, PRIVACY_FIX, sniffImageFormat } from './content/privacy.ts';
+import { readFile } from 'node:fs/promises';
+import {
+  findContactDetails,
+  findSensitiveMetadata,
+  PRIVACY_FIX,
+  sniffImageFormat,
+} from './content/privacy.ts';
 import { ROOT } from './content/paths.ts';
 
 export const PRIVATE_DIRS = ['private/'];
@@ -24,6 +32,16 @@ export async function checkTrackedFiles(root: string, files: string[]): Promise<
     }
     const full = path.join(root, file);
     if (!existsSync(full)) continue; // deleted in the working tree
+    if (file.startsWith('content/') && /\.(json|md)$/.test(file)) {
+      const found = findContactDetails(await readFile(full, 'utf8')).filter((f) =>
+        /^(email address|Tally link)/.test(f),
+      );
+      if (found.length > 0)
+        problems.push(
+          `${file}: contains ${found.join(', ')}; public content must not carry contact details`,
+        );
+      continue;
+    }
     const format = await sniffImageFormat(full);
     if (!format) continue;
     let found: string[];

@@ -6,7 +6,7 @@
 // dimensions all must match (AND); an empty dimension does not restrict.
 
 import type { LatLng, RestaurantSummary } from '../../shared/content/model';
-import { CUISINE_IDS, RATINGS, TAG_IDS, type Rating } from '../../shared/content/vocabulary';
+import { CUISINE_IDS, RATINGS, type Rating } from '../../shared/content/vocabulary';
 import { distanceMeters } from './poi';
 import { PRICE_BUCKETS } from './price';
 
@@ -18,7 +18,7 @@ export interface BrowseState {
   query: string;
   /** Cuisine keys (any of them). */
   cuisines: string[];
-  /** Tag keys (any of them). */
+  /** Tag ids from the registry (any of them). */
   tags: string[];
   /** Exact ratings (any of them), not "this rating or better". */
   ratings: Rating[];
@@ -39,7 +39,11 @@ export const DEFAULT_STATE: BrowseState = {
   selected: '',
 };
 
-/** Canonical order for a list of keys: vocabulary order, then unknown keys alphabetically. */
+/**
+ * Canonical order for a list of keys: vocabulary order, then other keys
+ * alphabetically. Tags have no fixed list, so they are always alphabetical,
+ * and a link keeps working when new tags are added.
+ */
 function canonical(values: Iterable<string>, order: readonly string[]): string[] {
   const unique = [...new Set([...values].map((v) => v.trim()).filter(Boolean))];
   const rank = (v: string) => {
@@ -83,7 +87,7 @@ export function parseBrowseState(params: URLSearchParams): BrowseState {
   return {
     query: params.get('q') ?? '',
     cuisines: canonical(listParam(params, 'cuisine'), CUISINE_IDS),
-    tags: canonical(listParam(params, 'tag'), TAG_IDS),
+    tags: canonical(listParam(params, 'tag'), []),
     ratings: [...new Set(ratings)].sort((a, b) => b - a),
     ...(priceMin !== undefined ? { priceMin } : {}),
     ...(priceMax !== undefined ? { priceMax } : {}),
@@ -100,7 +104,7 @@ export function toSearchParams(state: BrowseState): URLSearchParams {
   if (state.query) params.set('q', state.query);
   const cuisines = canonical(state.cuisines, CUISINE_IDS);
   if (cuisines.length) params.set('cuisine', cuisines.join(','));
-  const tags = canonical(state.tags, TAG_IDS);
+  const tags = canonical(state.tags, []);
   if (tags.length) params.set('tag', tags.join(','));
   if (state.ratings.length) {
     params.set('rating', [...new Set(state.ratings)].sort((a, b) => b - a).join(','));
@@ -145,7 +149,7 @@ export function filterRestaurants(
       return false;
     }
     if (state.cuisines.length && !r.cuisines.some((c) => state.cuisines.includes(c))) return false;
-    if (state.tags.length && !r.tags.some((t) => state.tags.includes(t))) return false;
+    if (state.tags.length && !r.tags.some((t) => state.tags.includes(t.id))) return false;
     if (state.ratings.length && (r.rating === undefined || !state.ratings.includes(r.rating))) {
       return false;
     }

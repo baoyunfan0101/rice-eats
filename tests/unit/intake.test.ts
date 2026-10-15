@@ -203,7 +203,7 @@ describe('agent content workflow (synthetic submissions)', () => {
       rating: 3, // the contributor wrote "人上人"
       pricePerPerson: 15,
       dishes: [
-        { name: '可颂', verdict: 1, comment: '很酥，强烈推荐！', image: croissant },
+        { name: '可颂', verdict: 1, comment: '很酥，强烈推荐！', images: [croissant] },
         { name: '抹茶卷', verdict: -1, comment: '一般，有点甜。' },
       ],
     };

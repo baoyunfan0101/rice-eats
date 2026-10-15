@@ -1,12 +1,14 @@
 // The canonical database formats:
 //   content/restaurants/<id>/info.json   restaurant metadata (restaurantInfoSchema)
 //   content/contributors.json            public contributor identities
+//   content/tags.json                    the public tag registry
 //   private/contributors.json            pending contributors and contact details (git-ignored)
+//   private/tags.json                    proposed tags and learned keyword aliases (git-ignored)
 // See docs/content.md for the field reference. Part of the shared data
 // contract: imports nothing from src/ or scripts/.
 
 import { z } from 'zod';
-import { CUISINE_IDS, TAG_IDS, VERDICTS, type Rating } from './vocabulary';
+import { CUISINE_IDS, VERDICTS, type Rating } from './vocabulary';
 
 const text = z.string().trim().min(1, 'must not be empty');
 
@@ -41,6 +43,61 @@ const controlled = (ids: readonly string[], what: string) =>
 
 const unique = <T>(items: T[]) => new Set(items).size === items.length;
 
+/** Tag ids are stable, language-independent slugs, e.g. "date" or "pet-friendly". */
+export const tagIdSchema = z
+  .string()
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be a lowercase slug such as "pet-friendly"')
+  .max(40, 'must be at most 40 characters');
+
+/** Normalized form of a tag label or keyword, for matching (case, width, spaces, punctuation). */
+export const normalizeKeyword = (text: string) =>
+  text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+
+const tagDefinition = z.strictObject({
+  id: tagIdSchema,
+  /** The label shown on the website (Simplified Chinese). */
+  label: text.max(20, 'must be at most 20 characters').refine((v) => !v.includes('@'), 'must not contain "@"'),
+  /** Other words contributors use for this tag; matched after normalizeKeyword. */
+  aliases: z.array(text.max(40)).optional(),
+});
+export type TagDefinition = z.infer<typeof tagDefinition>;
+
+/** Ids are unique, and no label or alias belongs to two tags. */
+const tagList = z.array(tagDefinition).superRefine((list, ctx) => {
+  const ids = new Set<string>();
+  const words = new Map<string, string>();
+  list.forEach((tag, i) => {
+    if (ids.has(tag.id)) ctx.addIssue({ code: 'custom', path: [i, 'id'], message: `duplicate tag id "${tag.id}"` });
+    ids.add(tag.id);
+    for (const word of [tag.id, tag.label, ...(tag.aliases ?? [])]) {
+      const key = normalizeKeyword(word);
+      const owner = words.get(key);
+      if (owner && owner !== tag.id) {
+        ctx.addIssue({ code: 'custom', path: [i], message: `"${word}" already belongs to tag "${owner}"` });
+      }
+      words.set(key, tag.id);
+    }
+  });
+});
+
+/**
+ * content/tags.json: the public tag registry. Restaurants store tag ids; the
+ * website shows the labels. New tags are proposed privately and added here
+ * when a restaurant using them is promoted.
+ */
+export const tagRegistrySchema = tagList;
+
+/**
+ * private/tags.json (git-ignored): tags proposed during intake that no
+ * promoted restaurant uses yet, and keyword aliases learned from reviewed
+ * submissions (normalized keyword -> tag id), reused for later submissions.
+ */
+export const privateTagsSchema = z.strictObject({
+  proposed: tagList.default([]),
+  aliases: z.record(z.string(), tagIdSchema).default({}),
+});
+export type PrivateTags = z.infer<typeof privateTagsSchema>;
+
 export const restaurantInfoSchema = z
   .strictObject({
   id: idSchema,
@@ -63,7 +120,8 @@ export const restaurantInfoSchema = z
     })
     .optional(),
   cuisines: z.array(controlled(CUISINE_IDS, 'cuisine')).refine(unique, 'must not repeat').optional(),
-  tags: z.array(controlled(TAG_IDS, 'tag')).refine(unique, 'must not repeat').optional(),
+  /** Ids from the tag registry (content/tags.json); checked against it by the pipeline. */
+  tags: z.array(tagIdSchema).refine(unique, 'must not repeat').optional(),
   rating: z
     .number()
     .int('must be a whole number from 1 (lowest) to 5 (highest)')
@@ -82,7 +140,8 @@ export const restaurantInfoSchema = z
           })
           .optional(),
         comment: text.optional(),
-        image: imagePathSchema.optional(),
+        /** Every photo of this dish, in display order (zero, one, or more). */
+        images: z.array(imagePathSchema).min(1, 'leave "images" out when the dish has no photo').refine(unique, 'must not repeat').optional(),
       }),
     )
     .optional(),

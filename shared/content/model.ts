@@ -34,8 +34,14 @@ export interface Dish {
   name: string;
   verdict?: Verdict;
   comment?: string;
-  /** Index into RestaurantDetail.images of the dish's photo, if any. */
-  imageIndex?: number;
+  /** Indexes into RestaurantDetail.images of every photo of this dish, in display order. */
+  imageIndexes: number[];
+}
+
+/** A tag from the registry (content/tags.json), with its display label. */
+export interface Tag {
+  id: string;
+  label: string;
 }
 
 /** Optional explicit map links; otherwise the site derives them from location or address. */
@@ -52,8 +58,8 @@ export interface RestaurantSummary {
   altNames: string[];
   /** Cuisine keys (see vocabulary.ts). */
   cuisines: string[];
-  /** Tag keys (see vocabulary.ts). */
-  tags: string[];
+  /** Tags from the registry, with their labels. */
+  tags: Tag[];
   address?: string;
   location?: LatLng;
   rating?: Rating;

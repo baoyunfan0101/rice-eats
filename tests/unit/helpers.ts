@@ -76,14 +76,22 @@ export async function writeRestaurant(
 
 /** The public contributor list used by `pipeline()` unless a test passes its own. */
 export const TEST_CONTRIBUTORS = [{ id: 'u-001', name: 'Tester' }];
+/** The public tag registry used by `pipeline()` unless a test passes its own. */
+export const TEST_TAGS = [
+  { id: 'date', label: '适合约会' },
+  { id: 'group', label: '适合聚餐' },
+];
 
 export async function pipeline(restaurantsDir: string, overrides: Partial<PipelineOptions> = {}) {
   const work = await tempDir();
   const contributorsFile = path.join(work, 'contributors.json');
   await writeFile(contributorsFile, JSON.stringify(TEST_CONTRIBUTORS));
+  const tagsFile = path.join(work, 'tags.json');
+  await writeFile(tagsFile, JSON.stringify(TEST_TAGS));
   return runPipeline({
     restaurantsDir,
     contributorsFile,
+    tagsFile,
     source: 'content',
     includeDrafts: false,
     base: '/rice-eats/',

@@ -106,7 +106,8 @@ function Discovery({
   const facets = useMemo(
     () => ({
       cuisines: facetValues(all, (r) => r.cuisines),
-      tags: facetValues(all, (r) => r.tags),
+      tags: facetValues(all, (r) => r.tags.map((t) => t.id)),
+      tagLabels: Object.fromEntries(all.flatMap((r) => r.tags.map((t) => [t.id, t.label]))),
       ratings: RATINGS.filter((rating) => all.some((r) => r.rating === rating)),
     }),
     [all],

@@ -21,6 +21,7 @@ import {
   SELECTION_METHODS,
   type SelectionMethod,
   type LatLngValue,
+  parseKeywords,
   TALLY_CONSENT_OPTION,
   TALLY_DISH_GROUPS,
   TALLY_MAX_DISH_PHOTOS,
@@ -75,6 +76,11 @@ export const submissionSchema = z
           .strict(),
       )
       .default([]),
+    /**
+     * The contributor's own keywords (the tags_raw hidden field), exactly as
+     * typed. Empty for older submissions. Mapped to tags by prepare.ts.
+     */
+    keywords: z.array(z.string()).default([]),
     displayName: z.string().optional(),
     /** Private: never copied into content/ or the website. */
     email: z.string().optional(),
@@ -160,6 +166,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     poiId: exact(HIDDEN_FIELDS.poiId),
     selectionMethod: exact(HIDDEN_FIELDS.selectionMethod),
     source: exact(HIDDEN_FIELDS.source),
+    keywords: exact(HIDDEN_FIELDS.keywords),
     submittedAt: exact('Submitted at'),
   };
 
@@ -209,6 +216,8 @@ export function submissionsFromCsv(text: string): Submission[] {
       ratingAnswer: value(picked.rating),
       photoUrls: linksIn(picked.photos),
       dishes,
+      // A missing column (older form) or an empty value gives no keywords.
+      keywords: parseKeywords(value(picked.keywords)),
       displayName: value(picked.displayName),
       email: value(picked.email),
       consent,
@@ -727,7 +736,12 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
 
 export const LOG_FILE = 'tally-log.json';
 /** Editorial status, separate from photo retrieval (see PhotoSummary). */
-export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'rejected'] as const;
+/**
+ * deferred: kept but not used, because the restaurant already has an
+ * accepted contributor (one review per restaurant for now); saved for a
+ * future multi-review database.
+ */
+export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'deferred', 'rejected'] as const;
 export type LogStatus = (typeof LOG_STATUSES)[number];
 
 const logSchema = z.record(
@@ -758,7 +772,8 @@ export async function readLog(submissionsDir: string): Promise<SubmissionLog> {
   return logSchema.parse(JSON.parse(await readFile(file, 'utf8')));
 }
 
-async function updateLog(submissionsDir: string, id: string, change: (entry?: LogEntry) => LogEntry) {
+/** Changes one log entry (atomically). */
+export async function updateLog(submissionsDir: string, id: string, change: (entry?: LogEntry) => LogEntry) {
   const log = await readLog(submissionsDir);
   log[id] = change(log[id]);
   await mkdir(submissionsDir, { recursive: true });

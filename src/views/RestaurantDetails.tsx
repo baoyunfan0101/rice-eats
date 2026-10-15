@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState, type KeyboardEvent } from 'react';
 import type { Dish, ImageAsset, RestaurantDetail } from '../../shared/content/model';
 import { DraftBadge, Tags, RatingBadge, VerdictBadge } from '../components/Badges';
 import { Link } from '../components/Link';
@@ -83,7 +83,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
   const { hero, dishImages, gallery } = placeImages(r);
   // Dishes keep their stored order within each group. No verdict means no
   // opinion, so those dishes are not listed as recommendations.
-  const withImages = r.dishes.map((dish, i) => ({ dish, image: dishImages[i] }));
+  const withImages = r.dishes.map((dish, i) => ({ dish, images: dishImages[i] ?? [] }));
   const recommended = withImages.filter((d) => d.dish.verdict === 1);
   const unrated = withImages.filter((d) => d.dish.verdict === undefined);
   const avoided = withImages.filter((d) => d.dish.verdict === -1);
@@ -250,19 +250,13 @@ function ActionLink({
   );
 }
 
-function DishList({ dishes }: { dishes: { dish: Dish; image?: ImageAsset }[] }) {
+function DishList({ dishes }: { dishes: { dish: Dish; images: ImageAsset[] }[] }) {
   if (dishes.length === 0) return null;
   return (
     <ul className="mt-4 grid gap-3 @md:grid-cols-2">
-      {dishes.map(({ dish, image }, i) => (
+      {dishes.map(({ dish, images }, i) => (
         <li key={`${dish.name}-${i}`} className="card overflow-hidden">
-          {image && (
-            <RestaurantImage
-              image={image}
-              sizes="(min-width: 768px) 256px, 100vw"
-              className="aspect-[4/3] w-full border-b-2 border-ink"
-            />
-          )}
+          {images.length > 0 && <DishPhotos name={dish.name} images={images} />}
           <div className="space-y-1.5 p-4">
             <div className="flex items-start justify-between gap-2">
               <h3 className="font-black">{dish.name}</h3>
@@ -273,5 +267,68 @@ function DishList({ dishes }: { dishes: { dish: Dish; image?: ImageAsset }[] }) 
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * A dish's photos: one large photo, and with several photos a row of
+ * thumbnails to switch between them (buttons; the arrow keys move between
+ * them too). Every photo of the dish is reachable here.
+ */
+export function DishPhotos({ name, images }: { name: string; images: ImageAsset[] }) {
+  const [current, setCurrent] = useState(0);
+  const id = useId();
+  const shown = images[Math.min(current, images.length - 1)]!;
+  const many = images.length > 1;
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = (current + step + images.length) % images.length;
+    setCurrent(next);
+    e.currentTarget.querySelectorAll('button')[next]?.focus();
+  };
+  return (
+    <div className="border-b-2 border-ink">
+      <div className="relative" id={`${id}-photo`} aria-live="polite">
+        <RestaurantImage
+          image={shown}
+          sizes="(min-width: 768px) 256px, 100vw"
+          className="aspect-[4/3] w-full"
+        />
+        {many && (
+          <span className="absolute top-2 right-2 border-2 border-ink bg-cream px-1.5 text-xs leading-5 font-black shadow-px-sm">
+            {current + 1}/{images.length}
+          </span>
+        )}
+      </div>
+      {many && (
+        <div
+          role="group"
+          aria-label={`${name}的照片，共 ${images.length} 张`}
+          onKeyDown={onKey}
+          className="flex gap-1.5 overflow-x-auto border-t-2 border-ink bg-sand p-1.5"
+        >
+          {images.map((image, n) => (
+            <button
+              key={image.src}
+              type="button"
+              aria-label={`查看第 ${n + 1} 张照片`}
+              aria-pressed={n === current}
+              aria-controls={`${id}-photo`}
+              tabIndex={n === current ? 0 : -1}
+              onClick={() => setCurrent(n)}
+              className={`size-12 shrink-0 border-2 border-ink ${
+                n === current
+                  ? 'shadow-px-sm outline-2 outline-offset-1 outline-chili-600'
+                  : 'opacity-70 hover:opacity-100'
+              }`}
+            >
+              <RestaurantImage image={image} sizes="48px" decorative className="size-full" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,7 +1,9 @@
-// Downloads of untrusted links (Tally photo URLs from public submissions).
-// Every request, including each redirect, goes only to an allowlisted https
-// host whose DNS answers are public addresses; responses are size-limited and
-// time-limited. Errors never contain query strings (signed-URL tokens).
+// Downloads of untrusted links: Tally photo URLs from public submissions, and
+// (for restaurant information) place-details APIs and public web pages.
+// Every request, including each redirect, goes only to an https host whose
+// DNS answers are public addresses (and, unless a caller allows any public
+// host, to an allowlisted one); responses are size-limited and time-limited.
+// Errors never contain query strings (signed-URL tokens, API keys).
 
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -27,14 +29,31 @@ export function redactUrl(url: string | URL): string {
   }
 }
 
+/**
+ * Hosts allowed for a request: an exact list, or ANY_PUBLIC_HOST for pages
+ * named by a person (a restaurant's website), where the address checks below
+ * are the only limit.
+ */
+export const ANY_PUBLIC_HOST = 'any-public-host';
+export type HostPolicy = readonly string[] | typeof ANY_PUBLIC_HOST;
+
 /** Why a URL may not be requested, or undefined when it may. */
-export function urlProblem(url: URL, hosts: readonly string[] = TRUSTED_PHOTO_HOSTS): string | undefined {
+export function urlProblem(url: URL, hosts: HostPolicy = TRUSTED_PHOTO_HOSTS): string | undefined {
   if (url.protocol !== 'https:') return 'not an https link';
   if (url.username || url.password) return 'link contains credentials';
   if (url.port && url.port !== '443') return 'link uses a non-standard port';
   const host = url.hostname.toLowerCase().replace(/\.$/, '');
   if (isIP(host.replace(/^\[|\]$/g, ''))) return 'link points to an IP address';
-  if (!hosts.includes(host)) return `host ${host} is not a trusted Tally file host`;
+  if (hosts === ANY_PUBLIC_HOST) {
+    return host === 'localhost' || host.endsWith('.localhost') || !host.includes('.')
+      ? `host ${host} is not public`
+      : undefined;
+  }
+  if (!hosts.includes(host)) {
+    return hosts === TRUSTED_PHOTO_HOSTS
+      ? `host ${host} is not a trusted Tally file host`
+      : `host ${host} is not an allowed host`;
+  }
   return undefined;
 }
 
@@ -127,8 +146,10 @@ export interface SafeFetchOptions {
   maxBytes: number;
   fetchImpl?: typeof fetch;
   lookup?: Lookup;
-  hosts?: readonly string[];
+  hosts?: HostPolicy;
   timeoutMs?: number;
+  /** Request headers (e.g. Accept); never credentials from a submission. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -137,6 +158,14 @@ export interface SafeFetchOptions {
  * body is read with a hard byte limit, whatever Content-Length says.
  */
 export async function safeDownload(url: string, options: SafeFetchOptions): Promise<Buffer> {
+  return (await safeFetch(url, options)).body;
+}
+
+/** Like safeDownload, and also returns the final URL and the content type. */
+export async function safeFetch(
+  url: string,
+  options: SafeFetchOptions,
+): Promise<{ body: Buffer; url: string; contentType: string }> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const lookup = options.lookup ?? defaultLookup;
   const signal = AbortSignal.timeout(options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
@@ -156,7 +185,7 @@ export async function safeDownload(url: string, options: SafeFetchOptions): Prom
 
     let response: Response;
     try {
-      response = await fetchImpl(current.href, { redirect: 'manual', signal });
+      response = await fetchImpl(current.href, { redirect: 'manual', signal, headers: options.headers });
     } catch (e) {
       const reason = (e as Error).name === 'TimeoutError' ? 'timed out' : 'network error';
       throw new DownloadError(`${reason} (${redactUrl(current)})`);
@@ -176,7 +205,8 @@ export async function safeDownload(url: string, options: SafeFetchOptions): Prom
     if (!response.ok) {
       await response.body?.cancel();
       throw new DownloadError(
-        `HTTP ${response.status} (${redactUrl(current)}; the link may have expired or need the Tally login)`,
+        `HTTP ${response.status} (${redactUrl(current)}` +
+          `${(options.hosts ?? TRUSTED_PHOTO_HOSTS) === TRUSTED_PHOTO_HOSTS ? '; the link may have expired or need the Tally login' : ''})`,
       );
     }
     const declared = Number(response.headers.get('content-length') ?? 0);
@@ -184,7 +214,11 @@ export async function safeDownload(url: string, options: SafeFetchOptions): Prom
       await response.body?.cancel();
       throw new DownloadError(`larger than ${options.maxBytes / 1024 / 1024} MB`);
     }
-    return readLimited(response, options.maxBytes);
+    return {
+      body: await readLimited(response, options.maxBytes),
+      url: current.href,
+      contentType: response.headers.get('content-type') ?? '',
+    };
   }
 }
 

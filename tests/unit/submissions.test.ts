@@ -208,6 +208,7 @@ const sub = (extra: Partial<Submission>): Submission => ({
   restaurantName: '示例面馆',
   photoUrls: [],
   dishes: [],
+  keywords: [],
   consent: true,
   ...extra,
 });
@@ -390,6 +391,7 @@ describe('restaurant identity', () => {
     submissionId: 's',
     photoUrls: [],
     dishes: [],
+    keywords: [],
     consent: true,
     ...extra,
   });

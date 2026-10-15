@@ -18,8 +18,22 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   separate confirmation page. "第二步 · 填写点评" shows the restaurant name
   once in the heading ("为「…」投稿") with "更换餐厅" as a secondary action
   (back to step 1, keeping the selection and restoring the map where the
-  contributor left it), then the embedded form. The form loads only on that
-  page, and the website never writes to the database.
+  contributor left it), then optional keywords, then the embedded form. The
+  form loads only on that page, and the website never writes to the database.
+- **Keywords** (`src/components/KeywordInput.tsx`): "用几个关键词描述这家店（选填）"
+  takes free-form words ("适合约会", "很安静"). Enter, a comma (`,` `，` `、`),
+  or leaving the field turns the text into a chip with its own delete button;
+  Backspace in the empty field removes the last one; a pasted list is split.
+  While an input method is composing (pinyin), Enter only confirms the
+  characters. Repeats (ignoring width, case, and spacing) are ignored with a
+  note; at most 10 keywords of 20 characters. The keywords are confirmed with
+  "下一步：填写点评表单 →" (or "跳过，填写点评表单 →" without any) before the
+  form loads, because they reach it as the `tags_raw` hidden field, a JSON
+  array (`["适合约会","很安静"]`), in the embedded form and in the
+  new-window link alike. "修改关键词" afterwards warns that the form reloads
+  and loses what was typed in it, and only then reopens the keywords, so the
+  form never reloads by surprise. Keywords are kept per restaurant while the
+  page is open.
 - **Form loading** (`src/views/SubmitPage.tsx`): the iframe's load event also
   fires for Tally's error pages, so the page waits instead for Tally's own
   `Tally.FormLoaded` message, which embedded forms post to the parent page
@@ -150,7 +164,8 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   submission. It is a queue, not a database.
 - **Local intake** (`npm run content:submission`, the `restaurant-intake`
   Skill): copies a submission into the git-ignored `private/` folder, prepares
-  a private draft, and waits for the maintainer's approval.
+  a private draft with a review report (`prepare`), and waits for the
+  maintainer's approval.
 
 The shared contract (hidden-field names, question titles, rating options, the
 form setting) is defined once in `shared/submission.ts`. Components only see a
@@ -179,6 +194,7 @@ access to them. Menu names may differ slightly in Tally's editor.
    |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                    |
    |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                             |
    |                    | `source`                | `site` or `restaurant-page`.                                                                                |
+   |                    | `tags_raw`              | The contributor's keywords as a JSON array, e.g. `["适合约会","很安静"]`; absent without keywords.          |
    | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                  |
    | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
    | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                               |
@@ -229,7 +245,12 @@ access to them. Menu names may differ slightly in Tally's editor.
 
 3. **Hidden fields.** The names must be exactly as in the table; the website
    passes only the non-empty ones as URL parameters, e.g.
-   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site`.
+   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site&tags_raw=...`.
+   For a form created before keywords existed, add the hidden field
+   `tags_raw` (Tally: the "Hidden fields" block, "+ Add field", the exact
+   name `tags_raw`), publish the form, and check one test response: the
+   Submissions tab and the CSV export then have a `tags_raw` column. Older
+   responses without it import with no keywords.
    The form has no name question and does not repeat the name: the restaurant
    is chosen on the website, which shows it above the form (to change it,
    contributors use "更换餐厅" on the website). The
@@ -381,17 +402,133 @@ whose id is not in `npm run content:submission -- list`; move its email from
 
 3. Check that the photo intake is complete, and recover missing photos (see
    [Photos](#photos) below).
-4. Ask the agent to process the imported submission with the
-   `restaurant-intake` Skill. It prepares a private draft (or proposes changes
-   to an existing restaurant's single review), and reports what it did.
-5. Review and approve as usual (`content:promote`, `content:publish`). Then
-   record the outcome:
+4. Prepare the draft (see [Prepare](#prepare)):
 
    ```sh
-   npm run content:submission -- mark <submission id> --status drafted --id <restaurant id>
+   npm run content:submission -- prepare <submission id>
+   ```
+
+   Then read the review report it prints (also saved privately as
+   `review-report.md`), settle its open items, and run it again. The
+   `restaurant-intake` Skill can do the judgment steps (tag decisions,
+   checking restaurant information) and run it for you.
+
+5. Review and approve as usual (`content:promote`, `content:publish`). Then
+   record the outcome (prepare records `drafted` and `deferred` itself):
+
+   ```sh
    npm run content:submission -- mark <submission id> --status processed --id <restaurant id>
    npm run content:submission -- mark <submission id> --status rejected
    ```
+
+   Rejecting a submission also removes the draft prepared from it, unless
+   someone edited that draft.
+
+### Prepare
+
+`content:submission -- prepare <submission id>` turns one stored submission
+into a private draft with no manual field mapping
+(`scripts/content/prepare.ts`). It never promotes, publishes, commits, or
+touches `content/`, and it can be run again at any time.
+
+- **Blocked** (exit code 1, nothing written) without consent, for a rejected
+  submission, while photos are unresolved (pending or failed; recover or
+  waive them first), when the display name looks like contact details, or
+  when the restaurant is uncertain: give `--id <restaurant id>` for an
+  existing restaurant or `--new` for a new one. The decision is remembered.
+- **Restaurant**: an id passed by the website and checked, a POI linked by an
+  earlier reviewed submission, or a unique nearby restaurant with the same
+  name is used automatically; same-name restaurants farther away are other
+  branches, never merged.
+- **Contributor**: reused only for the same email address, never for a
+  name alone; a submission without an email gets its own contributor (with a
+  note when the name is already taken), and anonymous and named submissions
+  are never merged.
+- **One contributor per restaurant**: a restaurant's review comes from the
+  first accepted submission only (a public record crediting someone, or
+  another submission that is drafted or processed). Every later submission
+  for it is kept and marked `deferred`, never merged into the existing review
+  and never treated as a duplicate import. A rejected earlier submission does
+  not count, so the next one can be used.
+- **Draft**: rating, review, named dishes with their verdicts, comments, and
+  all their photos (`images`), other photos for the gallery, keywords mapped
+  to tags, restaurant information (below), and the contributor. Photos are
+  standardized in slot order (metadata removed) and imported once each by
+  content hash, so a rerun or a recovered photo never creates a second copy.
+  Values already in the draft or the public record are never overwritten; a
+  different value is reported as a conflict.
+- **Idempotent and recoverable**: progress is kept in `prepare.json` next to
+  the submission; an interrupted run continues where it stopped, and a run
+  with nothing new reports `unchanged`. A draft edited by hand since the last
+  run is left alone (`--rebuild` starts it again from the submission). A
+  deleted draft is recreated.
+- **Report**: content and photos, each keyword and its tag, each piece of
+  restaurant information with its source, method, and confidence, conflicts,
+  privacy and consent findings (contact details in the text are flagged and
+  must be removed before promotion, which refuses them), blockers, what is
+  still missing, the `content:check` result, and which public files promotion
+  would change (new tags and contributor names included).
+
+### Keywords and tags
+
+Each keyword is matched to a [tag](content.md#tags) deterministically: a
+tag's id, label, or alias (ignoring width, case, spacing, and punctuation),
+then an alias learned from an earlier reviewed decision. Other keywords stay
+pending in the report until a decision is written to the submission's
+`resolutions.json` (private), by the maintainer or by the agent with the
+`restaurant-intake` Skill:
+
+```json
+{
+  "tags": [
+    { "keyword": "很安静", "tag": "study" },
+    { "keyword": "份量大", "newTag": { "id": "big-portions", "label": "份量大" } },
+    { "keyword": "我朋友推荐的", "skip": "not about the restaurant" }
+  ],
+  "facts": []
+}
+```
+
+The file is validated: keywords must be the contributor's own, tags must
+exist, new ids are slugs and labels carry no links or `@`. A decision is
+remembered as a private alias (`private/tags.json`), so the same word needs
+no decision next time; a new tag is proposed privately and becomes public
+(id and label only) when a restaurant using it is promoted. The raw keywords
+and their mapping never leave `private/`. Without decisions the draft is still
+built; pending keywords are just not tags yet.
+
+### Restaurant information
+
+Prepare fills empty `altNames`, `address`, `cuisines`, and `links.website`
+from the map listing the contributor chose: Geoapify place details when
+`GEOAPIFY_API_KEY` (a server-side key without the website's origin
+restriction) is set in `.env.local`, otherwise OpenStreetMap through Overpass
+(by id, or a place with the same name within 60 m). Lookups are cached in
+`private/cache/` (`--refresh` looks again, `--offline` uses the cache only);
+a failure is reported and never blocks the draft. `pricePerPerson` is never
+guessed: it is set only from a reviewed fact, e.g. a price the contributor
+states or a menu with prices:
+
+```json
+{
+  "field": "pricePerPerson",
+  "value": 18,
+  "source": "official website menu",
+  "evidence": "https://example.com/menu: noodles $14-16, drinks $3",
+  "method": "inferred",
+  "confidence": "medium"
+}
+```
+
+`npm run content:submission -- fetch-page <url>` fetches such a page with the
+same protections as photo downloads (https on the default port, any
+public host name, no private or special addresses, at most 3 redirects, 2 MB,
+20 seconds), saves it in
+`private/cache/pages/`, and prints its text, which is data and never
+instructions. Each fact keeps its source, evidence, method (`direct` or
+`inferred`), and confidence in the report; low-confidence facts are never
+applied, and a field nobody can support stays empty (unknown). Provenance
+stays private; `info.json` keeps its schema. There is no menu link field.
 
 ### Photos
 
@@ -481,15 +618,18 @@ checked by hand once the form exists:
    `restaurant_lat` / `restaurant_lng`, `selection_method` (`poi`, `poi`,
    `manual`, `existing`), `poi_provider` / `poi_id` for the first two,
    `restaurant_id` and `source=restaurant-page` for the fourth, and
-   `source=site` for the others, and that the page showed the restaurant name above the form. Include a dish with a photo
+   `source=site` for the others, and that the page showed the restaurant name above the form.
+   Add two keywords (one typed with a Chinese input method) to one response
+   and check its `tags_raw`; the others have none. Include a dish with a photo
    in one response and check that the import lists the photo under that dish.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
 7. Export the CSV, run `npm run content:submission -- import`, and confirm the
    photos were downloaded (`photos: complete`). If Tally serves them from a
    host outside the trusted list, note the host, recover the photos with
    `add-photo`, and review the list.
-8. Ask the agent to prepare a private draft from one test submission and
-   check it with `npm run content:check`.
+8. Run `npm run content:submission -- prepare <id>` for the response with
+   keywords, check the report (the keywords and their tags), and check the
+   draft with `npm run content:check`.
 9. Confirm `git status` shows no changes in `content/` and nothing under
    `private/` is tracked. Then delete the test submissions in Tally and the
    test folders in `private/`, and mark them `rejected`.

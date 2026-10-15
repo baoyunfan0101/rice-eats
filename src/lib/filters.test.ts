@@ -14,13 +14,23 @@ import {
   type BrowseState,
 } from './filters';
 
-const r = (id: string, extra: Partial<RestaurantSummary> = {}): RestaurantSummary => ({
+const TAG_LABELS: Record<string, string> = {
+  date: '适合约会',
+  group: '适合聚餐',
+  budget: '实惠',
+  solo: '适合一人食',
+  spicy: '偏辣',
+};
+const r = (
+  id: string,
+  { tags = [], ...extra }: Partial<Omit<RestaurantSummary, 'tags'>> & { tags?: string[] } = {},
+): RestaurantSummary => ({
   id,
   status: 'published',
   name: id,
   altNames: [],
   cuisines: [],
-  tags: [],
+  tags: tags.map((t) => ({ id: t, label: TAG_LABELS[t] ?? t })),
   links: {},
   ...extra,
 });
