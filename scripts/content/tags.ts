@@ -16,6 +16,7 @@ import {
   type TagDefinition,
 } from '../../shared/content/schema.ts';
 import { IntakeError } from './intake.ts';
+import { tagRegistryProblems } from './privacy.ts';
 
 export interface TagFiles {
   publicFile: string;
@@ -123,6 +124,8 @@ export async function recordDecisions(files: TagFiles, decisions: TagDecision[])
     aliases: { ...registry.private.aliases },
   };
   for (const decision of decisions) {
+    // Contact details never become a proposal (prepare.ts reports them first).
+    if ('newTag' in decision && tagRegistryProblems([decision.newTag]).unsafe.length) continue;
     if ('newTag' in decision && !allTags({ ...registry, private: next }).some((t) => t.id === decision.newTag.id)) {
       next.proposed.push({ id: decision.newTag.id, label: decision.newTag.label });
     }
@@ -134,9 +137,24 @@ export async function recordDecisions(files: TagFiles, decisions: TagDecision[])
 }
 
 /**
+ * Withdraws proposed tags (and the keyword aliases that point to them), e.g.
+ * when the only submission that proposed them is rejected. Public tags are
+ * never changed here.
+ */
+export async function withdrawTags(files: TagFiles, ids: ReadonlySet<string>): Promise<void> {
+  const registry = await loadTags(files);
+  const next: PrivateTags = {
+    proposed: registry.private.proposed.filter((t) => !ids.has(t.id)),
+    aliases: Object.fromEntries(Object.entries(registry.private.aliases).filter(([, id]) => !ids.has(id))),
+  };
+  if (JSON.stringify(next) !== JSON.stringify(registry.private)) await writePrivate(files.privateFile, next);
+}
+
+/**
  * Moves the proposed tags among `ids` into the public registry (the label
  * only; learned aliases stay private). Called by content:promote, like
- * publishContributors. Returns the ids that became public.
+ * publishContributors. Refuses tags whose id or label carries contact
+ * details. Returns the ids that became public.
  */
 export async function publishTags(files: TagFiles, ids: string[]): Promise<string[]> {
   const registry = await loadTags(files);
@@ -144,6 +162,8 @@ export async function publishTags(files: TagFiles, ids: string[]): Promise<strin
     (t) => ids.includes(t.id) && !registry.public.some((p) => p.id === t.id),
   );
   if (added.length === 0) return [];
+  const unsafe = tagRegistryProblems(added).unsafe;
+  if (unsafe.length) throw new IntakeError(`not published: ${unsafe.join('; ')}`);
   const publicList = tagRegistrySchema.parse([...registry.public, ...added.map(({ id, label }) => ({ id, label }))]);
   await mkdir(path.dirname(files.publicFile), { recursive: true });
   await writeFile(files.publicFile, `${JSON.stringify(publicList, null, 2)}\n`);

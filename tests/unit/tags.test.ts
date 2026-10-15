@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { normalizeKeyword, tagRegistrySchema } from '../../shared/content/schema.ts';
@@ -8,8 +9,12 @@ import {
   matchKeywords,
   publishTags,
   recordDecisions,
+  withdrawTags,
   type TagFiles,
 } from '../../scripts/content/tags.ts';
+import { tagTextProblems } from '../../scripts/content/privacy.ts';
+import { checkTrackedFiles } from '../../scripts/check-privacy.ts';
+import { runPipeline } from '../../scripts/content/pipeline.ts';
 import { tempDir } from './helpers.ts';
 
 const PUBLIC = [
@@ -122,5 +127,114 @@ describe('tag registry', () => {
     const tagFiles = await files();
     await writeFile(tagFiles.privateFile, '{"proposed": [{"id": "Bad"}]}');
     await expect(loadTags(tagFiles)).rejects.toThrow(/private-tags.json/);
+  });
+
+  it('withdraws proposed tags and the aliases that point to them', async () => {
+    const tagFiles = await files();
+    await recordDecisions(tagFiles, [
+      { keyword: '份量大', newTag: { id: 'big-portions', label: '份量大' } },
+      { keyword: '份量足', tag: 'big-portions' },
+      { keyword: '很安静', tag: 'quiet' },
+    ]);
+    await withdrawTags(tagFiles, new Set(['big-portions']));
+    expect(await read(tagFiles.privateFile)).toEqual({
+      proposed: [],
+      aliases: { 很安静: 'quiet' },
+    });
+  });
+});
+
+describe('tag privacy', () => {
+  const SAFE = [
+    '实惠',
+    '适合约会',
+    'date night',
+    '营业到很晚',
+    '可带宠物（示例）',
+    '24小时',
+    '2人套餐',
+    'big portions',
+    'pet-friendly',
+  ];
+  const UNSAFE = [
+    'boss@example.com',
+    '@riceeats',
+    'vx dumpling88',
+    '微信：dumpling88',
+    'QQ 12345678',
+    '7135550199',
+    '713-555-0199',
+    'ig: foodie',
+    'dumplings.com',
+    'https://x.example',
+    'tally.so/r/abc',
+    'aB3dE5fG7hJ9kL1mN3',
+  ];
+  const QUESTIONABLE = ['微信支付', '加微信', '可以给手机充电', 'abc123', '小红书同款'];
+
+  it('blocks obvious contact details, flags questionable words, and allows descriptive tags', () => {
+    for (const word of SAFE)
+      expect(tagTextProblems(word), word).toEqual({ unsafe: [], questionable: [] });
+    for (const word of UNSAFE) expect(tagTextProblems(word).unsafe, word).not.toEqual([]);
+    for (const word of QUESTIONABLE) {
+      expect(tagTextProblems(word), word).toMatchObject({ unsafe: [] });
+      expect(tagTextProblems(word).questionable, word).not.toEqual([]);
+    }
+  });
+
+  it('never records or publishes an unsafe proposal', async () => {
+    const tagFiles = await files();
+    await recordDecisions(tagFiles, [
+      { keyword: '加我', newTag: { id: 'contact', label: 'vx dumpling88' } },
+    ]);
+    expect(existsSync(tagFiles.privateFile)).toBe(false);
+    // Even when written into private/tags.json by hand.
+    await writeFile(
+      tagFiles.privateFile,
+      JSON.stringify({ proposed: [{ id: 'contact', label: '电话 7135550199' }], aliases: {} }),
+    );
+    await expect(publishTags(tagFiles, ['contact'])).rejects.toThrow(
+      /not published: .*phone number/,
+    );
+    expect(await read(tagFiles.publicFile)).toEqual(PUBLIC);
+  });
+
+  it('fails the content check and the privacy check for contact details in a tag registry', async () => {
+    const dir = await tempDir();
+    const tagsFile = path.join(dir, 'content/tags.json');
+    await mkdir(path.dirname(tagsFile), { recursive: true });
+    await writeFile(
+      tagsFile,
+      JSON.stringify([
+        ...PUBLIC,
+        { id: 'deals', label: '优惠', aliases: ['加微信 dumpling88'] },
+        { id: 'pay', label: '微信支付' },
+      ]),
+    );
+    const result = await runPipeline({
+      restaurantsDir: path.join(dir, 'content/restaurants'),
+      contributorsFile: path.join(dir, 'content/contributors.json'),
+      tagsFile,
+      source: 'content',
+      includeDrafts: false,
+      base: '/',
+      cacheDir: path.join(dir, '.cache'),
+    });
+    expect(result.failed).toBe(true);
+    expect(
+      result.diagnostics
+        .filter((d) => d.level === 'error')
+        .map((d) => d.message)
+        .join('\n'),
+    ).toMatch(/tag "deals" alias "加微信 dumpling88": a contact handle/);
+    expect(
+      result.diagnostics
+        .filter((d) => d.level === 'warning')
+        .map((d) => d.message)
+        .join('\n'),
+    ).toMatch(/tag "pay" label "微信支付"/);
+    expect((await checkTrackedFiles(dir, ['content/tags.json'])).join('\n')).toMatch(
+      /content\/tags.json: tag "deals" alias .*a contact handle/,
+    );
   });
 });

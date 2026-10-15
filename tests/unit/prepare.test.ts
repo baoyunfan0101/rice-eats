@@ -7,20 +7,22 @@ import { publishContributors } from '../../scripts/content/contributors.ts';
 import { moveDraft } from '../../scripts/content/intake.ts';
 import { runPipeline } from '../../scripts/content/pipeline.ts';
 import {
-  discardPreparedDraft,
   prepareSubmission,
+  rejectionProblems,
+  rejectSubmission,
   type PrepareOptions,
 } from '../../scripts/content/prepare.ts';
 import { findSensitiveMetadata } from '../../scripts/content/privacy.ts';
 import {
   importSubmissions,
+  markSubmission,
   readLog,
   submissionsFromCsv,
   type Submission,
 } from '../../scripts/content/submissions.ts';
 import { publishTags } from '../../scripts/content/tags.ts';
 import { serializeKeywords } from '../../shared/submission.ts';
-import { tempDir, writeRestaurant } from './helpers.ts';
+import { makeImage, tempDir, writeRestaurant } from './helpers.ts';
 
 // End-to-end tests of the deterministic submission pipeline on a temporary
 // database: import (Tally CSV) -> prepare (private draft) -> promote. All data
@@ -96,29 +98,27 @@ const NEW_RESTAURANT = {
 function fakeNetwork() {
   const down = new Set<string>();
   const requests: string[] = [];
+  /** What Overpass answers (the selected listing); tests change it. */
+  const places: Record<string, unknown>[] = [
+    {
+      type: 'node',
+      id: 1001,
+      lat: 29.7174,
+      lon: -95.4018,
+      tags: {
+        name: '示例汤包馆',
+        'name:en': 'Example Dumpling House',
+        amenity: 'restaurant',
+        cuisine: 'chinese;shanghainese',
+        website: 'https://dumplings.example/',
+      },
+    },
+  ];
   const fetchImpl = (async (input: string | URL | Request) => {
     const url = new URL(String(input));
     requests.push(`${url.hostname}${url.pathname}`);
     if (down.has(url.pathname)) return new Response('', { status: 403 });
-    if (url.hostname === 'overpass-api.de') {
-      return Response.json({
-        elements: [
-          {
-            type: 'node',
-            id: 1001,
-            lat: 29.7174,
-            lon: -95.4018,
-            tags: {
-              name: '示例汤包馆',
-              'name:en': 'Example Dumpling House',
-              amenity: 'restaurant',
-              cuisine: 'chinese;shanghainese',
-              website: 'https://dumplings.example/',
-            },
-          },
-        ],
-      });
-    }
+    if (url.hostname === 'overpass-api.de') return Response.json({ elements: places });
     let hash = 0;
     for (const c of url.pathname) hash = (hash * 31 + c.charCodeAt(0)) % 255;
     const body = await sharp({
@@ -130,7 +130,7 @@ function fakeNetwork() {
     return new Response(body, { headers: { 'content-type': 'image/jpeg' } });
   }) as typeof fetch;
   const lookup = async () => [{ address: '8.8.8.8' }];
-  return { down, requests, fetchImpl, lookup };
+  return { down, requests, places, fetchImpl, lookup };
 }
 
 async function setup() {
@@ -170,11 +170,15 @@ async function setup() {
     });
   const prepare = (id: string, extra: Partial<PrepareOptions> = {}) =>
     prepareSubmission(id, { ...options, ...extra });
+  const reject = async (id: string, resolved = false) => {
+    await markSubmission(options.submissionsDir, id, 'rejected');
+    return rejectSubmission(id, { ...options, resolved });
+  };
   const readJson = async (file: string) =>
     JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   const listing = async (dir: string) =>
     existsSync(dir) ? (await readdir(dir, { recursive: true })).map(String).sort() : [];
-  return { root, p, net, options, importCsv, prepare, readJson, listing };
+  return { root, p, net, options, importCsv, prepare, reject, readJson, listing };
 }
 
 const validate = (t: Awaited<ReturnType<typeof setup>>) =>
@@ -487,11 +491,10 @@ describe('prepare', () => {
     );
     expect((await t.prepare('later', { restaurantId: id })).outcome).toBe('deferred');
     // ...and the first one is rejected: its unchanged draft is removed.
-    const { markSubmission } = await import('../../scripts/content/submissions.ts');
-    await markSubmission(t.options.submissionsDir, 'mAbC12', 'rejected');
-    expect(
-      await discardPreparedDraft(t.options.submissionsDir, t.options.draftsDir, 'mAbC12'),
-    ).toMatch(/removed/);
+    const rejected = await t.reject('mAbC12');
+    expect(rejected.status).toBe('done');
+    expect(rejected.messages.join('\n')).toMatch(/removed private\/drafts/);
+    expect(rejected.messages.join('\n')).toMatch(/deferred submission later/);
     expect(existsSync(t.p('private/drafts', id))).toBe(false);
     const report = await t.prepare('later', { asNew: true });
     expect(report.outcome).toBe('drafted');
@@ -656,5 +659,381 @@ describe('prepare', () => {
     const report = await t.prepare('mAbC12', { offline: true });
     expect(report.outcome).toBe('drafted');
     expect(await readdir(t.p('private/drafts', id, 'images'))).toHaveLength(6);
+  });
+});
+
+describe('map listing identity', () => {
+  const listing = (extra: Record<string, unknown>, tags: Record<string, unknown>) => ({
+    type: 'node',
+    id: 1001,
+    lat: 29.7174,
+    lon: -95.4018,
+    ...extra,
+    tags: { amenity: 'restaurant', cuisine: 'chinese', website: 'https://other.example/', ...tags },
+  });
+  const enriched = async (t: Awaited<ReturnType<typeof setup>>, id: string) => {
+    const info = await t.readJson(t.p('private/drafts', id, 'info.json'));
+    return { cuisines: info.cuisines, links: info.links, altNames: info.altNames };
+  };
+
+  it('never uses another branch of a chain, even with the same name', async () => {
+    const t = await setup();
+    t.net.places.splice(0, 1, listing({ lat: 29.76, lon: -95.36 }, { name: '示例汤包馆' }));
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const report = await t.prepare('mAbC12');
+    expect(report.outcome).toBe('drafted'); // the draft is still made
+    expect(report.listing?.verdict).toBe('rejected');
+    expect(report.listing?.reasons.join('; ')).toMatch(/another branch/);
+    expect(await enriched(t, report.restaurantId!)).toEqual({
+      cuisines: undefined,
+      links: undefined,
+      altNames: undefined,
+    });
+    expect(report.facts.every((f) => !f.applied)).toBe(true);
+    expect(report.conflicts.join('\n')).toMatch(/map listing REJECTED/);
+    const text = await readFile(t.p('private/submissions/tally-mAbC12/review-report.md'), 'utf8');
+    expect(text).toMatch(/Map listing identity: \*\*rejected\*\*/);
+  });
+
+  it('never uses a POI id that belongs to another restaurant nearby', async () => {
+    const t = await setup();
+    t.net.places.splice(0, 1, listing({ lat: 29.7183 }, { name: 'Other Noodle Bar' }));
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const report = await t.prepare('mAbC12');
+    expect(report.listing?.verdict).toBe('rejected');
+    expect((await enriched(t, report.restaurantId!)).links).toBeUndefined();
+  });
+
+  it('accepts a name in another language at the same spot and address', async () => {
+    const t = await setup();
+    t.net.places.splice(
+      0,
+      1,
+      listing(
+        {},
+        {
+          name: 'Example Dumpling House',
+          'addr:housenumber': '6100',
+          'addr:street': 'Main Street',
+          'addr:city': 'Houston',
+        },
+      ),
+    );
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const report = await t.prepare('mAbC12');
+    expect(report.listing?.verdict).toBe('verified');
+    expect(await enriched(t, report.restaurantId!)).toEqual({
+      cuisines: ['chinese'],
+      links: { website: 'https://other.example/' },
+      altNames: undefined,
+    });
+  });
+
+  it('leaves an unconfirmed listing to the maintainer, whose decision is recorded', async () => {
+    const t = await setup();
+    t.net.places.splice(0, 1, listing({}, { name: 'Example Dumpling House' }));
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const first = await t.prepare('mAbC12');
+    expect(first.listing?.verdict).toBe('ambiguous');
+    expect(first.conflicts.join('\n')).toMatch(/"key": "osm:node\/1001", "decision": "same-place"/);
+    expect((await enriched(t, first.restaurantId!)).cuisines).toBeUndefined();
+
+    await writeFile(
+      t.p('private/submissions/tally-mAbC12/resolutions.json'),
+      JSON.stringify({
+        listing: {
+          key: 'osm:node/1001',
+          decision: 'same-place',
+          reason: 'English name on the storefront photo',
+        },
+      }),
+    );
+    const second = await t.prepare('mAbC12');
+    expect(second.listing).toMatchObject({ verdict: 'verified', decidedBy: 'maintainer' });
+    expect((await enriched(t, first.restaurantId!)).cuisines).toEqual(['chinese']);
+    const text = await readFile(t.p('private/submissions/tally-mAbC12/review-report.md'), 'utf8');
+    expect(text).toContain(
+      'maintainer decision (resolutions.json): English name on the storefront photo',
+    );
+
+    // A decision about another listing is not used.
+    await writeFile(
+      t.p('private/submissions/tally-mAbC12/resolutions.json'),
+      JSON.stringify({ listing: { key: 'osm:node/9', decision: 'same-place', reason: 'x' } }),
+    );
+    const third = await t.prepare('mAbC12', { rebuild: true });
+    expect(third.listing?.verdict).toBe('ambiguous');
+    expect(third.notes.join('\n')).toMatch(/about another listing/);
+  });
+
+  it('does not use a listing without coordinates on its name alone', async () => {
+    const t = await setup();
+    t.net.places.splice(0, 1, {
+      type: 'node',
+      id: 1001,
+      tags: { name: '示例汤包馆', cuisine: 'chinese' },
+    });
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const report = await t.prepare('mAbC12');
+    expect(report.outcome).toBe('drafted');
+    expect(report.listing?.verdict).toBe('ambiguous');
+    expect(report.listing?.reasons.join('; ')).toMatch(/no coordinates/);
+  });
+});
+
+describe('rejecting a prepared submission', () => {
+  const rawFiles = async (t: Awaited<ReturnType<typeof setup>>, id: string) =>
+    (await readdir(t.p('private/submissions', `tally-${id}`)))
+      .filter((f) => f === 'submission.json' || f.startsWith('photo-'))
+      .sort();
+
+  it('removes a draft it created, keeps the raw submission, and withdraws its proposed tag', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    await writeFile(
+      t.p('private/submissions/tally-mAbC12/resolutions.json'),
+      JSON.stringify({
+        tags: [{ keyword: '适合带宠物', newTag: { id: 'pet-friendly', label: '可带宠物' } }],
+      }),
+    );
+    const id = (await t.prepare('mAbC12')).restaurantId!;
+    const raw = await rawFiles(t, 'mAbC12');
+    expect(raw).toHaveLength(7);
+    const result = await t.reject('mAbC12');
+    expect(result.status).toBe('done');
+    expect(existsSync(t.p('private/drafts', id))).toBe(false);
+    expect(await rawFiles(t, 'mAbC12')).toEqual(raw);
+    expect(await t.readJson(t.options.tagFiles.privateFile)).toEqual({ proposed: [], aliases: {} });
+    // The contributor stays registered privately (audit), but nothing credits them.
+    expect(Object.keys(await t.readJson(t.options.contributorFiles.privateFile))).toEqual([
+      'u-002',
+    ]);
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+    // Repeatable.
+    expect((await t.reject('mAbC12')).status).toBe('nothing');
+    expect((await t.prepare('mAbC12')).outcome).toBe('blocked');
+  });
+
+  it('takes its content out of an existing manual draft and keeps everything else', async () => {
+    const t = await setup();
+    const { createDraft, importImages } = await import('../../scripts/content/intake.ts');
+    const dir = await createDraft(t.options.draftsDir, 'r-manual1', '示例汤包馆');
+    const manual = {
+      id: 'r-manual1',
+      status: 'draft',
+      name: '示例汤包馆',
+      address: '6100 Main St, Houston',
+      location: { lat: 29.7174, lng: -95.4018 },
+      cuisines: ['chinese'],
+      tags: ['quiet'],
+    };
+    await writeFile(path.join(dir, 'info.json'), JSON.stringify(manual, null, 2));
+    await makeImage(t.p('manual.jpg'));
+    await importImages(dir, [t.p('manual.jpg')]);
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const report = await t.prepare('mAbC12', { restaurantId: 'r-manual1' });
+    expect(report.outcome).toBe('drafted');
+    const prepared = await t.readJson(path.join(dir, 'info.json'));
+    expect(prepared).toMatchObject({
+      rating: 4,
+      contributorIds: ['u-002'],
+      tags: ['quiet', 'date', 'group'],
+    });
+    expect(prepared.links).toEqual({ website: 'https://dumplings.example/' });
+    expect(await readdir(path.join(dir, 'images'))).toHaveLength(7);
+
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect(await t.readJson(path.join(dir, 'info.json'))).toEqual(manual);
+    expect(existsSync(path.join(dir, 'review.md'))).toBe(false);
+    expect(await readdir(path.join(dir, 'images'))).toEqual(['01-manual.jpg']);
+    expect(await rawFiles(t, 'mAbC12')).toHaveLength(7);
+
+    // Another contributor can now be the first accepted one.
+    await t.importCsv(
+      csv(
+        row({ ...NEW_RESTAURANT, 'Submission ID': 'second', '联系邮箱（选填）': 'b@example.com' }),
+      ),
+    );
+    const second = await t.prepare('second', { restaurantId: 'r-manual1' });
+    expect(second.outcome).toBe('drafted');
+    expect(second.firstContributor).toBe(true);
+    expect((await t.readJson(path.join(dir, 'info.json'))).contributorIds).toEqual(['u-003']);
+  });
+
+  it('keeps edits the maintainer made to other fields', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const file = t.p('private/drafts', id, 'info.json');
+    await writeFile(
+      file,
+      JSON.stringify({ ...(await t.readJson(file)), pricePerPerson: 20 }, null, 2),
+    );
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect(await t.readJson(file)).toEqual({
+      id,
+      status: 'draft',
+      name: '示例汤包馆',
+      pricePerPerson: 20,
+    });
+    expect(existsSync(t.p('private/drafts', id, 'review.md'))).toBe(false);
+    expect(await readdir(t.p('private/drafts', id, 'images'))).toEqual([]);
+  });
+
+  it('changes nothing and blocks promotion when the maintainer edited what it wrote', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const draft = t.p('private/drafts', id);
+    await writeFile(path.join(draft, 'review.md'), '汤底很浓，环境安静。（编辑过）\n');
+    const before = await t.listing(draft);
+    const info = await readFile(path.join(draft, 'info.json'), 'utf8');
+
+    const result = await t.reject('mAbC12');
+    expect(result.status).toBe('manual');
+    expect(result.messages.join('\n')).toMatch(/review\.md/);
+    expect(await t.listing(draft)).toEqual(before);
+    expect(await readFile(path.join(draft, 'info.json'), 'utf8')).toBe(info);
+    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+      /rejected, but its content is still in the draft: edited by hand/,
+    );
+    expect(
+      (await validate(t)).diagnostics.filter((d) => d.restaurantId === id && d.draftError),
+    ).toEqual([]);
+
+    // The maintainer keeps their own text: confirmed explicitly, everything else is taken out.
+    await writeFile(path.join(draft, 'review.md'), '维护者自己写的介绍。\n');
+    const resolved = await t.reject('mAbC12', true);
+    expect(resolved.status).toBe('resolved');
+    expect(await readFile(path.join(draft, 'review.md'), 'utf8')).toBe('维护者自己写的介绍。\n');
+    expect((await t.readJson(path.join(draft, 'info.json'))).contributorIds).toBeUndefined();
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+  });
+
+  it('blocks promotion while a rejection is unfinished', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    await markSubmission(t.options.submissionsDir, 'mAbC12', 'rejected');
+    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+      /did not finish/,
+    );
+    expect((await rejectSubmission('mAbC12', t.options)).status).toBe('done');
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+  });
+});
+
+describe('rebuilding a draft', () => {
+  const images = async (t: Awaited<ReturnType<typeof setup>>, id: string) =>
+    (await readdir(t.p('private/drafts', id, 'images'))).sort();
+  const hashes = async (t: Awaited<ReturnType<typeof setup>>, id: string) => {
+    const { createHash } = await import('node:crypto');
+    const out: Record<string, string> = {};
+    for (const name of await images(t, id)) {
+      out[name] = createHash('sha256')
+        .update(await readFile(t.p('private/drafts', id, 'images', name)))
+        .digest('hex');
+    }
+    return out;
+  };
+
+  it('is idempotent for an unchanged submission', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const before = await hashes(t, id);
+    for (let i = 0; i < 2; i++) {
+      const report = await t.prepare('mAbC12', { offline: true, rebuild: true });
+      expect(report.outcome).toBe('unchanged');
+      expect(report.removedImages).toEqual([]);
+      expect(await hashes(t, id)).toEqual(before);
+    }
+  });
+
+  it('replaces a replaced photo in place and removes a waived one', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const before = await hashes(t, id);
+    const sub = t.p('private/submissions/tally-mAbC12');
+    const { addManualPhoto, waivePhoto } = await import('../../scripts/content/submissions.ts');
+    const stored = JSON.parse(
+      await readFile(path.join(sub, 'submission.json'), 'utf8'),
+    ) as Submission;
+    // Photo 3 (dish 1) is replaced by another picture; photo 5 (dish 2) is lost and waived.
+    await rm(path.join(sub, 'photo-03.jpg'));
+    await rm(path.join(sub, 'photo-05.jpg'));
+    await makeImage(t.p('replacement.jpg'), { width: 90, height: 60 });
+    await addManualPhoto(sub, stored, 3, t.p('replacement.jpg'));
+    await waivePhoto(sub, stored, 5);
+
+    const report = await t.prepare('mAbC12', { offline: true, rebuild: true });
+    expect(report.outcome).toBe('drafted');
+    expect(report.removedImages.sort()).toEqual(['images/03-dish-1.jpg', 'images/05-dish-2.jpg']);
+    expect(await images(t, id)).toEqual([
+      '01-photo.jpg',
+      '02-dish-1.jpg',
+      '03-dish-1.jpg',
+      '04-dish-1.jpg',
+      '06-dish-2.jpg',
+    ]);
+    const after = await hashes(t, id);
+    expect(after['03-dish-1.jpg']).not.toBe(before['03-dish-1.jpg']);
+    expect(after['01-photo.jpg']).toBe(before['01-photo.jpg']); // the cover stays
+    const info = await t.readJson(t.p('private/drafts', id, 'info.json'));
+    expect((info.dishes as { images?: string[] }[]).map((d) => d.images)).toEqual([
+      ['images/02-dish-1.jpg', 'images/03-dish-1.jpg', 'images/04-dish-1.jpg'],
+      ['images/06-dish-2.jpg'],
+    ]);
+    expect(
+      (await validate(t)).diagnostics.filter(
+        (d) => d.restaurantId === id && (d.level === 'error' || d.draftError),
+      ),
+    ).toEqual([]);
+    // Repeating it changes nothing.
+    expect((await t.prepare('mAbC12', { offline: true, rebuild: true })).outcome).toBe('unchanged');
+  });
+
+  it('keeps images added by hand and reports them', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const { importImages } = await import('../../scripts/content/intake.ts');
+    await makeImage(t.p('extra.jpg'));
+    await importImages(t.p('private/drafts', id), [t.p('extra.jpg')]);
+    const report = await t.prepare('mAbC12', { offline: true, rebuild: true });
+    expect(report.otherImages).toEqual(['images/07-extra.jpg']);
+    expect(await images(t, id)).toContain('07-extra.jpg');
+    const text = await readFile(t.p('private/submissions/tally-mAbC12/review-report.md'), 'utf8');
+    expect(text).toMatch(/Kept images not from this submission.*07-extra\.jpg/);
+  });
+});
+
+describe('new tag privacy', () => {
+  it('never proposes a tag label with contact details, and flags questionable ones', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    await writeFile(
+      t.p('private/submissions/tally-mAbC12/resolutions.json'),
+      JSON.stringify({
+        tags: [
+          { keyword: '约会圣地', newTag: { id: 'wechat', label: 'vx dumpling88' } },
+          { keyword: '很安静', newTag: { id: 'call-us', label: '713 555 0199' } },
+          { keyword: '适合带宠物', newTag: { id: 'pay', label: '微信支付' } },
+        ],
+      }),
+    );
+    const report = await t.prepare('mAbC12', { offline: true });
+    const notes = report.notes.join('\n');
+    expect(notes).toMatch(/new tag not used: tag "wechat" label "vx dumpling88": a contact handle/);
+    expect(notes).toMatch(/new tag not used: tag "call-us" label "713 555 0199": phone number/);
+    expect(notes).toMatch(
+      /review the new tag: tag "pay" label "微信支付": a contact or social-media word/,
+    );
+    const info = await t.readJson(t.p('private/drafts', report.restaurantId!, 'info.json'));
+    expect(info.tags).toEqual(['date', 'pay', 'group']);
+    expect((await t.readJson(t.options.tagFiles.privateFile)).proposed).toEqual([
+      { id: 'pay', label: '微信支付' },
+    ]);
   });
 });

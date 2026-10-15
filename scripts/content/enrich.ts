@@ -10,7 +10,8 @@
 // API (free; for OSM POIs, and as a fallback that looks for the same named
 // place within a few meters of the selected location, so another branch of a
 // chain is never used). Results are cached in private/cache/ so a POI is
-// fetched once. Facts that need judgment (a price from a menu, a name from the
+// fetched once. A listing is used only after verifyListing confirms it is the
+// intended restaurant (the POI id is an unverified form field). Facts that need judgment (a price from a menu, a name from the
 // official site) come from the Skill as reviewed decisions (prepare.ts), with
 // pages fetched through fetchEvidencePage.
 
@@ -59,6 +60,11 @@ export interface PoiDetails {
   fetchedAt: string;
   /** The listing's own name, to compare with the submitted one. */
   name?: string;
+  /** Every name of the listing (name, other languages, official and short names). */
+  names: string[];
+  /** The listing's coordinates and address, to check it is the intended restaurant. */
+  location?: LatLngValue;
+  address?: string;
   facts: Fact[];
   /** OSM cuisine values with no matching cuisine key, for the maintainer. */
   unmappedCuisines: string[];
@@ -102,7 +108,7 @@ export function factsFromOsmTags(
   source: string,
   evidence: string,
   confidence: Fact['confidence'] = 'high',
-): { name?: string; facts: Fact[]; unmappedCuisines: string[] } {
+): { name?: string; names: string[]; address?: string; facts: Fact[]; unmappedCuisines: string[] } {
   const str = (key: string) => (typeof tags[key] === 'string' ? (tags[key] as string).trim() : '') || undefined;
   const name = str('name');
   const facts: Fact[] = [];
@@ -139,7 +145,7 @@ export function factsFromOsmTags(
 
   const website = str('website') ?? str('contact:website') ?? str('url');
   if (website && httpUrl.safeParse(website).success) facts.push({ field: 'website', value: website, ...base });
-  return { name, facts, unmappedCuisines };
+  return { name, names: [...(name ? [name] : []), ...altNames], ...(address ? { address } : {}), facts, unmappedCuisines };
 }
 
 export interface EnrichOptions {
@@ -197,6 +203,7 @@ export async function poiDetails(
     status,
     ...(reason ? { reason } : {}),
     fetchedAt: now(),
+    names: [],
     facts: [],
     unmappedCuisines: [],
   });
@@ -247,13 +254,23 @@ async function fromGeoapify(id: string, key: string, get: Get, result: Result): 
   const evidence = `Geoapify place details ${id.slice(0, 12)}…`;
   const fromTags = factsFromOsmTags({ ...raw, name: raw.name ?? props.name }, 'Geoapify (OpenStreetMap data)', evidence);
   const facts = [...fromTags.facts];
+  const location = { lat: Number(props.lat), lng: Number(props.lon) };
+  const formatted = typeof props.formatted === 'string' ? props.formatted : undefined;
   if (!facts.some((f) => f.field === 'address') && typeof props.formatted === 'string') {
     facts.push({ field: 'address', value: props.formatted, source: 'Geoapify', evidence, method: 'direct', confidence: 'high' });
   }
   if (!facts.some((f) => f.field === 'website') && typeof props.website === 'string' && httpUrl.safeParse(props.website).success) {
     facts.push({ field: 'website', value: props.website, source: 'Geoapify', evidence, method: 'direct', confidence: 'high' });
   }
-  return { ...result('ok'), name: fromTags.name, facts, unmappedCuisines: fromTags.unmappedCuisines };
+  return {
+    ...result('ok'),
+    name: fromTags.name,
+    names: fromTags.names,
+    ...(isValidLatLng(location) ? { location } : {}),
+    ...((fromTags.address ?? formatted) ? { address: fromTags.address ?? formatted } : {}),
+    facts,
+    unmappedCuisines: fromTags.unmappedCuisines,
+  };
 }
 
 interface OverpassElement {
@@ -278,7 +295,13 @@ async function fromOverpassId(id: string, get: Get, result: Result): Promise<Poi
   const [element] = await overpass(`[out:json][timeout:20];${type}(${num});out tags center;`, get);
   if (!element?.tags) return result('not-found', `OpenStreetMap has no ${id}`);
   const parsed = factsFromOsmTags(element.tags, 'OpenStreetMap', `https://www.openstreetmap.org/${id}`);
-  return { ...result('ok'), ...parsed };
+  return { ...result('ok'), ...parsed, ...elementLocation(element) };
+}
+
+function elementLocation(e: OverpassElement): { location?: LatLngValue } {
+  const point = e.center ?? (e.lat !== undefined && e.lon !== undefined ? { lat: e.lat, lon: e.lon } : undefined);
+  const location = point && { lat: point.lat, lng: point.lon };
+  return isValidLatLng(location) ? { location } : {};
 }
 
 /** The same named place close to the selected location (never a far-away branch). */
@@ -303,7 +326,100 @@ async function fromOverpassNearby(name: string, at: LatLngValue, get: Get, resul
   const element = same[0]!;
   const id = `${element.type}/${element.id}`;
   const parsed = factsFromOsmTags(element.tags!, 'OpenStreetMap (same name at the selected location)', `https://www.openstreetmap.org/${id}`, 'medium');
-  return { ...result('ok'), ...parsed };
+  return { ...result('ok'), ...parsed, ...elementLocation(element) };
+}
+
+// ---------------------------------------------------------------------------
+// Is the listing the intended restaurant?
+//
+// A POI id comes from a hidden form field, so it is a claim: a wrong or
+// tampered id, or another branch of a chain, must not fill in a restaurant.
+// The listing is compared with what is known about the restaurant (its record
+// for an existing one, otherwise the submission): names in any language,
+// distance, and address. Only a verified listing's facts are applied.
+
+/** Farther than this, a listing is another place (another branch of a chain). */
+export const OTHER_PLACE_METERS = 250;
+/** Names that differ are accepted only this close, with the same address. */
+export const SAME_SPOT_METERS = 30;
+
+export type ListingVerdict = 'verified' | 'ambiguous' | 'rejected';
+
+export interface ListingCheck {
+  verdict: ListingVerdict;
+  /** The evidence, for the private report. */
+  reasons: string[];
+}
+
+export interface ExpectedPlace {
+  /** The restaurant's name and other names (record and submission). */
+  names: string[];
+  location?: LatLngValue;
+  address?: string;
+}
+
+const sameName = (a: string, b: string) => {
+  const [x, y] = [normalizeKeyword(a), normalizeKeyword(b)];
+  if (!x || !y) return false;
+  if (x === y) return true;
+  // "Example Dumpling House" and "Example Dumpling House - Rice Village".
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 4 && long.includes(short);
+};
+
+const STREET_NOISE = new Set([
+  'st', 'street', 'ave', 'avenue', 'rd', 'road', 'blvd', 'boulevard', 'dr', 'drive', 'ln', 'lane', 'pkwy', 'parkway',
+  'hwy', 'highway', 'fwy', 'freeway', 'ct', 'court', 'pl', 'place', 'way', 'suite', 'ste', 'unit', 'houston', 'tx',
+  'texas', 'usa', 'united', 'states', 'north', 'south', 'east', 'west', 'the',
+]);
+
+function addressParts(address: string) {
+  const text = address.normalize('NFKC').toLowerCase();
+  const unit = /(?:suite|ste\.?|unit|#)\s*([a-z0-9-]+)/.exec(text)?.[1];
+  const withoutUnit = text.replace(/(?:suite|ste\.?|unit|#)\s*[a-z0-9-]+/g, ' ');
+  const number = /(?:^|[^\w])(\d{1,6}[a-z]?)(?=\s)/.exec(withoutUnit)?.[1];
+  const words = new Set((withoutUnit.match(/[a-z]{3,}|\p{Script=Han}{2,}/gu) ?? []).filter((w) => !STREET_NOISE.has(w)));
+  return { number, unit, words };
+}
+
+/** agree: same house number, street, and unit; disagree: clearly another address. */
+export function compareAddresses(a?: string, b?: string): 'agree' | 'disagree' | 'unknown' {
+  if (!a?.trim() || !b?.trim()) return 'unknown';
+  const [x, y] = [addressParts(a), addressParts(b)];
+  if (!x.number || !y.number || x.words.size === 0 || y.words.size === 0) return 'unknown';
+  const sharedStreet = [...x.words].some((w) => y.words.has(w));
+  if (x.number !== y.number || !sharedStreet) return 'disagree';
+  if (x.unit && y.unit && x.unit !== y.unit) return 'disagree';
+  return 'agree';
+}
+
+/** Decides whether a looked-up listing is the expected restaurant (see above). */
+export function verifyListing(listing: PoiDetails, expected: ExpectedPlace): ListingCheck {
+  const reasons: string[] = [];
+  const matched = listing.names.find((n) => expected.names.some((e) => sameName(n, e)));
+  if (listing.names.length === 0) reasons.push('the listing has no name');
+  else if (matched) reasons.push(`name "${matched}" matches`);
+  else reasons.push(`the listing's names (${listing.names.map((n) => `"${n}"`).join(', ')}) differ from the restaurant's`);
+  const meters =
+    listing.location && expected.location ? Math.round(distance(listing.location, expected.location)) : undefined;
+  if (meters !== undefined) reasons.push(`${meters} m from the restaurant's location`);
+  else reasons.push(listing.location ? 'the restaurant has no location to compare' : 'the listing has no coordinates');
+  const address = compareAddresses(listing.address, expected.address);
+  if (address !== 'unknown') reasons.push(`address ${address === 'agree' ? 'agrees' : 'differs'}`);
+  const verdict = (v: ListingVerdict): ListingCheck => ({ verdict: v, reasons });
+
+  if (meters !== undefined && meters > OTHER_PLACE_METERS) {
+    if (matched) reasons.push('same name elsewhere: probably another branch');
+    return verdict('rejected');
+  }
+  if (matched) {
+    if (meters !== undefined && meters <= SAME_PLACE_METERS) return verdict(address === 'disagree' ? 'ambiguous' : 'verified');
+    return verdict(address === 'agree' ? 'verified' : 'ambiguous');
+  }
+  // Another name (or another language): only the same spot and address confirm it.
+  if (meters !== undefined && meters <= SAME_SPOT_METERS && address === 'agree') return verdict('verified');
+  if (address === 'disagree' || (meters !== undefined && meters > SAME_PLACE_METERS)) return verdict('rejected');
+  return verdict('ambiguous');
 }
 
 // ---------------------------------------------------------------------------

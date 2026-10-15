@@ -19,7 +19,7 @@ import {
 } from '../../shared/content/model.ts';
 import { canonicalImageProblems, copyRenditions, processImage, type ProcessedImage } from './images.ts';
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
-import { findSensitiveMetadata, PRIVACY_FIX } from './privacy.ts';
+import { findSensitiveMetadata, PRIVACY_FIX, tagRegistryProblems } from './privacy.ts';
 import {
   formatIssues,
   privateContributorsSchema,
@@ -137,17 +137,33 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
   }
 
   // Tags: the public registry, plus proposals that only drafts may use.
+  // Tag words become public on every restaurant that uses them: contact
+  // details block them (privacy.ts), questionable words are warnings.
   const tags = new Map<string, Tag>();
   const publicTagIds = new Set<string>();
+  const unsafeTags = new Map<string, string[]>();
   if (options.tagsFile && existsSync(options.tagsFile)) {
-    for (const t of (await readJson(options.tagsFile, tagRegistrySchema, diagnostics, display)) ?? []) {
+    const list = (await readJson(options.tagsFile, tagRegistrySchema, diagnostics, display)) ?? [];
+    for (const t of list) {
       tags.set(t.id, { id: t.id, label: t.label });
       publicTagIds.add(t.id);
+    }
+    const found = tagRegistryProblems(list);
+    for (const message of found.unsafe) {
+      diagnostics.push({ level: 'error', file: display(options.tagsFile), message: `${message}; tags must not carry contact details` });
+    }
+    for (const message of found.questionable) {
+      diagnostics.push({ level: 'warning', file: display(options.tagsFile), message: `${message}; check it is not private` });
     }
   }
   if (options.draftsDir && options.privateTagsFile && existsSync(options.privateTagsFile)) {
     const parsed = await readJson(options.privateTagsFile, privateTagsSchema, diagnostics, display);
-    for (const t of parsed?.proposed ?? []) if (!tags.has(t.id)) tags.set(t.id, { id: t.id, label: t.label });
+    for (const t of parsed?.proposed ?? []) {
+      if (tags.has(t.id)) continue;
+      tags.set(t.id, { id: t.id, label: t.label });
+      const found = tagRegistryProblems([t]).unsafe;
+      if (found.length) unsafeTags.set(t.id, found);
+    }
   }
 
   // 2. Discover and parse restaurants.
@@ -291,6 +307,8 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
         error(`tags: "${id}" is not in the tag registry (content/tags.json); see docs/content.md#tags`);
       } else if (isPublic && !publicTagIds.has(id)) {
         error(`tags: "${id}" is only a proposed tag (private/tags.json); promote the restaurant to add it`);
+      } else if (unsafeTags.has(id)) {
+        error(`tags: proposed ${unsafeTags.get(id)!.join('; ')}; choose another label in private/tags.json or drop the tag`);
       }
     }
     if (info.status === 'published' && !info.contributorIds?.length) {

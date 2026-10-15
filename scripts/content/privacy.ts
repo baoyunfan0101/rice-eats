@@ -80,3 +80,73 @@ export function findContactDetails(text: string): string[] {
   }
   return found;
 }
+
+const CONTACT_WORDS =
+  '微信|威信|薇信|weixin|wechat|vx|v信|qq|whatsapp|telegram|instagram|ig|小红书|抖音|tiktok|facebook|电话|手机|phone|tel|email|e-mail|邮箱|tally';
+
+/**
+ * Privacy findings for a tag id, label, or alias, which becomes public in
+ * content/tags.json and appears on every restaurant that uses it. Tags are
+ * short descriptive words, so the rules are stricter than for review text:
+ *
+ * - unsafe (never published): email addresses, "@" handles, links and domain
+ *   names, phone numbers (7 or more digits, separators ignored), a contact
+ *   word followed by an id with digits or after a colon ("vx dumpling88",
+ *   "QQ 12345", "wechat: abc"), Tally links, and
+ *   long token-like strings;
+ * - questionable (shown to the maintainer): a contact word on its own
+ *   ("微信支付" may be fine), 4 to 6 digits in a row, or a handle-like word
+ *   with digits ("abc123").
+ *
+ * A heuristic that blocks obvious leaks; the maintainer reviews the rest.
+ */
+export function tagTextProblems(text: string): { unsafe: string[]; questionable: string[] } {
+  const unsafe = new Set<string>();
+  const questionable = new Set<string>();
+  const value = text.normalize('NFKC');
+  for (const finding of findContactDetails(value)) unsafe.add(finding);
+  const has = (kind: string) => [...unsafe].some((f) => f.startsWith(kind));
+  if (value.includes('@') && !has('email address')) unsafe.add('"@" (an email address or a handle)');
+  if (
+    !has('email address') &&
+    /https?:|www\.|\b[\w-]+\.(?:com|net|org|edu|gov|cn|io|me|co|so|ly|app|xyz|top|info|us|link|page|site)\b/i.test(value)
+  ) {
+    unsafe.add('a link or domain name');
+  }
+  if (!has('phone number') && (value.match(/\d/g) ?? []).length >= 7 && /\d[\d\s().+-]{5,}\d/.test(value)) {
+    unsafe.add('a phone number');
+  }
+  const contact = new RegExp(`(?:^|[^a-z])(?:${CONTACT_WORDS})(?![a-z])`, 'i');
+  const handle = new RegExp(
+    `(?:^|[^a-z])(?:${CONTACT_WORDS})(?![a-z])\\s*(?:号|id)?\\s*(?:[:：]\\s*[\\w.-]{3,}|[\\w.-]*\\d[\\w.-]*)`,
+    'i',
+  );
+  if (!has('contact handle') && handle.test(value)) unsafe.add('a contact handle');
+  if (/[A-Za-z0-9_-]{16,}/.test(value)) unsafe.add('a token-like string');
+  if (unsafe.size === 0) {
+    if (contact.test(value)) questionable.add('a contact or social-media word');
+    if (/\d{4,6}/.test(value)) questionable.add('a long number');
+    if (/[a-z][a-z_.]*\d{2,}|\d{2,}[a-z_.]*[a-z]{2,}/i.test(value)) questionable.add('a handle-like word with digits');
+  }
+  return { unsafe: [...unsafe], questionable: [...questionable] };
+}
+
+/** Problems of every tag word (id, label, aliases) in a tag list, for checks and promotion. */
+export function tagRegistryProblems(
+  tags: readonly { id: string; label: string; aliases?: readonly string[] }[],
+): { unsafe: string[]; questionable: string[] } {
+  const unsafe: string[] = [];
+  const questionable: string[] = [];
+  for (const tag of tags) {
+    for (const [what, word] of [
+      ['id', tag.id],
+      ['label', tag.label],
+      ...(tag.aliases ?? []).map((a) => ['alias', a] as const),
+    ] as const) {
+      const found = tagTextProblems(word);
+      for (const p of found.unsafe) unsafe.push(`tag "${tag.id}" ${what} "${word}": ${p}`);
+      for (const p of found.questionable) questionable.push(`tag "${tag.id}" ${what} "${word}": ${p}`);
+    }
+  }
+  return { unsafe, questionable };
+}

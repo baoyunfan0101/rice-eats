@@ -80,6 +80,8 @@ export async function importImages(
   files: string[],
   /** Name stems for the stored copies (e.g. "dish-1"); the file names otherwise. */
   stems: string[] = [],
+  /** Number prefixes to reuse (a replaced photo keeps its place); the next free number otherwise. */
+  numbers: (string | undefined)[] = [],
 ): Promise<ImportedImage[]> {
   if (!existsSync(path.join(restaurantDir, INFO_FILE))) {
     throw new IntakeError(`${restaurantDir} has no ${INFO_FILE}; create the draft first`);
@@ -108,7 +110,8 @@ export async function importImages(
       // Keep PNG only when transparency matters; photos become JPEG.
       const keepPng = ext === '.png' && !(await sharp(bytes).stats()).isOpaque;
       const outExt = keepPng ? '.png' : '.jpg';
-      const target = path.join(imagesDir, `${await nextImageNumber(imagesDir)}-${stems[i] ? safeStem(stems[i]) : safeStem(file)}${outExt}`);
+      const number = numbers[i] ?? (await nextImageNumber(imagesDir));
+      const target = path.join(imagesDir, `${number}-${stems[i] ? safeStem(stems[i]) : safeStem(file)}${outExt}`);
       if (existsSync(target)) throw new IntakeError(`${target} already exists; not overwriting it`);
       const pipeline = image.resize({
         width: STORED_MAX_SIZE,

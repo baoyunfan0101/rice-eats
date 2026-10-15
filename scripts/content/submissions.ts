@@ -1,6 +1,7 @@
 // Intake of Tally form submissions (docs/submissions.md). Reads a Tally CSV
-// export or a submission transcribed from a notification email, stores it as
-// raw material in the private submissions folder, downloads its photos with
+// export or a submission transcribed from a notification email, stores it in
+// the private submissions folder (kept for good, whatever its status:
+// docs/submissions.md#retention), downloads its photos with
 // bounded, validated requests (safe-fetch.ts), tracks which photos are still
 // missing so they can be retried or added by hand, and reports how the
 // submission relates to the database. It never
@@ -763,8 +764,10 @@ export type LogEntry = SubmissionLog[string];
 
 /**
  * The private processing log (private/submissions/tally-log.json) records
- * every imported submission id, so a submission is not processed twice even
- * after its raw files are deleted.
+ * every imported submission id and its editorial status. The status never
+ * decides whether the raw submission is kept: it always is (only an explicit
+ * erasure request removes it, see docs/submissions.md#retention), and the log
+ * still prevents a second import if that happens.
  */
 export async function readLog(submissionsDir: string): Promise<SubmissionLog> {
   const file = path.join(submissionsDir, LOG_FILE);
@@ -821,9 +824,10 @@ export interface SubmissionReport {
   /**
    * new: imported now; resumed: imported before, photo intake continued;
    * duplicate: imported before with complete photo intake, nothing to do;
-   * archived: imported before and its raw files were removed after processing.
+   * missing: imported before, but its raw files are gone (erased on request,
+   * or lost: restore them from the private backup).
    */
-  outcome: 'new' | 'resumed' | 'duplicate' | 'archived' | 'status';
+  outcome: 'new' | 'resumed' | 'duplicate' | 'missing' | 'status';
   entry?: LogEntry;
   dir?: string;
   rating?: Rating;
@@ -871,7 +875,7 @@ export async function importSubmissions(
     const logged = (await readLog(options.submissionsDir))[id];
     const stored = existsSync(path.join(dir, SUBMISSION_FILE));
     if (logged && !stored) {
-      reports.push(report(incoming, 'archived', known, [], { entry: logged }));
+      reports.push(report(incoming, 'missing', known, [], { entry: logged }));
       continue;
     }
     // The stored record is kept; a differing export is reported, not merged.
@@ -933,7 +937,10 @@ export async function openSubmission(submissionsDir: string, id: string) {
   if (!entry) throw new IntakeError(`submission "${id}" has not been imported`);
   const dir = submissionDir(submissionsDir, id);
   if (!existsSync(path.join(dir, SUBMISSION_FILE))) {
-    throw new IntakeError(`the raw files of submission "${id}" were removed (status ${entry.status})`);
+    throw new IntakeError(
+      `the raw files of submission "${id}" are missing (status ${entry.status}); restore private/ from the ` +
+        'private backup (docs/submissions.md#retention), unless they were erased on request',
+    );
   }
   return { dir, submission: await readStoredSubmission(dir) };
 }
@@ -988,10 +995,11 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   const s = result.submission;
   const lines = [`Submission ${s.submissionId}${s.submittedAt ? ` (${s.submittedAt})` : ''}`];
   const entry = result.entry;
-  if (result.outcome === 'archived') {
+  if (result.outcome === 'missing') {
     lines.push(
       `  already imported ${entry!.importedAt} (status ${entry!.status}` +
-        `${entry!.restaurantId ? `, restaurant ${entry!.restaurantId}` : ''}); raw files removed, nothing written`,
+        `${entry!.restaurantId ? `, restaurant ${entry!.restaurantId}` : ''}); its raw files are missing, nothing written: ` +
+        'restore them from the private backup unless they were erased on request',
     );
     return lines.join('\n');
   }

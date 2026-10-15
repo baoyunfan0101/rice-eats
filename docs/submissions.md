@@ -368,9 +368,10 @@ whose id is not in `npm run content:submission -- list`; move its email from
    ```
 
    For each submission this stores `submission.json` and the photos in
-   `private/submissions/tally-<submission id>/`, records the id in the private
-   log `private/submissions/tally-log.json` (so it is never imported twice,
-   even after the files are deleted), and reports the restaurant match,
+   `private/submissions/tally-<submission id>/` for good (see
+   [Retention](#retention-and-backup)), records the id in the private log
+   `private/submissions/tally-log.json` (so it is never imported twice), and
+   reports the restaurant match,
    dishes (with their verdicts and photo numbers), rating, credit, consent,
    photo state, and problems. It creates no drafts
    and changes nothing in `content/`. `--skip-photos` records the photos as
@@ -421,8 +422,9 @@ whose id is not in `npm run content:submission -- list`; move its email from
    npm run content:submission -- mark <submission id> --status rejected
    ```
 
-   Rejecting a submission also removes the draft prepared from it, unless
-   someone edited that draft.
+   The raw submission is kept whatever the status. Rejecting a submission
+   takes its contribution back out of the draft (see
+   [Rejecting](#rejecting-a-submission)).
 
 ### Prepare
 
@@ -460,14 +462,59 @@ touches `content/`, and it can be run again at any time.
 - **Idempotent and recoverable**: progress is kept in `prepare.json` next to
   the submission; an interrupted run continues where it stopped, and a run
   with nothing new reports `unchanged`. A draft edited by hand since the last
-  run is left alone (`--rebuild` starts it again from the submission). A
-  deleted draft is recreated.
+  run is left alone (`--rebuild` starts `info.json` and `review.md` again from
+  the submission). A deleted draft is recreated.
+- **Photos of a rebuilt draft**: each stored image is linked to its photo
+  number and content hash. When a photo no longer belongs to the submission
+  (its file changed and was added again, or it was waived), the image an
+  earlier run imported for it is removed; a replaced photo keeps its image
+  number, so the order and the cover stay. Repeated runs never duplicate an
+  image. Images added by hand (`content:add-images`) are never removed: the
+  report lists them, since an image no dish or review uses appears in the
+  gallery.
 - **Report**: content and photos, each keyword and its tag, each piece of
   restaurant information with its source, method, and confidence, conflicts,
   privacy and consent findings (contact details in the text are flagged and
   must be removed before promotion, which refuses them), blockers, what is
   still missing, the `content:check` result, and which public files promotion
   would change (new tags and contributor names included).
+
+### Rejecting a submission
+
+```sh
+npm run content:submission -- mark <submission id> --status rejected
+```
+
+The raw submission stays in `private/submissions/` (rejection never deletes
+it). Its contribution is taken back out of the draft, using what
+`prepare.json` recorded: the restaurant before the submission (`base`) and
+what prepare wrote. For each field of `info.json` and for `review.md`:
+
+- changed by prepare and not edited since: back to its value before;
+- edited only by the maintainer: kept;
+- lists (`contributorIds`, `tags`, `altNames`, `cuisines`): only the entries
+  the submission added are removed;
+- images the submission brought (recognized by content) are removed;
+  images that were there before or were added by hand stay;
+- a draft folder that prepare created and that holds nothing else is
+  removed; a restaurant's earlier draft (`content:new`, `content:edit`) keeps
+  everything that did not come from the submission;
+- tags the submission proposed are withdrawn from `private/tags.json` unless
+  another draft uses them. The contributor stays in
+  `private/contributors.json` (a record), but no draft credits them.
+
+When a field was edited by hand **and** written by the submission (say the
+maintainer corrected its review), nothing is changed: the command exits with
+code 1 and lists the fields, `content:check` reports the draft, and
+`content:promote` refuses it. Remove the submission's content from those
+fields (or put back what was there before) and run the command again, or,
+after checking them, keep their current values with `--resolved` (recorded in
+`prepare.json`). An interrupted rejection also blocks promotion until it is
+run again; running it again is always safe. A rejected submission no longer
+reserves the restaurant: the report lists deferred submissions about it,
+which can now be prepared. A restaurant that was already promoted is not
+changed; the command says so, and the maintainer edits it with
+`content:edit`.
 
 ### Keywords and tags
 
@@ -490,7 +537,15 @@ pending in the report until a decision is written to the submission's
 ```
 
 The file is validated: keywords must be the contributor's own, tags must
-exist, new ids are slugs and labels carry no links or `@`. A decision is
+exist, and new ids are slugs. Tag labels become public on every restaurant
+that uses them, so a new tag's id and label (also one a model proposed) are
+checked for contact details (`scripts/content/privacy.ts`): email addresses,
+`@` handles, links and domains, phone numbers, a messaging or social-media
+word with an id (`vx abc123`, `QQ: …`), and token-like strings are never
+used; a contact word on its own (`微信支付`), a long number, or a handle-like
+word is reported for review. The same check runs on `content/tags.json` (ids,
+labels, aliases) in `content:check`, the build, `npm run check:privacy`, and
+`content:promote`, which refuses such a tag. A decision is
 remembered as a private alias (`private/tags.json`), so the same word needs
 no decision next time; a new tag is proposed privately and becomes public
 (id and label only) when a restaurant using it is promoted. The raw keywords
@@ -505,9 +560,39 @@ from the map listing the contributor chose: Geoapify place details when
 restriction) is set in `.env.local`, otherwise OpenStreetMap through Overpass
 (by id, or a place with the same name within 60 m). Lookups are cached in
 `private/cache/` (`--refresh` looks again, `--offline` uses the cache only);
-a failure is reported and never blocks the draft. `pricePerPerson` is never
-guessed: it is set only from a reviewed fact, e.g. a price the contributor
-states or a menu with prices:
+a failure is reported and never blocks the draft.
+
+The POI id is a hidden form field, so the listing is checked before anything
+from it is used. It is compared with the restaurant: an existing
+restaurant's own record (name, other names, location, address), otherwise the
+submission's name, location, and address.
+
+| Result      | When                                                                                                                                                                                                                                                                                                  | Information   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `verified`  | One of the listing's names (in any language) matches and it is within 60 m (an address both give does not differ); or the name matches, it is farther or has no coordinates, and the address is the same; or another name at the same spot (30 m) with the same address (house number, street, unit). | applied       |
+| `ambiguous` | Not enough evidence: a matching name without coordinates or the same address, the same name nearby with another address, or another name close by without the same address.                                                                                                                           | reported only |
+| `rejected`  | More than 250 m away (another branch of a chain, even with the same name), or another name with another address or more than 60 m away (a wrong or tampered POI id).                                                                                                                                  | reported only |
+
+The report shows the verdict and the evidence. When the maintainer has
+checked an `ambiguous` (or wrongly `rejected`) listing, they record the
+decision in the submission's `resolutions.json`, which keeps it as the
+record of who decided what:
+
+```json
+{
+  "listing": {
+    "key": "osm:node/1001",
+    "decision": "same-place",
+    "reason": "English name on the storefront"
+  }
+}
+```
+
+`key` is the listing shown in the report; a decision for another key is
+ignored, and `different-place` keeps a listing out.
+
+`pricePerPerson` is never guessed: it is set only from a reviewed fact, e.g. a
+price the contributor states or a menu with prices:
 
 ```json
 {
@@ -594,8 +679,52 @@ connection.
 
 Contact emails stay in `private/` (`submission.json`, and
 `private/contributors.json` when a contributor is registered); they never
-enter `content/` or the website build. Raw submissions are not committed; once
-processed they can be deleted, while the log keeps the ids.
+enter `content/` or the website build.
+
+## Retention and backup
+
+Every submission received is kept in the private database, whatever its
+status (`imported`, `drafted`, `processed`, `deferred`, or `rejected`), so
+later features (for example several reviews per restaurant) can use the
+original material. The status never decides whether it is kept, and no
+command deletes it:
+
+| Kept                                                    | Where (all in `private/`, git-ignored)                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Submitted text and answers, keywords, consent, id, time | `submissions/tally-<id>/submission.json`                                             |
+| Restaurant selection (name, address, location, POI)     | `submission.json`                                                                    |
+| Original photos and which dish each belongs to          | `submissions/tally-<id>/photo-NN.*`, `photos.json`                                   |
+| Contact email                                           | `submission.json`, `contributors.json`                                               |
+| Decisions and processing state                          | `resolutions.json`, `prepare.json`, `review-report.md`, `submissions/tally-log.json` |
+
+None of it is ever committed (`/private/` is in `.gitignore`, and
+`npm run check:privacy` fails if anything under `private/` is tracked), copied
+into `content/`, or built into the website (production builds never read
+`private/`, and `scripts/postbuild.ts` checks the output). Reports and logs
+name the files but never print contact details or link tokens.
+
+`private/` exists only on the maintainer's computer, so back it up
+regularly, encrypted, to storage the maintainer controls (an external drive,
+or an encrypted archive in their own cloud storage). Nothing uploads it
+automatically. For example on macOS:
+
+```sh
+hdiutil create -encryption AES-256 -srcfolder private -volname rice-eats-private ~/Backups/rice-eats-private-$(date +%Y%m%d).dmg
+```
+
+To restore, open the image, copy its contents back into `private/` in the
+repository root, then run `npm run content:submission -- list` and
+`npm run content:submission -- status <submission id>` (which re-checks each
+photo against its recorded SHA-256).
+
+**Erasure on request.** When a contributor asks for their data to be
+deleted, that is a separate, deliberate step that the retention rule does not
+block: remove `private/submissions/tally-<id>/`, their entry in
+`private/contributors.json` (and their name in `content/contributors.json` and
+their content in `content/` if it was published, as the maintainer decides),
+and the copies in backups. The log entry (id, status, restaurant, and POI
+link) stays, so the export is not imported again (import reports it as
+`missing`); remove that entry too if the request covers it.
 
 ## End-to-end verification (after setup)
 
@@ -631,5 +760,30 @@ checked by hand once the form exists:
    keywords, check the report (the keywords and their tags), and check the
    draft with `npm run content:check`.
 9. Confirm `git status` shows no changes in `content/` and nothing under
-   `private/` is tracked. Then delete the test submissions in Tally and the
-   test folders in `private/`, and mark them `rejected`.
+   `private/` is tracked. Then mark the test submissions `rejected`. They are
+   the maintainer's own test data, so deleting them in Tally and removing
+   their folders in `private/` afterwards is an explicit erasure (see
+   [Retention](#retention-and-backup)), not a cleanup that happens on its own.
+
+### Keywords (`tags_raw`) in the live form
+
+The automated tests use a stub, so they cannot show that the real form
+accepts `tags_raw` and exports it unchanged. Check it once the hidden field
+exists (and after changing it), and record the result; until then it is not
+verified:
+
+| #   | Do                                                                      | Expect in the CSV export / notification, then after `import` and `prepare` |
+| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 1   | Several Chinese keywords (`适合约会`, `很安静`)                         | `tags_raw` is `["适合约会","很安静"]`; the report lists both keywords      |
+| 2   | A keyword typed with a Chinese input method (Enter confirms the pinyin) | the composed characters, no stray Latin letters                            |
+| 3   | English keywords (`date night`)                                         | kept as typed                                                              |
+| 4   | A keyword with spaces inside                                            | spaces kept                                                                |
+| 5   | No keywords ("跳过")                                                    | `tags_raw` empty; no keywords in the report                                |
+| 6   | The same keyword twice (also in another width or case)                  | stored once                                                                |
+| 7   | "在新窗口打开投稿表单" (direct link)                                    | same `tags_raw` and restaurant fields as the embedded form                 |
+| 8   | Import an export from before `tags_raw` existed                         | imports without keywords, no error                                         |
+| 9   | Select a restaurant, add keywords, submit                               | restaurant fields and keywords both present                                |
+| 10  | Type in the form, then "修改关键词"                                     | the warning appears first; cancelling keeps the form as typed              |
+
+The hidden field must be named exactly `tags_raw` (`HIDDEN_FIELDS.keywords` in
+`shared/submission.ts`).
