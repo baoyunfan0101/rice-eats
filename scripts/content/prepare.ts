@@ -468,6 +468,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   ];
 
   if (entry.status === 'rejected') report.blockers.push('the submission was marked rejected');
+  if (!state && entry.draftWritten) report.blockers.push(lostStateMessage(id, entry.restaurantId, entry.status));
   const open = unfinishedRejection(state);
   if (open) {
     report.blockers.push(
@@ -806,7 +807,13 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   delete state.rejection;
   state.preparedAt = clock();
   await writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
-  await updateLog(options.submissionsDir, id, (e) => ({ ...e!, status: 'drafted', restaurantId, updatedAt: clock() }));
+  await updateLog(options.submissionsDir, id, (e) => ({
+    ...e!,
+    status: 'drafted',
+    restaurantId,
+    draftWritten: true,
+    updatedAt: clock(),
+  }));
 
   await describeDraft(report, target, restaurantId, options);
   return finish(state.written === before ? 'unchanged' : 'drafted');
@@ -1021,6 +1028,10 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   const dir = submissionDir(options.submissionsDir, id);
   const state = await readState(dir);
   const messages: string[] = [`the raw submission stays in ${path.basename(options.submissionsDir)}/tally-${id}/ (private)`];
+  const logged = (await readLog(options.submissionsDir))[id];
+  if (!state && logged?.draftWritten) {
+    return { status: 'manual', messages: [...messages, lostStateMessage(id, logged.restaurantId)] };
+  }
   if (!state || state.written === undefined) {
     return { status: 'nothing', messages: [...messages, 'nothing of it is in a draft'] };
   }
@@ -1032,6 +1043,7 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
     delete state.writtenReview;
     state.photos = [];
     await saveState();
+    await updateLog(options.submissionsDir, id, (e) => ({ ...e!, draftWritten: false }));
     await withdrawProposedTags(state.proposedTags, options);
     messages.push(...details, ...(await deferredFor(state.restaurantId, id, options.submissionsDir)));
     return { status, messages };
@@ -1167,6 +1179,17 @@ async function deferredFor(restaurantId: string, self: string, submissionsDir: s
 export const unfinishedRejection = (state: PrepareState | undefined) =>
   state?.rejection?.status === 'pending' || state?.rejection?.status === 'manual' ? state.rejection : undefined;
 
+/** What to do when a submission's prepare.json is lost after it wrote a draft. */
+function lostStateMessage(id: string, restaurantId?: string, status: LogStatus = 'rejected'): string {
+  return (
+    `private/submissions/tally-${id}/${PREPARE_STATE_FILE} is missing, but the log shows this submission wrote into ` +
+    `the draft ${restaurantId ?? '(unknown)'}, so it cannot be known whether its content is still there. Restore the ` +
+    'file from the private backup (docs/submissions.md#retention-and-backup); if there is no backup, check the draft ' +
+    'by hand (remove what came from this submission, keep only what has its own source) and confirm with ' +
+    `"npm run content:submission -- mark ${id} --status ${status} --state-lost '<what you checked>'"`
+  );
+}
+
 /**
  * Records a submission's editorial status (content:submission -- mark). The
  * raw submission is kept whatever the status. "rejected" also takes its
@@ -1179,12 +1202,21 @@ export const unfinishedRejection = (state: PrepareState | undefined) =>
 export async function markOutcome(
   id: string,
   status: LogStatus,
-  options: RejectOptions & { restaurantId?: string },
+  options: RejectOptions & {
+    restaurantId?: string;
+    /**
+     * Only for lost prepare state: what the maintainer checked in the draft
+     * (no content of this submission left, or what stays has its own source).
+     * Recorded in the log's audit entries.
+     */
+    stateLost?: string;
+  },
 ): Promise<RejectResult> {
   if (options.resolved && status !== 'rejected') {
     throw new IntakeError('--resolved only confirms a rejection: use it with --status rejected');
   }
-  if (!(await readLog(options.submissionsDir))[id]) throw new IntakeError(`submission "${id}" has not been imported`);
+  const entry = (await readLog(options.submissionsDir))[id];
+  if (!entry) throw new IntakeError(`submission "${id}" has not been imported`);
   let state: PrepareState | undefined;
   try {
     state = await readState(submissionDir(options.submissionsDir, id));
@@ -1193,6 +1225,31 @@ export async function markOutcome(
       `private/submissions/tally-${id}/${PREPARE_STATE_FILE} cannot be read (${(e as Error).message.split('\n')[0]}); ` +
         'nothing was changed; restore it from the private backup first',
     );
+  }
+  // Lost state: the log shows its content went into a draft, but prepare.json is gone.
+  const lost = !state && entry.draftWritten === true;
+  const note = options.stateLost?.trim();
+  if (options.stateLost !== undefined) {
+    if (!lost) {
+      throw new IntakeError(
+        `--state-lost is only for a submission whose ${PREPARE_STATE_FILE} is lost after it wrote a draft; ${id} is not one`,
+      );
+    }
+    if (!note) throw new IntakeError('--state-lost needs a note: what you checked in the draft');
+    await updateLog(options.submissionsDir, id, (e) => ({
+      ...e!,
+      draftWritten: false,
+      audit: [
+        ...(e!.audit ?? []),
+        {
+          at: (options.now ?? now)(),
+          action: `${PREPARE_STATE_FILE} lost; draft ${e!.restaurantId ?? '?'} checked by the maintainer`,
+          note,
+        },
+      ],
+    }));
+  } else if (lost) {
+    throw new IntakeError(`${lostStateMessage(id, entry.restaurantId, status)}; nothing was changed`);
   }
   const open = unfinishedRejection(state);
   if (status !== 'rejected' && open) {
@@ -1250,6 +1307,16 @@ export async function rejectionProblems(submissionsDir: string, restaurantId: st
     } else if (log[id]?.status === 'rejected' && state.written !== undefined) {
       problems.push(`submission ${id} is marked rejected, but its content is still in the draft; ${again(id)}`);
     }
+  }
+  // Submissions the log shows wrote into this draft, whose prepare.json (or whole folder) is gone.
+  for (const [id, entry] of Object.entries(log)) {
+    if (entry.restaurantId !== restaurantId || !entry.draftWritten) continue;
+    const folder = submissionDir(submissionsDir, id);
+    if (existsSync(path.join(folder, PREPARE_STATE_FILE))) continue;
+    problems.push(
+      `${existsSync(folder) ? '' : `the folder private/submissions/tally-${id}/ is missing; `}` +
+        lostStateMessage(id, entry.restaurantId, entry.status),
+    );
   }
   return problems;
 }

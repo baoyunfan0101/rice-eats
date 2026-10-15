@@ -245,7 +245,11 @@ unfinished (`pending` or `manual` in `prepare.json`), `mark` refuses any other
 status and the draft cannot be promoted, whatever the log says: never try to
 lift it by changing the status or editing `prepare.json` or `tally-log.json`;
 finish it with `mark <id> --status rejected`, and use `--resolved` only after
-the maintainer has checked the reported fields.
+the maintainer has checked the reported fields. If a submission's
+`prepare.json` is missing after it wrote a draft, the same block applies:
+ask the maintainer to restore it from the backup; never recreate the file
+or use `--state-lost` yourself, which records the maintainer's own check of
+the draft (`docs/submissions.md#rejecting-a-submission`).
 
 **Sent directly** (text, documents, photos):
 

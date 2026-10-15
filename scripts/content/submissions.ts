@@ -756,6 +756,15 @@ const logSchema = z.record(
       restaurantId: z.string().optional(),
       /** The submitted POI ("provider:id"), private. With restaurantId it links that POI to the restaurant. */
       poi: z.string().optional(),
+      /**
+       * Set when prepare wrote this submission's content into a draft, cleared
+       * when a rejection took it out again. Evidence only: the rollback state
+       * itself lives in prepare.json. With this set, a missing prepare.json is
+       * lost state, not "never prepared".
+       */
+      draftWritten: z.boolean().optional(),
+      /** Explicit maintainer decisions about this submission (e.g. lost prepare state), oldest first. */
+      audit: z.array(z.strictObject({ at: z.string(), action: z.string(), note: z.string() })).optional(),
     })
     .strict(),
 );

@@ -172,9 +172,10 @@ async function setup() {
     });
   const prepare = (id: string, extra: Partial<PrepareOptions> = {}) =>
     prepareSubmission(id, { ...options, ...extra });
-  const mark = (id: string, status: LogStatus, resolved = false) =>
-    markOutcome(id, status, { ...options, resolved });
-  const reject = (id: string, resolved = false) => mark(id, 'rejected', resolved);
+  const mark = (id: string, status: LogStatus, resolved = false, stateLost?: string) =>
+    markOutcome(id, status, { ...options, resolved, stateLost });
+  const reject = (id: string, resolved = false, stateLost?: string) =>
+    mark(id, 'rejected', resolved, stateLost);
   const readJson = async (file: string) =>
     JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   const listing = async (dir: string) =>
@@ -1157,5 +1158,139 @@ describe('rejection rollback state', () => {
     }
     expect(after.raw).toHaveLength(6);
     expect(await rejectionProblems(t.options.submissionsDir, 'r-manual1')).toEqual([]);
+  });
+});
+
+describe('lost prepare state', () => {
+  type T = Awaited<ReturnType<typeof setup>>;
+  const sub = (t: T, id = 'mAbC12') => t.p('private/submissions', `tally-${id}`);
+  /** Submission mAbC12 drafted into a new restaurant, and an unrelated one drafted elsewhere. */
+  async function prepared() {
+    const t = await setup();
+    await t.importCsv(
+      csv(
+        row(NEW_RESTAURANT),
+        row({
+          ...NEW_RESTAURANT,
+          'Submission ID': 'other',
+          '联系邮箱（选填）': 'o@example.com',
+          restaurant_name: '另一家',
+          poi_id: '',
+          poi_provider: '',
+          restaurant_lat: '29.70',
+          restaurant_lng: '-95.38',
+        }),
+      ),
+    );
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const other = (await t.prepare('other', { offline: true })).restaurantId!;
+    const draft = t.p('private/drafts', id);
+    return { t, id, other, draft, before: await t.listing(draft) };
+  }
+
+  it('rejects a submission that was never prepared normally', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const result = await t.reject('mAbC12');
+    expect(result.status).toBe('nothing');
+    expect((await readLog(t.options.submissionsDir)).mAbC12).toMatchObject({ status: 'rejected' });
+    expect(existsSync(path.join(sub(t), 'submission.json'))).toBe(true);
+    expect(existsSync(path.join(sub(t), 'prepare.json'))).toBe(false);
+  });
+
+  it('refuses to reject when prepare.json is gone after it wrote a draft, and blocks only that draft', async () => {
+    const { t, id, other, draft, before } = await prepared();
+    expect((await readLog(t.options.submissionsDir)).mAbC12!.draftWritten).toBe(true);
+    await rm(path.join(sub(t), 'prepare.json'));
+    await expect(t.reject('mAbC12')).rejects.toThrow(
+      /prepare.json is missing, but the log shows this submission wrote into the draft .*Restore the file from the private backup.*--state-lost.*nothing was changed/,
+    );
+    expect((await readLog(t.options.submissionsDir)).mAbC12!.status).toBe('drafted');
+    expect(await t.listing(draft)).toEqual(before);
+    expect(existsSync(path.join(sub(t), 'submission.json'))).toBe(true);
+    // --resolved is not a way around it, and neither is another status.
+    await expect(t.reject('mAbC12', true)).rejects.toThrow(/prepare.json is missing/);
+    await expect(t.mark('mAbC12', 'processed')).rejects.toThrow(/prepare.json is missing/);
+    // rejectSubmission itself never reports success without state.
+    expect((await rejectSubmission('mAbC12', t.options)).status).toBe('manual');
+    // Promotion of that draft is refused; the unrelated draft is not affected.
+    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+      /prepare.json is missing, but the log shows this submission wrote into the draft/,
+    );
+    expect(await rejectionProblems(t.options.submissionsDir, other)).toEqual([]);
+    // Nor can prepare start over as if nothing happened.
+    const again = await t.prepare('mAbC12', { offline: true });
+    expect(again.outcome).toBe('blocked');
+    expect(again.blockers.join('\n')).toMatch(/prepare.json is missing/);
+    expect(await t.listing(draft)).toEqual(before);
+  });
+
+  it('keeps blocking when the status was changed behind its back, the file is corrupt, or the folder is gone', async () => {
+    const { t, id, other } = await prepared();
+    const problems = () => rejectionProblems(t.options.submissionsDir, id);
+    // Missing file, whatever the log says.
+    await rm(path.join(sub(t), 'prepare.json'));
+    for (const status of ['rejected', 'processed', 'imported'] as const) {
+      await markSubmission(t.options.submissionsDir, 'mAbC12', status);
+      expect((await problems()).join('\n')).toMatch(/prepare.json is missing/);
+    }
+    // Corrupt file.
+    await writeFile(path.join(sub(t), 'prepare.json'), '{ broken');
+    expect((await problems()).join('\n')).toMatch(/prepare.json cannot be read/);
+    // The whole folder gone (the log still links the submission to the draft).
+    await rm(sub(t), { recursive: true });
+    expect((await problems()).join('\n')).toMatch(
+      /the folder private\/submissions\/tally-mAbC12\/ is missing; .*prepare.json is missing/,
+    );
+    expect(await rejectionProblems(t.options.submissionsDir, other)).toEqual([]);
+  });
+
+  it('recovers from the backup: the rejection then runs normally', async () => {
+    const { t, id } = await prepared();
+    const backup = await readFile(path.join(sub(t), 'prepare.json'), 'utf8');
+    await rm(path.join(sub(t), 'prepare.json'));
+    await expect(t.reject('mAbC12')).rejects.toThrow(/prepare.json is missing/);
+    await writeFile(path.join(sub(t), 'prepare.json'), backup);
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect(existsSync(t.p('private/drafts', id))).toBe(false);
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+    expect((await readLog(t.options.submissionsDir)).mAbC12).toMatchObject({
+      status: 'rejected',
+      draftWritten: false,
+    });
+    expect((await t.reject('mAbC12')).status).toBe('nothing');
+  });
+
+  it('recovers without a backup only through an explicit, recorded check by the maintainer', async () => {
+    const { t, id, draft } = await prepared();
+    await rm(path.join(sub(t), 'prepare.json'));
+    await expect(t.reject('mAbC12', false, '  ')).rejects.toThrow(/--state-lost needs a note/);
+    await expect(t.mark('other', 'rejected', false, 'checked')).rejects.toThrow(
+      /--state-lost is only for a submission whose prepare.json is lost/,
+    );
+    // The maintainer removes the submission's content from the draft by hand, then confirms.
+    const info = path.join(draft, 'info.json');
+    await writeFile(info, JSON.stringify({ id, status: 'draft', name: '示例汤包馆' }, null, 2));
+    await rm(path.join(draft, 'review.md'));
+    await rm(path.join(draft, 'images'), { recursive: true });
+    const result = await markOutcome('mAbC12', 'rejected', {
+      ...t.options,
+      stateLost: 'removed the review, dishes, photos, and credit from the draft',
+      now: () => '2026-10-15T10:00:00Z',
+    });
+    expect(result.status).toBe('nothing');
+    const entry = (await readLog(t.options.submissionsDir)).mAbC12!;
+    expect(entry).toMatchObject({ status: 'rejected', draftWritten: false });
+    expect(entry.audit).toEqual([
+      {
+        at: '2026-10-15T10:00:00Z',
+        action: `prepare.json lost; draft ${id} checked by the maintainer`,
+        note: 'removed the review, dishes, photos, and credit from the draft',
+      },
+    ]);
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+    // The tool itself changed nothing in the draft, and the raw submission stays.
+    expect(await t.readJson(info)).toEqual({ id, status: 'draft', name: '示例汤包馆' });
+    expect(existsSync(path.join(sub(t), 'submission.json'))).toBe(true);
   });
 });

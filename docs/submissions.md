@@ -531,6 +531,30 @@ which can now be prepared. A restaurant that was already promoted is not
 changed; the command says so, and the maintainer edits it with
 `content:edit`.
 
+**Lost prepare state.** When prepare writes a submission's content into a
+draft, the log entry records it (`draftWritten`); a finished rejection clears
+it. So a missing `prepare.json` is told apart from a submission that was never
+prepared (imported only, or deferred), which is rejected normally. When the
+log says the content went into a draft but `prepare.json` (or the whole
+submission folder) is missing, nothing can show whether that content is still
+in the draft: `mark` refuses every status for it (nothing changes, also with
+`--resolved`), `prepare` refuses it, and `content:check` and `content:promote`
+report and refuse that restaurant's draft, whatever the log status. Other
+restaurants are not affected. To recover:
+
+1. Restore `private/submissions/tally-<id>/` from the
+   [backup](#retention-and-backup), then run the command again (the rejection
+   then works as usual).
+2. Without a backup, check the draft by hand: remove what came from the
+   submission, and keep only what has its own source. Then confirm what you
+   checked; the note is recorded with the time in the log entry's `audit`:
+
+   ```sh
+   npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, photos, and credit"
+   ```
+
+   `--state-lost` is accepted only for this situation and needs a note.
+
 ### Keywords and tags
 
 Each keyword is matched to a [tag](content.md#tags) deterministically: a
