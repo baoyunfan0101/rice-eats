@@ -33,8 +33,8 @@ import { fetchEvidencePage } from './enrich.ts';
 import {
   formatPrepareReport,
   prepareSubmission,
+  markOutcome,
   rejectionProblems,
-  rejectSubmission,
   REVIEW_REPORT_FILE,
 } from './prepare.ts';
 import { findContactDetails, findSensitiveMetadata, PRIVACY_FIX, tagRegistryProblems } from './privacy.ts';
@@ -58,7 +58,6 @@ import {
   formatReport,
   importSubmissions,
   LOG_STATUSES,
-  markSubmission,
   openSubmission,
   readLog,
   readSubmissions,
@@ -437,20 +436,17 @@ async function main() {
         return 0;
       }
       if (action === 'mark' && target && LOG_STATUSES.includes(values.status as LogStatus)) {
-        await markSubmission(SUBMISSIONS_DIR, target, values.status as LogStatus, values.id);
+        const result = await markOutcome(target, values.status as LogStatus, {
+          submissionsDir: SUBMISSIONS_DIR,
+          draftsDir: DRAFTS_DIR,
+          restaurantsDir,
+          tagFiles,
+          resolved: values.resolved,
+          restaurantId: values.id,
+        });
         console.log(`Marked ${target} as ${values.status}.`);
-        if (values.status === 'rejected') {
-          const result = await rejectSubmission(target, {
-            submissionsDir: SUBMISSIONS_DIR,
-            draftsDir: DRAFTS_DIR,
-            restaurantsDir,
-            tagFiles,
-            resolved: values.resolved,
-          });
-          for (const message of result.messages) console.log(`${result.status === 'manual' ? 'BLOCKED' : 'ok     '} ${message}`);
-          return result.status === 'manual' ? 1 : 0;
-        }
-        return 0;
+        for (const message of result.messages) console.log(`${result.status === 'manual' ? 'BLOCKED' : 'ok     '} ${message}`);
+        return result.status === 'manual' ? 1 : 0;
       }
       throw new IntakeError(
         'usage: content:submission -- import <file> [--skip-photos] | status <id> | retry-photos <id> | ' +

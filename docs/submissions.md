@@ -510,7 +510,22 @@ code 1 and lists the fields, `content:check` reports the draft, and
 fields (or put back what was there before) and run the command again, or,
 after checking them, keep their current values with `--resolved` (recorded in
 `prepare.json`). An interrupted rejection also blocks promotion until it is
-run again; running it again is always safe. A rejected submission no longer
+run again; running it again is always safe.
+
+The rollback has its own state in `prepare.json` (`rejection.status`:
+`pending` while it runs, `manual` when it needs the maintainer, `done`, or
+`resolved` after `--resolved`), separate from the editorial status in
+`tally-log.json`. The publication block follows that state, not the log: while
+a rollback is `pending` or `manual`, `mark` refuses every other status
+(nothing changes), `prepare` refuses to rebuild the draft, and
+`content:check` and `content:promote` (also with `--approved`) report and
+refuse the draft whatever the log says. Only finishing the rollback
+(`mark <id> --status rejected`) or confirming it (`--resolved`, accepted only
+with `--status rejected`) lifts the block. The rollback state is written
+before the log, so an interrupted command still blocks; a `prepare.json` that
+cannot be read blocks the restaurant's drafts too, until it is restored from
+the [backup](#retention-and-backup). A finished rollback blocks nothing, and
+the submission's status may change again afterwards. A rejected submission no longer
 reserves the restaurant: the report lists deferred submissions about it,
 which can now be prepared. A restaurant that was already promoted is not
 changed; the command says so, and the maintainer edits it with

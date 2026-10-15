@@ -240,7 +240,12 @@ submission's content back out of its draft and keeps everything else
 hand where the submission wrote, it changes nothing and reports the fields,
 and the draft cannot be promoted until the maintainer resolves them (then run
 it again, or `--resolved` once the maintainer confirms the current values).
-Tell the maintainer about deferred submissions it lists.
+Tell the maintainer about deferred submissions it lists. While a rejection is
+unfinished (`pending` or `manual` in `prepare.json`), `mark` refuses any other
+status and the draft cannot be promoted, whatever the log says: never try to
+lift it by changing the status or editing `prepare.json` or `tally-log.json`;
+finish it with `mark <id> --status rejected`, and use `--resolved` only after
+the maintainer has checked the reported fields.
 
 **Sent directly** (text, documents, photos):
 

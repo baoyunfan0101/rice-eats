@@ -7,6 +7,7 @@ import { publishContributors } from '../../scripts/content/contributors.ts';
 import { moveDraft } from '../../scripts/content/intake.ts';
 import { runPipeline } from '../../scripts/content/pipeline.ts';
 import {
+  markOutcome,
   prepareSubmission,
   rejectionProblems,
   rejectSubmission,
@@ -18,6 +19,7 @@ import {
   markSubmission,
   readLog,
   submissionsFromCsv,
+  type LogStatus,
   type Submission,
 } from '../../scripts/content/submissions.ts';
 import { publishTags } from '../../scripts/content/tags.ts';
@@ -170,15 +172,14 @@ async function setup() {
     });
   const prepare = (id: string, extra: Partial<PrepareOptions> = {}) =>
     prepareSubmission(id, { ...options, ...extra });
-  const reject = async (id: string, resolved = false) => {
-    await markSubmission(options.submissionsDir, id, 'rejected');
-    return rejectSubmission(id, { ...options, resolved });
-  };
+  const mark = (id: string, status: LogStatus, resolved = false) =>
+    markOutcome(id, status, { ...options, resolved });
+  const reject = (id: string, resolved = false) => mark(id, 'rejected', resolved);
   const readJson = async (file: string) =>
     JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   const listing = async (dir: string) =>
     existsSync(dir) ? (await readdir(dir, { recursive: true })).map(String).sort() : [];
-  return { root, p, net, options, importCsv, prepare, reject, readJson, listing };
+  return { root, p, net, options, importCsv, prepare, mark, reject, readJson, listing };
 }
 
 const validate = (t: Awaited<ReturnType<typeof setup>>) =>
@@ -916,7 +917,7 @@ describe('rejecting a prepared submission', () => {
     const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
     await markSubmission(t.options.submissionsDir, 'mAbC12', 'rejected');
     expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
-      /did not finish/,
+      /marked rejected, but its content is still in the draft/,
     );
     expect((await rejectSubmission('mAbC12', t.options)).status).toBe('done');
     expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
@@ -1035,5 +1036,126 @@ describe('new tag privacy', () => {
     expect((await t.readJson(t.options.tagFiles.privateFile)).proposed).toEqual([
       { id: 'pay', label: '微信支付' },
     ]);
+  });
+});
+
+describe('rejection rollback state', () => {
+  type T = Awaited<ReturnType<typeof setup>>;
+  const statePath = (t: T) => t.p('private/submissions/tally-mAbC12/prepare.json');
+  /** A drafted submission whose review the maintainer edited, then rejected: the rollback needs them. */
+  async function conflicted() {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    const draft = t.p('private/drafts', id);
+    await writeFile(path.join(draft, 'review.md'), '汤底很浓，环境安静。（编辑过）\n');
+    expect((await t.reject('mAbC12')).status).toBe('manual');
+    return { t, id, draft };
+  }
+
+  it('keeps blocking promotion whatever status the submission is marked with afterwards', async () => {
+    const { t, id, draft } = await conflicted();
+    const before = await t.listing(draft);
+    for (const status of ['drafted', 'imported', 'processed', 'deferred'] as const) {
+      await expect(t.mark('mAbC12', status)).rejects.toThrow(
+        /rejection of mAbC12 is waiting for the maintainer; nothing was changed/,
+      );
+      expect((await readLog(t.options.submissionsDir)).mAbC12!.status).toBe('rejected');
+    }
+    await expect(t.mark('mAbC12', 'drafted', true)).rejects.toThrow(
+      /--resolved only confirms a rejection/,
+    );
+    // Even a log changed behind the CLI's back does not lift the block: it follows prepare.json.
+    await markSubmission(t.options.submissionsDir, 'mAbC12', 'drafted');
+    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+      /mAbC12 was rejected, but its content is still in the draft: edited by hand .*review\.md/,
+    );
+    // Nor can prepare overwrite it.
+    const again = await t.prepare('mAbC12', { offline: true, rebuild: true });
+    expect(again.outcome).toBe('blocked');
+    expect(again.blockers.join('\n')).toMatch(/rejection is waiting for the maintainer/);
+    expect(await t.listing(draft)).toEqual(before);
+    expect(JSON.parse(await readFile(statePath(t), 'utf8')).rejection.status).toBe('manual');
+  });
+
+  it('lifts the block after the maintainer resolves the conflict, keeping unrelated edits', async () => {
+    const { t, id, draft } = await conflicted();
+    const info = path.join(draft, 'info.json');
+    await writeFile(
+      info,
+      JSON.stringify({ ...(await t.readJson(info)), pricePerPerson: 25 }, null, 2),
+    );
+    // The maintainer puts the submission's review back as it was written, so it can be taken out.
+    await writeFile(path.join(draft, 'review.md'), '汤底很浓，环境安静。\n适合两个人慢慢吃。\n');
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+    expect(await t.readJson(info)).toEqual({
+      id,
+      status: 'draft',
+      name: '示例汤包馆',
+      pricePerPerson: 25,
+    });
+    expect(existsSync(path.join(draft, 'review.md'))).toBe(false);
+    // Afterwards the status may change again; the finished rollback blocks nothing.
+    await t.mark('mAbC12', 'deferred');
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+  });
+
+  it('recovers an interrupted rollback, and an unreadable state blocks with a clear message', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
+    // As if the process stopped right after recording the start of the rollback.
+    const state = JSON.parse(await readFile(statePath(t), 'utf8'));
+    await writeFile(
+      statePath(t),
+      JSON.stringify({ ...state, rejection: { status: 'pending', at: 'now', details: [] } }),
+    );
+    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+      /rejection did not finish/,
+    );
+    await expect(t.mark('mAbC12', 'drafted')).rejects.toThrow(/is unfinished/);
+    expect((await t.prepare('mAbC12', { offline: true })).outcome).toBe('blocked');
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect(existsSync(t.p('private/drafts', id))).toBe(false);
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+
+    await writeFile(statePath(t), '{ broken');
+    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+      /tally-mAbC12\/prepare.json cannot be read .*restore the file from the private backup/,
+    );
+    await expect(t.mark('mAbC12', 'drafted')).rejects.toThrow(/prepare.json cannot be read/);
+  });
+
+  it('is idempotent once finished', async () => {
+    const t = await setup();
+    const { createDraft } = await import('../../scripts/content/intake.ts');
+    const dir = await createDraft(t.options.draftsDir, 'r-manual1', '示例汤包馆');
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    await writeFile(
+      t.p('private/submissions/tally-mAbC12/resolutions.json'),
+      JSON.stringify({
+        tags: [{ keyword: '适合带宠物', newTag: { id: 'pet-friendly', label: '可带宠物' } }],
+      }),
+    );
+    await t.prepare('mAbC12', { restaurantId: 'r-manual1', offline: true });
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    const snapshot = async () => ({
+      draft: await t.listing(dir),
+      info: await readFile(path.join(dir, 'info.json'), 'utf8'),
+      tags: await readFile(t.options.tagFiles.privateFile, 'utf8'),
+      contributors: await readFile(t.options.contributorFiles.privateFile, 'utf8'),
+      state: await readFile(statePath(t), 'utf8'),
+      raw: (await readdir(t.p('private/submissions/tally-mAbC12'))).filter((f) =>
+        f.startsWith('photo-'),
+      ),
+    });
+    const after = await snapshot();
+    for (let i = 0; i < 2; i++) {
+      expect((await t.reject('mAbC12')).status).toBe('nothing');
+      expect(await snapshot()).toEqual(after);
+    }
+    expect(after.raw).toHaveLength(6);
+    expect(await rejectionProblems(t.options.submissionsDir, 'r-manual1')).toEqual([]);
   });
 });

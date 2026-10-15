@@ -58,7 +58,7 @@ import {
   type ListingCheck,
   type PoiDetails,
 } from './enrich.ts';
-import { checkoutRestaurant, createDraft, folderChanges, importImages, newRestaurantId } from './intake.ts';
+import { checkoutRestaurant, createDraft, folderChanges, importImages, IntakeError, newRestaurantId } from './intake.ts';
 import { IMAGES_DIR, INFO_FILE, REVIEW_FILE, runPipeline } from './pipeline.ts';
 import { findContactDetails, tagRegistryProblems } from './privacy.ts';
 import {
@@ -69,9 +69,11 @@ import {
   readiness,
   readLog,
   resolveIdentity,
+  markSubmission,
   submissionDir,
   updateLog,
   type Identity,
+  type LogStatus,
   type NetworkOptions,
   type PhotoState,
   type Submission,
@@ -466,6 +468,13 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   ];
 
   if (entry.status === 'rejected') report.blockers.push('the submission was marked rejected');
+  const open = unfinishedRejection(state);
+  if (open) {
+    report.blockers.push(
+      `its rejection is ${open.status === 'manual' ? 'waiting for the maintainer' : 'unfinished'}: finish it with ` +
+        `"npm run content:submission -- mark ${id} --status rejected" before preparing it again`,
+    );
+  }
   if (entry.status === 'processed') {
     report.notes.push('already processed (its restaurant was promoted); nothing to prepare');
     return finish('done');
@@ -1154,25 +1163,93 @@ async function deferredFor(restaurantId: string, self: string, submissionsDir: s
     : [];
 }
 
+/** A rejection that has started and is not finished: pending (interrupted) or manual (needs the maintainer). */
+export const unfinishedRejection = (state: PrepareState | undefined) =>
+  state?.rejection?.status === 'pending' || state?.rejection?.status === 'manual' ? state.rejection : undefined;
+
 /**
- * Why a draft must not be promoted because of a rejected submission: its
- * contribution was not (or not completely) taken out. Used by content:check
- * and content:promote.
+ * Records a submission's editorial status (content:submission -- mark). The
+ * raw submission is kept whatever the status. "rejected" also takes its
+ * content out of the draft (rejectSubmission); the rollback state is written
+ * before the log, so an interruption still blocks promotion. While a
+ * rejection is unfinished (pending or manual), no other status is accepted:
+ * the log status never clears that block. --resolved only confirms a
+ * rejection.
+ */
+export async function markOutcome(
+  id: string,
+  status: LogStatus,
+  options: RejectOptions & { restaurantId?: string },
+): Promise<RejectResult> {
+  if (options.resolved && status !== 'rejected') {
+    throw new IntakeError('--resolved only confirms a rejection: use it with --status rejected');
+  }
+  if (!(await readLog(options.submissionsDir))[id]) throw new IntakeError(`submission "${id}" has not been imported`);
+  let state: PrepareState | undefined;
+  try {
+    state = await readState(submissionDir(options.submissionsDir, id));
+  } catch (e) {
+    throw new IntakeError(
+      `private/submissions/tally-${id}/${PREPARE_STATE_FILE} cannot be read (${(e as Error).message.split('\n')[0]}); ` +
+        'nothing was changed; restore it from the private backup first',
+    );
+  }
+  const open = unfinishedRejection(state);
+  if (status !== 'rejected' && open) {
+    throw new IntakeError(
+      `the rejection of ${id} is ${open.status === 'manual' ? 'waiting for the maintainer' : 'unfinished'}; nothing was ` +
+        `changed. Finish it first with "npm run content:submission -- mark ${id} --status rejected"` +
+        (open.status === 'manual' ? ' (add --resolved after checking the reported fields)' : ''),
+    );
+  }
+  const result =
+    status === 'rejected' ? await rejectSubmission(id, options) : { status: 'nothing' as const, messages: [] };
+  await markSubmission(options.submissionsDir, id, status, options.restaurantId);
+  return result;
+}
+
+/**
+ * Why a draft must not be promoted because of a rejected submission. Decided
+ * by the rollback state in each submission's prepare.json, never by the
+ * editorial status in the log, which `mark` can change: a rejection that
+ * started (pending) or needs the maintainer (manual) blocks until it is
+ * finished or resolved with `mark <id> --status rejected [--resolved]`. A
+ * submission marked rejected whose content is still in the draft blocks too
+ * (the rejection never ran), and so does a prepare.json that cannot be read.
+ * Used by content:check and content:promote.
  */
 export async function rejectionProblems(submissionsDir: string, restaurantId: string): Promise<string[]> {
   const problems: string[] = [];
-  for (const [id, entry] of Object.entries(await readLog(submissionsDir))) {
-    if (entry.status !== 'rejected') continue;
-    const state = await readState(submissionDir(submissionsDir, id));
-    if (state?.restaurantId !== restaurantId || state.written === undefined) continue;
-    const why =
-      state.rejection?.status === 'manual'
-        ? `edited by hand where it also wrote (${state.rejection.details.join(', ')})`
-        : 'its rejection did not finish';
-    problems.push(
-      `submission ${id} was rejected, but its content is still in the draft: ${why}; run ` +
-        `"npm run content:submission -- mark ${id} --status rejected" again (with --resolved after checking those fields)`,
-    );
+  if (!existsSync(submissionsDir)) return problems;
+  const log = await readLog(submissionsDir);
+  const again = (id: string) => `run "npm run content:submission -- mark ${id} --status rejected"`;
+  for (const folder of (await readdir(submissionsDir)).sort()) {
+    const id = /^tally-(.+)$/.exec(folder)?.[1];
+    if (!id || !existsSync(path.join(submissionsDir, folder, PREPARE_STATE_FILE))) continue;
+    let state: PrepareState | undefined;
+    try {
+      state = await readState(path.join(submissionsDir, folder));
+    } catch (e) {
+      problems.push(
+        `private/submissions/${folder}/${PREPARE_STATE_FILE} cannot be read (${(e as Error).message.split('\n')[0]}), so ` +
+          'it is unknown whether a rejected submission\'s content is still in this draft; restore the file from the ' +
+          'private backup, then run the command again',
+      );
+      continue;
+    }
+    if (state?.restaurantId !== restaurantId) continue;
+    const open = unfinishedRejection(state);
+    if (open?.status === 'manual') {
+      problems.push(
+        `submission ${id} was rejected, but its content is still in the draft: edited by hand where it also wrote ` +
+          `(${open.details.join(', ')}); remove its content there and ${again(id)} again, or add --resolved after ` +
+          'checking those fields',
+      );
+    } else if (open) {
+      problems.push(`submission ${id} was rejected, but its rejection did not finish; ${again(id)} again`);
+    } else if (log[id]?.status === 'rejected' && state.written !== undefined) {
+      problems.push(`submission ${id} is marked rejected, but its content is still in the draft; ${again(id)}`);
+    }
   }
   return problems;
 }
