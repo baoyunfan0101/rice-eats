@@ -99,11 +99,9 @@ keywords wait for a reviewed decision in the submission's `resolutions.json`
 `private/tags.json` and a draft may use them; `content:promote` copies their id
 and label (never the contributor's words) into `content/tags.json`. To rename a
 label, edit `content/tags.json`; to add a tag by hand, append it there. Tag
-words are shown on every restaurant that uses them, so ids, labels, and
-aliases must not carry contact details: `content:check`, the build,
-`npm run check:privacy`, and `content:promote` reject email addresses, `@`
-handles, links, phone numbers, and messaging ids, and warn about words that
-look like them (see `docs/submissions.md#keywords-and-tags`).
+words appear on every restaurant that uses them, so they must not carry
+contact details; the checks are described in
+[submissions.md](submissions.md#keywords-and-tags).
 
 | `rating` | Label     |     | `verdict` | Label   |
 | -------- | --------- | --- | --------- | ------- |

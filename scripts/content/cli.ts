@@ -244,14 +244,14 @@ async function main() {
       const relevant = (d: Diagnostic) =>
         wanted.size === 0 || !d.restaurantId || wanted.has(d.restaurantId);
       printDiagnostics(result.diagnostics.filter(relevant));
-      // Drafts that still hold a rejected submission's content cannot be promoted.
-      const rejected: string[] = [];
+      // A draft that may still hold a rejected submission's content fails the check (the full one too).
+      let rejected = false;
       if (draftsDir && existsSync(draftsDir)) {
         for (const folder of await readdir(draftsDir)) {
           if (wanted.size > 0 && !wanted.has(folder)) continue;
           for (const problem of await rejectionProblems(SUBMISSIONS_DIR, folder)) {
-            console.error(`draft   private/drafts/${folder}: ${problem}`);
-            if (wanted.has(folder)) rejected.push(problem);
+            console.error(`error   private/drafts/${folder}: ${problem}`);
+            rejected = true;
           }
         }
       }
@@ -266,7 +266,7 @@ async function main() {
         }
       }
       const failed =
-        rejected.length > 0 ||
+        rejected ||
         result.diagnostics.some((d) => d.level === 'error' || (d.draftError && wanted.size > 0 && relevant(d)));
       console.log(
         failed

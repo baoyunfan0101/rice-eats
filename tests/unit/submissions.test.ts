@@ -412,6 +412,16 @@ describe('restaurant identity', () => {
     );
     expect(named.kind).toBe('conflict');
     expect(ids(named)).toEqual(['r-def567']);
+    // The id of one restaurant with the name of its neighbor, right next to it: still a conflict.
+    const neighbor = resolveIdentity(
+      sub({
+        restaurantId: 'r-abc234',
+        restaurantName: 'Neighbor Noodles',
+        restaurantLocation: at(29.7201, -95.4001),
+      }),
+      known,
+    );
+    expect(neighbor).toMatchObject({ kind: 'conflict', restaurant: { id: 'r-abc234' } });
     const moved = resolveIdentity(
       sub({
         restaurantId: 'r-abc234',

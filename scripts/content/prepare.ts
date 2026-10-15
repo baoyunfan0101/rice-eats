@@ -59,7 +59,7 @@ import {
   type PoiDetails,
 } from './enrich.ts';
 import { checkoutRestaurant, createDraft, folderChanges, importImages, IntakeError, newRestaurantId } from './intake.ts';
-import { IMAGES_DIR, INFO_FILE, REVIEW_FILE, runPipeline } from './pipeline.ts';
+import { IMAGES_DIR, INFO_FILE, listImages, REVIEW_FILE, runPipeline } from './pipeline.ts';
 import { findContactDetails, tagRegistryProblems } from './privacy.ts';
 import {
   loadKnownRestaurants,
@@ -68,11 +68,11 @@ import {
   poiIndexFromLog,
   readiness,
   readLog,
+  describeIdentity,
   resolveIdentity,
   markSubmission,
   submissionDir,
   updateLog,
-  type Identity,
   type LogStatus,
   type NetworkOptions,
   type PhotoState,
@@ -496,7 +496,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   // Restaurant identity: the stored decision, the maintainer's decision, or a safe automatic match.
   const known = await loadKnownRestaurants(options.restaurantsDir, options.draftsDir);
   const identity = resolveIdentity(submission, known, poiIndexFromLog(log));
-  report.identity = describeIdentity(identity);
+  report.identity = describeIdentity(identity, submission);
   let restaurantId = state?.restaurantId;
   let mode = state?.mode;
   if (!restaurantId && options.restaurantId) {
@@ -826,14 +826,8 @@ async function snapshot(dir: string): Promise<PrepareState['base']> {
   return {
     info,
     ...(existsSync(reviewFile) ? { review: await readFile(reviewFile, 'utf8') } : {}),
-    images: await imageFiles(dir),
+    images: await listImages(dir),
   };
-}
-
-async function imageFiles(dir: string): Promise<string[]> {
-  const imagesDir = path.join(dir, IMAGES_DIR);
-  if (!existsSync(imagesDir)) return [];
-  return (await readdir(imagesDir)).filter((n) => !n.startsWith('.')).map((n) => `${IMAGES_DIR}/${n}`).sort();
 }
 
 async function fileHash(file: string): Promise<string | undefined> {
@@ -963,27 +957,6 @@ function photoCounts(state: PhotoState[]): PrepareReport['photos'] {
   };
 }
 
-function describeIdentity(identity: Identity): string {
-  switch (identity.kind) {
-    case 'existing':
-      return `existing restaurant ${identity.restaurant.id} "${identity.restaurant.name}" (id from the restaurant page, name and location agree)`;
-    case 'poi-match':
-      return `same map listing as ${identity.restaurant.id} "${identity.restaurant.name}" in an earlier reviewed submission (confirm with --id)`;
-    case 'conflict':
-      return `CONFLICT: id ${identity.restaurant.id} "${identity.restaurant.name}", but ${identity.reason}`;
-    case 'unknown-id':
-      return `UNKNOWN restaurant id "${identity.id}"`;
-    case 'candidates':
-      return `possibly an existing restaurant: ${identity.candidates
-        .map((c) => `${c.restaurant.id} "${c.restaurant.name}"${c.distance !== undefined ? ` ${Math.round(c.distance)} m away` : ''}${c.nameMatch ? ' (same name)' : ''}`)
-        .join(', ')}`;
-    case 'new':
-      return 'new restaurant (nothing similar by location or name)';
-    case 'unidentified':
-      return 'unidentified (no id, name, or location)';
-  }
-}
-
 export interface RejectOptions {
   submissionsDir: string;
   draftsDir: string;
@@ -1098,7 +1071,7 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   // Images this submission brought (by content, so a renamed copy counts too).
   const stored = new Set(state.photos.map((m) => m.stored));
   const ownImages: string[] = [];
-  for (const image of await imageFiles(target)) {
+  for (const image of await listImages(target)) {
     if (state.base.images.includes(image)) continue;
     if (stored.has((await fileHash(path.join(target, image)))!)) ownImages.push(image);
   }
@@ -1123,7 +1096,7 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   }
 
   const removable = ownImages.filter((image) => !usedImages.includes(image));
-  const others = (await imageFiles(target)).filter((image) => !removable.includes(image));
+  const others = (await listImages(target)).filter((image) => !removable.includes(image));
   const details: string[] = [];
   if (state.createdDraft && same(ordered(merged), ordered(base)) && review === br && same(others, state.base.images)) {
     if (state.mode === 'new' || existsSync(path.join(options.restaurantsDir, state.restaurantId, INFO_FILE))) {
@@ -1212,8 +1185,8 @@ export async function markOutcome(
     stateLost?: string;
   },
 ): Promise<RejectResult> {
-  if (options.resolved && status !== 'rejected') {
-    throw new IntakeError('--resolved only confirms a rejection: use it with --status rejected');
+  for (const [flag, used] of [['--resolved', options.resolved], ['--state-lost', options.stateLost !== undefined]] as const) {
+    if (used && status !== 'rejected') throw new IntakeError(`${flag} only confirms a rejection: use it with --status rejected`);
   }
   const entry = (await readLog(options.submissionsDir))[id];
   if (!entry) throw new IntakeError(`submission "${id}" has not been imported`);

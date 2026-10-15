@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { cp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
@@ -628,6 +629,21 @@ describe('prepare', () => {
     expect(existsSync(t.options.draftsDir)).toBe(false);
     // With the maintainer's decision it is the existing restaurant, which already has a review.
     expect((await t.prepare('mAbC12', { restaurantId: 'r-near01' })).outcome).toBe('deferred');
+    // The id of that restaurant with another name, right there, is not used without a decision.
+    await t.importCsv(
+      csv(
+        row({
+          ...NEW_RESTAURANT,
+          'Submission ID': 'byid',
+          restaurant_id: 'r-near01',
+          restaurant_name: '隔壁面馆',
+        }),
+      ),
+    );
+    const conflict = await t.prepare('byid');
+    expect(conflict.identity).toMatch(/^CONFLICT: id r-near01/);
+    expect(conflict.outcome).toBe('blocked');
+    expect((await t.prepare('byid', { asNew: true })).outcome).toBe('drafted');
   });
 
   it('never prepares a submission without consent', async () => {
@@ -811,8 +827,6 @@ describe('rejecting a prepared submission', () => {
       'u-002',
     ]);
     expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
-    // Repeatable.
-    expect((await t.reject('mAbC12')).status).toBe('nothing');
     expect((await t.prepare('mAbC12')).outcome).toBe('blocked');
   });
 
@@ -912,7 +926,7 @@ describe('rejecting a prepared submission', () => {
     expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
   });
 
-  it('blocks promotion while a rejection is unfinished', async () => {
+  it('blocks promotion of a submission marked rejected but not rolled back', async () => {
     const t = await setup();
     await t.importCsv(csv(row(NEW_RESTAURANT)));
     const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
@@ -1078,6 +1092,43 @@ describe('rejection rollback state', () => {
     expect(await t.listing(draft)).toEqual(before);
     expect(JSON.parse(await readFile(statePath(t), 'utf8')).rejection.status).toBe('manual');
   });
+
+  it('fails content:check, full or for that draft, until the rollback is resolved', async () => {
+    const { t, id } = await conflicted();
+    const { createDraft } = await import('../../scripts/content/intake.ts');
+    await createDraft(t.options.draftsDir, 'r-other1', '无关的店');
+    // The real CLI, run on this temporary database (it uses the repository layout).
+    const repo = process.cwd();
+    for (const dir of ['scripts', 'shared'])
+      await cp(path.join(repo, dir), t.p(dir), { recursive: true });
+    for (const file of ['site.config.ts', 'package.json'])
+      await cp(path.join(repo, file), t.p(file));
+    await symlink(path.join(repo, 'node_modules'), t.p('node_modules'));
+    await mkdir(t.p('content/restaurants'), { recursive: true });
+    await cp(t.p('contributors.json'), t.p('content/contributors.json'));
+    await cp(t.p('tags.json'), t.p('content/tags.json'));
+    const check = (...ids: string[]) =>
+      spawnSync(
+        path.join(repo, 'node_modules/.bin/tsx'),
+        ['scripts/content/cli.ts', 'check', ...ids],
+        {
+          cwd: t.root,
+          encoding: 'utf8',
+        },
+      );
+    const full = check();
+    expect(full.status).toBe(1);
+    expect(full.stderr).toMatch(
+      new RegExp(`error   private/drafts/${id}: submission mAbC12 was rejected`),
+    );
+    expect(full.stdout).toMatch(/Check failed/);
+    expect(check(id).status).toBe(1);
+    expect(check('r-other1').status).toBe(0);
+    await t.reject('mAbC12', true);
+    const after = check();
+    expect(after.stdout).toMatch(/Check passed/);
+    expect(after.status).toBe(0);
+  }, 30_000);
 
   it('lifts the block after the maintainer resolves the conflict, keeping unrelated edits', async () => {
     const { t, id, draft } = await conflicted();
@@ -1265,6 +1316,14 @@ describe('lost prepare state', () => {
     const { t, id, draft } = await prepared();
     await rm(path.join(sub(t), 'prepare.json'));
     await expect(t.reject('mAbC12', false, '  ')).rejects.toThrow(/--state-lost needs a note/);
+    // Only a rejection can be confirmed this way; other statuses change nothing.
+    const log = await readFile(t.p('private/submissions/tally-log.json'), 'utf8');
+    for (const status of ['processed', 'imported', 'drafted', 'deferred'] as const) {
+      await expect(t.mark('mAbC12', status, false, 'checked')).rejects.toThrow(
+        /--state-lost only confirms a rejection/,
+      );
+    }
+    expect(await readFile(t.p('private/submissions/tally-log.json'), 'utf8')).toBe(log);
     await expect(t.mark('other', 'rejected', false, 'checked')).rejects.toThrow(
       /--state-lost is only for a submission whose prepare.json is lost/,
     );

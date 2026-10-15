@@ -390,7 +390,8 @@ whose id is not in `npm run content:submission -- list`; move its email from
    it on its own.
 
    The restaurant match is a proposal, resolved in this order: the
-   `restaurant_id` (checked against the submitted name and location), then a
+   `restaurant_id` (a different name, even close by, or a distant location is a
+   conflict for the maintainer), then a
    POI that an earlier reviewed submission linked to a restaurant (`mark
 --status drafted|processed --id <restaurant id>` records that link in the
    private log), then nearby restaurants (within 150 m) and restaurants with
@@ -503,57 +504,40 @@ what prepare wrote. For each field of `info.json` and for `review.md`:
   another draft uses them. The contributor stays in
   `private/contributors.json` (a record), but no draft credits them.
 
-When a field was edited by hand **and** written by the submission (say the
-maintainer corrected its review), nothing is changed: the command exits with
-code 1 and lists the fields, `content:check` reports the draft, and
-`content:promote` refuses it. Remove the submission's content from those
-fields (or put back what was there before) and run the command again, or,
-after checking them, keep their current values with `--resolved` (recorded in
-`prepare.json`). An interrupted rejection also blocks promotion until it is
-run again; running it again is always safe.
+A rejected submission no longer reserves the restaurant: the command lists
+deferred submissions about it, which can now be prepared. A restaurant that
+was already promoted is not changed; edit it with `content:edit`.
 
-The rollback has its own state in `prepare.json` (`rejection.status`:
-`pending` while it runs, `manual` when it needs the maintainer, `done`, or
-`resolved` after `--resolved`), separate from the editorial status in
-`tally-log.json`. The publication block follows that state, not the log: while
-a rollback is `pending` or `manual`, `mark` refuses every other status
-(nothing changes), `prepare` refuses to rebuild the draft, and
-`content:check` and `content:promote` (also with `--approved`) report and
-refuse the draft whatever the log says. Only finishing the rollback
-(`mark <id> --status rejected`) or confirming it (`--resolved`, accepted only
-with `--status rejected`) lifts the block. The rollback state is written
-before the log, so an interrupted command still blocks; a `prepare.json` that
-cannot be read blocks the restaurant's drafts too, until it is restored from
-the [backup](#retention-and-backup). A finished rollback blocks nothing, and
-the submission's status may change again afterwards. A rejected submission no longer
-reserves the restaurant: the report lists deferred submissions about it,
-which can now be prepared. A restaurant that was already promoted is not
-changed; the command says so, and the maintainer edits it with
-`content:edit`.
+**The publication block.** The rollback has its own state in `prepare.json`
+(`rejection.status`: `pending` while it runs, `manual` when it needs the
+maintainer, then `done` or `resolved`), separate from the editorial status
+in `tally-log.json`. Until it is `done` or `resolved`, `mark` refuses every
+other status, `prepare` refuses the submission, and `content:check` and
+`content:promote` (also with `--approved`) fail for that restaurant's draft,
+whatever the log says. This happens when:
 
-**Lost prepare state.** When prepare writes a submission's content into a
-draft, the log entry records it (`draftWritten`); a finished rejection clears
-it. So a missing `prepare.json` is told apart from a submission that was never
-prepared (imported only, or deferred), which is rejected normally. When the
-log says the content went into a draft but `prepare.json` (or the whole
-submission folder) is missing, nothing can show whether that content is still
-in the draft: `mark` refuses every status for it (nothing changes, also with
-`--resolved`), `prepare` refuses it, and `content:check` and `content:promote`
-report and refuse that restaurant's draft, whatever the log status. Other
-restaurants are not affected. To recover:
+- a field was edited by hand **and** written by the submission (say the
+  maintainer corrected its review): nothing is changed and the command exits
+  with code 1 listing the fields. Remove the submission's content from them
+  (or put back what was there before) and run it again, or, after checking
+  them, keep their current values with `--resolved`;
+- the command was interrupted (the state is written before the log): run it
+  again, which is always safe;
+- `prepare.json` cannot be read, or is missing although the log shows the
+  submission wrote into a draft (`draftWritten`, cleared by a finished
+  rejection; a submission that was never prepared is rejected normally).
+  Restore `private/submissions/tally-<id>/` from the
+  [backup](#retention-and-backup) and run the command again. Without a
+  backup, check the draft by hand (remove what came from the submission, keep
+  only what has its own source) and confirm it; the note is recorded with the
+  time in the log entry's `audit`:
 
-1. Restore `private/submissions/tally-<id>/` from the
-   [backup](#retention-and-backup), then run the command again (the rejection
-   then works as usual).
-2. Without a backup, check the draft by hand: remove what came from the
-   submission, and keep only what has its own source. Then confirm what you
-   checked; the note is recorded with the time in the log entry's `audit`:
+  ```sh
+  npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, photos, and credit"
+  ```
 
-   ```sh
-   npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, photos, and credit"
-   ```
-
-   `--state-lost` is accepted only for this situation and needs a note.
+`--resolved` and `--state-lost` are accepted only with `--status rejected`;
+`--state-lost` only for lost state, and with a note.
 
 ### Keywords and tags
 

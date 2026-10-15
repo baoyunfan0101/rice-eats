@@ -24,6 +24,7 @@ import { normalizeKeyword } from '../../shared/content/schema.ts';
 import { CUISINE_IDS, type CuisineId } from '../../shared/content/vocabulary.ts';
 import { isValidLatLng, type LatLngValue } from '../../shared/submission.ts';
 import { ANY_PUBLIC_HOST, DownloadError, redactUrl, safeFetch, type Lookup } from './safe-fetch.ts';
+import { distanceMeters } from './submissions.ts';
 
 export const ENRICHED_FIELDS = ['altNames', 'address', 'cuisines', 'pricePerPerson', 'website'] as const;
 export type EnrichedField = (typeof ENRICHED_FIELDS)[number];
@@ -176,14 +177,6 @@ async function writeJsonAtomic(file: string, data: unknown) {
   await rename(`${file}.tmp`, file);
 }
 
-function distance(a: LatLngValue, b: LatLngValue): number {
-  const rad = (d: number) => (d * Math.PI) / 180;
-  const h =
-    Math.sin(rad(b.lat - a.lat) / 2) ** 2 +
-    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
-  return 2 * 6371000 * Math.asin(Math.sqrt(h));
-}
-
 /**
  * Looks up the selected place. Uses the cache unless `refresh`; never throws:
  * a failure is returned (and not cached, so a later run can retry).
@@ -317,7 +310,7 @@ async function fromOverpassNearby(name: string, at: LatLngValue, get: Get, resul
     return (
       names.some((n) => n.split(';').some((part) => normalizeKeyword(part) === wanted)) &&
       point !== undefined &&
-      distance(at, { lat: point.lat, lng: point.lon }) <= SAME_PLACE_METERS
+      distanceMeters(at, { lat: point.lat, lng: point.lon }) <= SAME_PLACE_METERS
     );
   });
   if (same.length !== 1) {
@@ -401,7 +394,7 @@ export function verifyListing(listing: PoiDetails, expected: ExpectedPlace): Lis
   else if (matched) reasons.push(`name "${matched}" matches`);
   else reasons.push(`the listing's names (${listing.names.map((n) => `"${n}"`).join(', ')}) differ from the restaurant's`);
   const meters =
-    listing.location && expected.location ? Math.round(distance(listing.location, expected.location)) : undefined;
+    listing.location && expected.location ? Math.round(distanceMeters(listing.location, expected.location)) : undefined;
   if (meters !== undefined) reasons.push(`${meters} m from the restaurant's location`);
   else reasons.push(listing.location ? 'the restaurant has no location to compare' : 'the listing has no coordinates');
   const address = compareAddresses(listing.address, expected.address);

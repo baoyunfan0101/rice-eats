@@ -32,6 +32,7 @@ import {
   ratingFromAnswer,
   verdictFromAnswer,
 } from '../../shared/submission.ts';
+import { normalizeKeyword } from '../../shared/content/schema.ts';
 import type { Rating } from '../../shared/content/vocabulary.ts';
 import { IntakeError } from './intake.ts';
 import { reviewHints, type ReviewText } from './moderation.ts';
@@ -313,11 +314,8 @@ export async function loadKnownRestaurants(
   return known;
 }
 
-const normalizeName = (text: string) =>
-  text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
-
 const nameMatches = (restaurant: KnownRestaurant, name: string | undefined) =>
-  !!name?.trim() && restaurant.names.some((n) => normalizeName(n) === normalizeName(name));
+  !!name?.trim() && restaurant.names.some((n) => normalizeKeyword(n) === normalizeKeyword(name));
 
 /** Great-circle distance in meters. */
 export function distanceMeters(a: LatLngValue, b: LatLngValue): number {
@@ -390,7 +388,8 @@ export function resolveIdentity(
       location && restaurant.location
         ? distanceMeters(location, restaurant.location) > NEARBY_METERS * 2
         : false;
-    if (name && !nameMatches(restaurant, name) && (far || !location)) {
+    // A different name is a conflict even close by: neighbors are other restaurants.
+    if (name && !nameMatches(restaurant, name)) {
       return {
         kind: 'conflict',
         restaurant,
@@ -1080,7 +1079,7 @@ function describeSelection(s: Submission): string {
   return parts.join('; ');
 }
 
-function describeIdentity(identity: Identity, s: Submission): string {
+export function describeIdentity(identity: Identity, s: Submission): string {
   const label = (r: KnownRestaurant) =>
     `${r.id} "${r.name}"${r.address ? ` (${r.address})` : ''}${r.where === 'draft' ? ' [private draft]' : ''}`;
   const candidate = (c: Candidate) => {
