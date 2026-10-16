@@ -208,6 +208,7 @@ const sub = (extra: Partial<Submission>): Submission => ({
   restaurantName: '示例面馆',
   photoUrls: [],
   dishes: [],
+  keywords: [],
   consent: true,
   ...extra,
 });
@@ -390,6 +391,7 @@ describe('restaurant identity', () => {
     submissionId: 's',
     photoUrls: [],
     dishes: [],
+    keywords: [],
     consent: true,
     ...extra,
   });
@@ -410,6 +412,16 @@ describe('restaurant identity', () => {
     );
     expect(named.kind).toBe('conflict');
     expect(ids(named)).toEqual(['r-def567']);
+    // The id of one restaurant with the name of its neighbor, right next to it: still a conflict.
+    const neighbor = resolveIdentity(
+      sub({
+        restaurantId: 'r-abc234',
+        restaurantName: 'Neighbor Noodles',
+        restaurantLocation: at(29.7201, -95.4001),
+      }),
+      known,
+    );
+    expect(neighbor).toMatchObject({ kind: 'conflict', restaurant: { id: 'r-abc234' } });
     const moved = resolveIdentity(
       sub({
         restaurantId: 'r-abc234',
@@ -601,14 +613,31 @@ describe('importing submissions', () => {
     expect(await files('sub2')).toEqual(['photo-01.jpg']);
   });
 
-  it('skips submissions whose raw files were removed after processing', async () => {
+  it('keeps the raw submission whatever its status', async () => {
+    const { run, submissionsDir, dir, files } = await setup();
+    await run(submissionsFromCsv(csv(ROWS.textOnly, ROWS.photoOnly)));
+    const stored = async (id: string) => [
+      await readFile(path.join(dir(id), 'submission.json'), 'utf8'),
+      ...(await files(id)),
+    ];
+    const before = { sub1: await stored('sub1'), sub2: await stored('sub2') };
+    for (const status of ['drafted', 'deferred', 'processed', 'rejected', 'imported'] as const) {
+      await markSubmission(submissionsDir, 'sub1', status, 'r-new111');
+      await markSubmission(submissionsDir, 'sub2', status);
+      expect(await stored('sub1')).toEqual(before.sub1);
+      expect(await stored('sub2')).toEqual(before.sub2);
+    }
+  });
+
+  it('reports a submission whose raw files are missing (erased on request) without importing it again', async () => {
     const { run, submissionsDir, dir } = await setup();
     await run(submissionsFromCsv(csv(ROWS.textOnly)));
     await markSubmission(submissionsDir, 'sub1', 'processed', 'r-new111');
     await rm(dir('sub1'), { recursive: true });
     const [again] = await run(submissionsFromCsv(csv(ROWS.textOnly)));
-    expect(again!.outcome).toBe('archived');
+    expect(again!.outcome).toBe('missing');
     expect(again!.entry).toMatchObject({ status: 'processed', restaurantId: 'r-new111' });
+    expect(formatReport(again!, (f) => f)).toMatch(/raw files are missing.*private backup/);
     expect(existsSync(dir('sub1'))).toBe(false);
     await expect(markSubmission(submissionsDir, 'nope', 'rejected')).rejects.toThrow(
       /not been imported/,

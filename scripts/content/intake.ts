@@ -75,14 +75,21 @@ export interface ImportedImage {
  * number, so new photos are appended after existing ones and the first image
  * (the cover) does not change. Existing files are never overwritten.
  */
-export async function importImages(restaurantDir: string, files: string[]): Promise<ImportedImage[]> {
+export async function importImages(
+  restaurantDir: string,
+  files: string[],
+  /** Name stems for the stored copies (e.g. "dish-1"); the file names otherwise. */
+  stems: string[] = [],
+  /** Number prefixes to reuse (a replaced photo keeps its place); the next free number otherwise. */
+  numbers: (string | undefined)[] = [],
+): Promise<ImportedImage[]> {
   if (!existsSync(path.join(restaurantDir, INFO_FILE))) {
     throw new IntakeError(`${restaurantDir} has no ${INFO_FILE}; create the draft first`);
   }
   const imagesDir = path.join(restaurantDir, IMAGES_DIR);
   await mkdir(imagesDir, { recursive: true });
   const imported: ImportedImage[] = [];
-  for (const file of files) {
+  for (const [i, file] of files.entries()) {
     if (!existsSync(file)) throw new IntakeError(`${file} does not exist`);
     const ext = path.extname(file).toLowerCase();
     let input = file;
@@ -103,7 +110,8 @@ export async function importImages(restaurantDir: string, files: string[]): Prom
       // Keep PNG only when transparency matters; photos become JPEG.
       const keepPng = ext === '.png' && !(await sharp(bytes).stats()).isOpaque;
       const outExt = keepPng ? '.png' : '.jpg';
-      const target = path.join(imagesDir, `${await nextImageNumber(imagesDir)}-${safeStem(file)}${outExt}`);
+      const number = numbers[i] ?? (await nextImageNumber(imagesDir));
+      const target = path.join(imagesDir, `${number}-${stems[i] ? safeStem(stems[i]) : safeStem(file)}${outExt}`);
       if (existsSync(target)) throw new IntakeError(`${target} already exists; not overwriting it`);
       const pipeline = image.resize({
         width: STORED_MAX_SIZE,

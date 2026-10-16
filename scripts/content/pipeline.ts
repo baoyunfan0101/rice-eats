@@ -15,15 +15,18 @@ import {
   type ImageAsset,
   type RestaurantDetail,
   type RestaurantSummary,
+  type Tag,
 } from '../../shared/content/model.ts';
 import { canonicalImageProblems, copyRenditions, processImage, type ProcessedImage } from './images.ts';
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
-import { findSensitiveMetadata, PRIVACY_FIX } from './privacy.ts';
+import { findSensitiveMetadata, PRIVACY_FIX, tagRegistryProblems } from './privacy.ts';
 import {
   formatIssues,
   privateContributorsSchema,
+  privateTagsSchema,
   publicContributorsSchema,
   restaurantInfoSchema,
+  tagRegistrySchema,
   type RestaurantInfo,
 } from '../../shared/content/schema.ts';
 
@@ -48,6 +51,10 @@ export interface PipelineOptions {
   draftsDir?: string;
   /** Private contributor file (private/contributors.json); read together with draftsDir. */
   privateContributorsFile?: string;
+  /** Public tag registry (content/tags.json). May be missing when no restaurant has tags. */
+  tagsFile?: string;
+  /** Proposed tags (private/tags.json); read together with draftsDir. */
+  privateTagsFile?: string;
   source: ContentSource;
   /** Include drafts in the output (local preview only). */
   includeDrafts: boolean;
@@ -87,6 +94,8 @@ export interface PipelineResult {
   restaurants: LoadedRestaurant[];
   /** Contributors known to this run (public, plus pending private ones when drafts are read). */
   contributors: Map<string, Contributor>;
+  /** Tags known to this run (public, plus proposed ones when drafts are read). */
+  tags: Map<string, Tag>;
   index: ContentIndex;
   details: RestaurantDetail[];
   /** True when there are errors that block the build. */
@@ -124,6 +133,36 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
     const parsed = await readJson(options.privateContributorsFile, privateContributorsSchema, diagnostics, display);
     for (const [id, record] of Object.entries(parsed ?? {})) {
       if (!contributors.has(id) && record.name) contributors.set(id, { id, name: record.name });
+    }
+  }
+
+  // Tags: the public registry, plus proposals that only drafts may use.
+  // Tag words become public on every restaurant that uses them: contact
+  // details block them (privacy.ts), questionable words are warnings.
+  const tags = new Map<string, Tag>();
+  const publicTagIds = new Set<string>();
+  const unsafeTags = new Map<string, string[]>();
+  if (options.tagsFile && existsSync(options.tagsFile)) {
+    const list = (await readJson(options.tagsFile, tagRegistrySchema, diagnostics, display)) ?? [];
+    for (const t of list) {
+      tags.set(t.id, { id: t.id, label: t.label });
+      publicTagIds.add(t.id);
+    }
+    const found = tagRegistryProblems(list);
+    for (const message of found.unsafe) {
+      diagnostics.push({ level: 'error', file: display(options.tagsFile), message: `${message}; tags must not carry contact details` });
+    }
+    for (const message of found.questionable) {
+      diagnostics.push({ level: 'warning', file: display(options.tagsFile), message: `${message}; check it is not private` });
+    }
+  }
+  if (options.draftsDir && options.privateTagsFile && existsSync(options.privateTagsFile)) {
+    const parsed = await readJson(options.privateTagsFile, privateTagsSchema, diagnostics, display);
+    for (const t of parsed?.proposed ?? []) {
+      if (tags.has(t.id)) continue;
+      tags.set(t.id, { id: t.id, label: t.label });
+      const found = tagRegistryProblems([t]).unsafe;
+      if (found.length) unsafeTags.set(t.id, found);
     }
   }
 
@@ -166,11 +205,16 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
       const hint = (key: string) =>
         raw && typeof raw === 'object' && key in raw ? String((raw as Record<string, unknown>)[key]) : undefined;
       if (!parsed.success) {
+        const legacy = Array.isArray((raw as { dishes?: unknown })?.dishes) &&
+          ((raw as { dishes: unknown[] }).dishes).some((d) => d && typeof d === 'object' && 'image' in d);
         for (const message of formatIssues(parsed.error)) {
           diagnostics.push({
             level: 'error',
             file: display(infoPath),
-            message,
+            message:
+              legacy && message.includes('"image"')
+                ? `${message}; a dish lists its photos as "images": ["images/02-x.jpg", ...]`
+                : message,
             restaurantId: hint('id'),
             draft: isPrivate || hint('status') === 'draft',
           });
@@ -257,6 +301,16 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
         error(`contributorIds: "${id}" is not in the public contributor list; promote the restaurant to add it`);
       }
     }
+    // Tags come from the registry; public restaurants may only use public tags.
+    for (const id of info.tags ?? []) {
+      if (!tags.has(id)) {
+        error(`tags: "${id}" is not in the tag registry (content/tags.json); see docs/content.md#tags`);
+      } else if (isPublic && !publicTagIds.has(id)) {
+        error(`tags: "${id}" is only a proposed tag (private/tags.json); promote the restaurant to add it`);
+      } else if (unsafeTags.has(id)) {
+        error(`tags: proposed ${unsafeTags.get(id)!.join('; ')}; choose another label in private/tags.json or drop the tag`);
+      }
+    }
     if (info.status === 'published' && !info.contributorIds?.length) {
       error('published restaurants need at least one entry in "contributorIds" (attribution)');
     }
@@ -290,7 +344,9 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
     // References from dishes and review.md must point at stored images.
     const known = new Set(restaurant.images);
     info.dishes?.forEach((dish, i) => {
-      if (dish.image && !known.has(dish.image)) error(`dishes.${i}.image: "${dish.image}" is not in ${IMAGES_DIR}/`);
+      dish.images?.forEach((image, j) => {
+        if (!known.has(image)) error(`dishes.${i}.images.${j}: "${image}" is not in ${IMAGES_DIR}/`);
+      });
     });
     if (restaurant.review !== undefined) {
       const reviewFile = display(path.join(dir, REVIEW_FILE));
@@ -327,7 +383,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
   if (!failed) {
     for (const restaurant of valid.filter(isIncluded)) {
       try {
-        details.push(await renderRestaurant(restaurant, contributors, options, processed));
+        details.push(await renderRestaurant(restaurant, contributors, tags, options, processed));
       } catch (e) {
         const draft = isDraft(restaurant);
         diagnostics.push({
@@ -362,7 +418,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
     await writeFile(path.join(options.outDir, 'index.json'), JSON.stringify(index));
   }
 
-  return { diagnostics, restaurants: valid, contributors, index, details, failed: finalFailed };
+  return { diagnostics, restaurants: valid, contributors, tags, index, details, failed: finalFailed };
 }
 
 async function readJson<T>(
@@ -394,6 +450,7 @@ function isDraft(r: LoadedRestaurant): boolean {
 async function renderRestaurant(
   restaurant: LoadedRestaurant,
   contributors: Map<string, Contributor>,
+  tags: Map<string, Tag>,
   options: PipelineOptions,
   processed: Map<string, ProcessedImage>,
 ): Promise<RestaurantDetail> {
@@ -421,14 +478,21 @@ async function renderRestaurant(
     };
   };
 
-  // Alt text: the restaurant name for the cover, the dish name or review alt text
-  // where an image is used, otherwise the name with the photo's position.
+  // Alt text: the restaurant name for the cover, the dish name (numbered when
+  // the dish has several photos) or review alt text where an image is used,
+  // otherwise the name with the photo's position.
   const reviewImages = restaurant.review?.trim() ? listMarkdownImages(restaurant.review) : [];
   const name = info.name;
+  const dishAlt = (ref: string) => {
+    const dish = info.dishes?.find((d) => d.images?.includes(ref));
+    if (!dish) return undefined;
+    const count = dish.images!.length;
+    return count > 1 ? `${dish.name}（${dish.images!.indexOf(ref) + 1}/${count}）` : dish.name;
+  };
   const altFor = (ref: string, i: number) =>
     i === 0
       ? name
-      : (info.dishes?.find((d) => d.image === ref)?.name ??
+      : (dishAlt(ref) ??
         reviewImages.find((img) => img.url === ref && img.alt.trim())?.alt ??
         `${name} (${i + 1})`);
   const images: ImageAsset[] = [];
@@ -442,7 +506,7 @@ async function renderRestaurant(
     name: dish.name,
     verdict: dish.verdict,
     comment: dish.comment,
-    imageIndex: dish.image ? indexOf(dish.image) : undefined,
+    imageIndexes: (dish.images ?? []).map(indexOf).filter((i) => i >= 0),
   }));
   const reviewImageIndexes = [...new Set(reviewImages.map((img) => indexOf(img.url)))].filter((i) => i >= 0);
 
@@ -460,7 +524,7 @@ async function renderRestaurant(
     name,
     altNames: info.altNames ?? [],
     cuisines: info.cuisines ?? [],
-    tags: info.tags ?? [],
+    tags: (info.tags ?? []).map((id) => tags.get(id)!),
     address: info.address,
     location: info.location,
     rating: info.rating,

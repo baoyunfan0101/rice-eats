@@ -67,10 +67,15 @@ describe('VerdictBadge', () => {
 });
 
 describe('Tags', () => {
-  it('shows display labels for tag keys', () => {
-    render(<Tags tags={['date', 'group', 'unknown-tag']} />);
-    expect(screen.getByText('适合约会')).toBeInTheDocument();
-    expect(screen.getByText('适合聚餐')).toBeInTheDocument();
-    expect(screen.getByText('unknown-tag')).toBeInTheDocument();
+  it('shows the registry labels of the tags, including new ones', () => {
+    render(
+      <Tags
+        tags={[
+          { id: 'date', label: '适合约会' },
+          { id: 'pet-friendly', label: '可带宠物' },
+        ]}
+      />,
+    );
+    expect(screen.getByRole('list', { name: '标签' })).toHaveTextContent('适合约会可带宠物');
   });
 });

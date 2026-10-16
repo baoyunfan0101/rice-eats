@@ -5,14 +5,16 @@ import type { ContentSource } from '../../shared/content/model.ts';
 export const ROOT = path.resolve(import.meta.dirname, '../..');
 
 /** Canonical, public database (content/) and the fictional fixture database. */
-export const DATABASES: Record<ContentSource, { restaurants: string; contributors: string }> = {
+export const DATABASES: Record<ContentSource, { restaurants: string; contributors: string; tags: string }> = {
   content: {
     restaurants: path.join(ROOT, 'content', 'restaurants'),
     contributors: path.join(ROOT, 'content', 'contributors.json'),
+    tags: path.join(ROOT, 'content', 'tags.json'),
   },
   fixtures: {
     restaurants: path.join(ROOT, 'fixtures', 'restaurants'),
     contributors: path.join(ROOT, 'fixtures', 'contributors.json'),
+    tags: path.join(ROOT, 'fixtures', 'tags.json'),
   },
 };
 export const RESTAURANT_DIRS: Record<ContentSource, string> = {
@@ -28,6 +30,10 @@ export const DRAFTS_DIR = path.join(PRIVATE_DIR, 'drafts');
 export const SUBMISSIONS_DIR = path.join(PRIVATE_DIR, 'submissions');
 /** Pending contributors and contact details. */
 export const PRIVATE_CONTRIBUTORS = path.join(PRIVATE_DIR, 'contributors.json');
+/** Proposed tags and learned keyword aliases. */
+export const PRIVATE_TAGS = path.join(PRIVATE_DIR, 'tags.json');
+/** Cached place details and fetched evidence pages, reused across submissions. */
+export const PRIVATE_CACHE_DIR = path.join(PRIVATE_DIR, 'cache');
 
 export const OUT_DIR = path.join(ROOT, 'public', GENERATED_DIR);
 export const IMAGE_CACHE_DIR = path.join(ROOT, '.cache', 'images');

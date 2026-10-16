@@ -105,3 +105,51 @@ export async function publishContributors(files: ContributorFiles, ids: string[]
   }
   return added;
 }
+
+/** The credit used when a contributor leaves the display name empty (the form says so). */
+export const ANONYMOUS = '匿名';
+
+const isAnonymous = (name: string | undefined) => !name?.trim() || normalize(name) === normalize(ANONYMOUS);
+
+/**
+ * Finds or registers the contributor of a submission. Only a reliable,
+ * identical email links a submission to an existing contributor; a display
+ * name alone never does (names repeat), and anonymous submissions are never
+ * merged with a named contributor (or the other way round), so linking can
+ * never reveal who wrote an anonymous review. Contact details stay private.
+ */
+export async function resolveContributor(
+  files: ContributorFiles,
+  details: { name?: string; email?: string },
+): Promise<{ id: string; created: boolean; notes: string[] }> {
+  const notes: string[] = [];
+  const name = details.name?.trim() || ANONYMOUS;
+  const email = details.email?.trim().toLowerCase();
+  const { publicList, privateRecords } = await loadContributors(files);
+  const nameOf = (id: string) => publicList.find((c) => c.id === id)?.name ?? privateRecords[id]?.name;
+  if (email) {
+    const match = Object.entries(privateRecords).find(([, r]) => r.email?.trim().toLowerCase() === email)?.[0];
+    if (match) {
+      const known = nameOf(match);
+      if (isAnonymous(name) !== isAnonymous(known)) {
+        notes.push(
+          `the email matches ${match}, but one of them is anonymous; kept as a separate contributor so the anonymous credit stays anonymous`,
+        );
+      } else {
+        if (known && normalize(known) !== normalize(name)) {
+          notes.push(`${match} now signs as "${name}"; the public name stays "${known}" unless the maintainer changes it`);
+        }
+        return { id: match, created: false, notes };
+      }
+    }
+  } else if (!isAnonymous(name)) {
+    const same = [...publicList.map((c) => c.id), ...Object.keys(privateRecords)].filter(
+      (id, i, all) => all.indexOf(id) === i && normalize(nameOf(id) ?? '') === normalize(name),
+    );
+    if (same.length) {
+      notes.push(`same display name as ${same.join(', ')} but no matching email: not merged (names alone never identify a person)`);
+    }
+  }
+  const id = await addContributor(files, { name, email });
+  return { id, created: true, notes };
+}

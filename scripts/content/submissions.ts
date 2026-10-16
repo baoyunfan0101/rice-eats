@@ -1,6 +1,7 @@
 // Intake of Tally form submissions (docs/submissions.md). Reads a Tally CSV
-// export or a submission transcribed from a notification email, stores it as
-// raw material in the private submissions folder, downloads its photos with
+// export or a submission transcribed from a notification email, stores it in
+// the private submissions folder (kept for good, whatever its status:
+// docs/submissions.md#retention), downloads its photos with
 // bounded, validated requests (safe-fetch.ts), tracks which photos are still
 // missing so they can be retried or added by hand, and reports how the
 // submission relates to the database. It never
@@ -21,6 +22,7 @@ import {
   SELECTION_METHODS,
   type SelectionMethod,
   type LatLngValue,
+  parseKeywords,
   TALLY_CONSENT_OPTION,
   TALLY_DISH_GROUPS,
   TALLY_MAX_DISH_PHOTOS,
@@ -30,6 +32,7 @@ import {
   ratingFromAnswer,
   verdictFromAnswer,
 } from '../../shared/submission.ts';
+import { normalizeKeyword } from '../../shared/content/schema.ts';
 import type { Rating } from '../../shared/content/vocabulary.ts';
 import { IntakeError } from './intake.ts';
 import { reviewHints, type ReviewText } from './moderation.ts';
@@ -75,6 +78,11 @@ export const submissionSchema = z
           .strict(),
       )
       .default([]),
+    /**
+     * The contributor's own keywords (the tags_raw hidden field), exactly as
+     * typed. Empty for older submissions. Mapped to tags by prepare.ts.
+     */
+    keywords: z.array(z.string()).default([]),
     displayName: z.string().optional(),
     /** Private: never copied into content/ or the website. */
     email: z.string().optional(),
@@ -160,6 +168,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     poiId: exact(HIDDEN_FIELDS.poiId),
     selectionMethod: exact(HIDDEN_FIELDS.selectionMethod),
     source: exact(HIDDEN_FIELDS.source),
+    keywords: exact(HIDDEN_FIELDS.keywords),
     submittedAt: exact('Submitted at'),
   };
 
@@ -209,6 +218,8 @@ export function submissionsFromCsv(text: string): Submission[] {
       ratingAnswer: value(picked.rating),
       photoUrls: linksIn(picked.photos),
       dishes,
+      // A missing column (older form) or an empty value gives no keywords.
+      keywords: parseKeywords(value(picked.keywords)),
       displayName: value(picked.displayName),
       email: value(picked.email),
       consent,
@@ -303,11 +314,8 @@ export async function loadKnownRestaurants(
   return known;
 }
 
-const normalizeName = (text: string) =>
-  text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
-
 const nameMatches = (restaurant: KnownRestaurant, name: string | undefined) =>
-  !!name?.trim() && restaurant.names.some((n) => normalizeName(n) === normalizeName(name));
+  !!name?.trim() && restaurant.names.some((n) => normalizeKeyword(n) === normalizeKeyword(name));
 
 /** Great-circle distance in meters. */
 export function distanceMeters(a: LatLngValue, b: LatLngValue): number {
@@ -380,7 +388,8 @@ export function resolveIdentity(
       location && restaurant.location
         ? distanceMeters(location, restaurant.location) > NEARBY_METERS * 2
         : false;
-    if (name && !nameMatches(restaurant, name) && (far || !location)) {
+    // A different name is a conflict even close by: neighbors are other restaurants.
+    if (name && !nameMatches(restaurant, name)) {
       return {
         kind: 'conflict',
         restaurant,
@@ -727,7 +736,12 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
 
 export const LOG_FILE = 'tally-log.json';
 /** Editorial status, separate from photo retrieval (see PhotoSummary). */
-export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'rejected'] as const;
+/**
+ * deferred: kept but not used, because the restaurant already has an
+ * accepted contributor (one review per restaurant for now); saved for a
+ * future multi-review database.
+ */
+export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'deferred', 'rejected'] as const;
 export type LogStatus = (typeof LOG_STATUSES)[number];
 
 const logSchema = z.record(
@@ -741,6 +755,15 @@ const logSchema = z.record(
       restaurantId: z.string().optional(),
       /** The submitted POI ("provider:id"), private. With restaurantId it links that POI to the restaurant. */
       poi: z.string().optional(),
+      /**
+       * Set when prepare wrote this submission's content into a draft, cleared
+       * when a rejection took it out again. Evidence only: the rollback state
+       * itself lives in prepare.json. With this set, a missing prepare.json is
+       * lost state, not "never prepared".
+       */
+      draftWritten: z.boolean().optional(),
+      /** Explicit maintainer decisions about this submission (e.g. lost prepare state), oldest first. */
+      audit: z.array(z.strictObject({ at: z.string(), action: z.string(), note: z.string() })).optional(),
     })
     .strict(),
 );
@@ -749,8 +772,10 @@ export type LogEntry = SubmissionLog[string];
 
 /**
  * The private processing log (private/submissions/tally-log.json) records
- * every imported submission id, so a submission is not processed twice even
- * after its raw files are deleted.
+ * every imported submission id and its editorial status. The status never
+ * decides whether the raw submission is kept: it always is (only an explicit
+ * erasure request removes it, see docs/submissions.md#retention), and the log
+ * still prevents a second import if that happens.
  */
 export async function readLog(submissionsDir: string): Promise<SubmissionLog> {
   const file = path.join(submissionsDir, LOG_FILE);
@@ -758,7 +783,8 @@ export async function readLog(submissionsDir: string): Promise<SubmissionLog> {
   return logSchema.parse(JSON.parse(await readFile(file, 'utf8')));
 }
 
-async function updateLog(submissionsDir: string, id: string, change: (entry?: LogEntry) => LogEntry) {
+/** Changes one log entry (atomically). */
+export async function updateLog(submissionsDir: string, id: string, change: (entry?: LogEntry) => LogEntry) {
   const log = await readLog(submissionsDir);
   log[id] = change(log[id]);
   await mkdir(submissionsDir, { recursive: true });
@@ -806,9 +832,10 @@ export interface SubmissionReport {
   /**
    * new: imported now; resumed: imported before, photo intake continued;
    * duplicate: imported before with complete photo intake, nothing to do;
-   * archived: imported before and its raw files were removed after processing.
+   * missing: imported before, but its raw files are gone (erased on request,
+   * or lost: restore them from the private backup).
    */
-  outcome: 'new' | 'resumed' | 'duplicate' | 'archived' | 'status';
+  outcome: 'new' | 'resumed' | 'duplicate' | 'missing' | 'status';
   entry?: LogEntry;
   dir?: string;
   rating?: Rating;
@@ -856,7 +883,7 @@ export async function importSubmissions(
     const logged = (await readLog(options.submissionsDir))[id];
     const stored = existsSync(path.join(dir, SUBMISSION_FILE));
     if (logged && !stored) {
-      reports.push(report(incoming, 'archived', known, [], { entry: logged }));
+      reports.push(report(incoming, 'missing', known, [], { entry: logged }));
       continue;
     }
     // The stored record is kept; a differing export is reported, not merged.
@@ -918,7 +945,10 @@ export async function openSubmission(submissionsDir: string, id: string) {
   if (!entry) throw new IntakeError(`submission "${id}" has not been imported`);
   const dir = submissionDir(submissionsDir, id);
   if (!existsSync(path.join(dir, SUBMISSION_FILE))) {
-    throw new IntakeError(`the raw files of submission "${id}" were removed (status ${entry.status})`);
+    throw new IntakeError(
+      `the raw files of submission "${id}" are missing (status ${entry.status}); restore private/ from the ` +
+        'private backup (docs/submissions.md#retention), unless they were erased on request',
+    );
   }
   return { dir, submission: await readStoredSubmission(dir) };
 }
@@ -973,10 +1003,11 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
   const s = result.submission;
   const lines = [`Submission ${s.submissionId}${s.submittedAt ? ` (${s.submittedAt})` : ''}`];
   const entry = result.entry;
-  if (result.outcome === 'archived') {
+  if (result.outcome === 'missing') {
     lines.push(
       `  already imported ${entry!.importedAt} (status ${entry!.status}` +
-        `${entry!.restaurantId ? `, restaurant ${entry!.restaurantId}` : ''}); raw files removed, nothing written`,
+        `${entry!.restaurantId ? `, restaurant ${entry!.restaurantId}` : ''}); its raw files are missing, nothing written: ` +
+        'restore them from the private backup unless they were erased on request',
     );
     return lines.join('\n');
   }
@@ -1048,7 +1079,7 @@ function describeSelection(s: Submission): string {
   return parts.join('; ');
 }
 
-function describeIdentity(identity: Identity, s: Submission): string {
+export function describeIdentity(identity: Identity, s: Submission): string {
   const label = (r: KnownRestaurant) =>
     `${r.id} "${r.name}"${r.address ? ` (${r.address})` : ''}${r.where === 'draft' ? ' [private draft]' : ''}`;
   const candidate = (c: Candidate) => {

@@ -1,8 +1,10 @@
 // Display labels for the database's controlled values (keys defined in
 // shared/content/vocabulary.ts). Presentation only: rewording a label never
 // requires changing restaurant data. Record types make a missing label a type error.
+// Tag labels are not here: tags come from the tag registry (content/tags.json)
+// and reach the website with their labels in the generated data.
 
-import type { CuisineId, Rating, TagId, Verdict } from '../../shared/content/vocabulary';
+import type { CuisineId, Rating, Verdict } from '../../shared/content/vocabulary';
 
 export const CUISINE_LABELS: Record<CuisineId, string> = {
   american: '美式',
@@ -24,17 +26,6 @@ export const CUISINE_LABELS: Record<CuisineId, string> = {
   vietnamese: '越南菜',
 };
 
-export const TAG_LABELS: Record<TagId, string> = {
-  budget: '实惠',
-  date: '适合约会',
-  group: '适合聚餐',
-  'late-night': '营业到很晚',
-  quick: '出餐快',
-  solo: '适合一人食',
-  spicy: '偏辣',
-  study: '适合学习',
-};
-
 export const RATING_LABELS: Record<Rating, string> = {
   5: '🥵 夯',
   4: '😘 顶级',
@@ -45,6 +36,5 @@ export const RATING_LABELS: Record<Rating, string> = {
 
 export const VERDICT_LABELS: Record<Verdict, string> = { 1: '🔥 推荐', [-1]: '💣 避雷' };
 
-/** Label for a stored key; unknown keys (none pass validation) fall back to the key. */
+/** Label for a stored cuisine key; unknown keys (none pass validation) fall back to the key. */
 export const cuisineLabel = (id: string) => CUISINE_LABELS[id as CuisineId] ?? id;
-export const tagLabel = (id: string) => TAG_LABELS[id as TagId] ?? id;

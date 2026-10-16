@@ -10,6 +10,7 @@ import {
   IMAGE_CACHE_DIR,
   OUT_DIR,
   PRIVATE_CONTRIBUTORS,
+  PRIVATE_TAGS,
   draftsFromEnv,
   sourceFromEnv,
 } from './paths.ts';
@@ -22,12 +23,12 @@ export function contentDevPlugin(): Plugin {
     apply: (_config, env) => env.command === 'serve' && !process.env.VITEST,
     async configureServer(server) {
       const source = sourceFromEnv();
-      const { restaurants: restaurantsDir, contributors: contributorsFile } = DATABASES[source];
+      const { restaurants: restaurantsDir, contributors: contributorsFile, tags: tagsFile } = DATABASES[source];
       const includeDrafts = draftsFromEnv();
       // Private drafts are only read for `npm run dev:drafts`.
       const draftsDir = includeDrafts && source === 'content' ? DRAFTS_DIR : undefined;
       const watched = [restaurantsDir, ...(draftsDir ? [draftsDir] : [])];
-      const watchedFiles = [contributorsFile, ...(draftsDir ? [PRIVATE_CONTRIBUTORS] : [])];
+      const watchedFiles = [contributorsFile, tagsFile, ...(draftsDir ? [PRIVATE_CONTRIBUTORS, PRIVATE_TAGS] : [])];
       let running: Promise<void> | undefined;
       let queued = false;
 
@@ -37,6 +38,8 @@ export function contentDevPlugin(): Plugin {
           contributorsFile,
           draftsDir,
           privateContributorsFile: draftsDir ? PRIVATE_CONTRIBUTORS : undefined,
+          tagsFile,
+          privateTagsFile: draftsDir ? PRIVATE_TAGS : undefined,
           source,
           includeDrafts,
           base: BASE_PATH,

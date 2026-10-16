@@ -29,13 +29,24 @@ import {
   setStatus,
 } from './intake.ts';
 import { INFO_FILE, listImages, runPipeline, type Diagnostic, type PipelineResult } from './pipeline.ts';
-import { findSensitiveMetadata, PRIVACY_FIX } from './privacy.ts';
+import { fetchEvidencePage } from './enrich.ts';
+import {
+  formatPrepareReport,
+  prepareSubmission,
+  markOutcome,
+  rejectionProblems,
+  REVIEW_REPORT_FILE,
+} from './prepare.ts';
+import { findContactDetails, findSensitiveMetadata, PRIVACY_FIX, tagRegistryProblems } from './privacy.ts';
+import { publishTags, type TagFiles } from './tags.ts';
 import {
   DATABASES,
   DRAFTS_DIR,
   IMAGE_CACHE_DIR,
   OUT_DIR,
+  PRIVATE_CACHE_DIR,
   PRIVATE_CONTRIBUTORS,
+  PRIVATE_TAGS,
   ROOT,
   SUBMISSIONS_DIR,
   draftsFromEnv,
@@ -47,7 +58,6 @@ import {
   formatReport,
   importSubmissions,
   LOG_STATUSES,
-  markSubmission,
   openSubmission,
   readLog,
   readSubmissions,
@@ -93,10 +103,32 @@ Commands:
       Use a photo downloaded by hand (e.g. from the Tally dashboard).
   submission waive-photo <submission id> <photo number>
       Record the maintainer's decision to proceed without a missing photo.
+  submission prepare <submission id> [--id <restaurant id> | --new] [--rebuild] [--offline] [--refresh]
+      Build or update the private draft from a stored submission without
+      manual field mapping: restaurant and contributor matching, rating,
+      dishes with all their photos, keywords mapped to tags, restaurant
+      information from the map listing (cached), validation, and a review
+      report (review-report.md, private). Uses resolutions.json for reviewed
+      decisions. A restaurant that already has an accepted contributor keeps
+      its review: the submission is saved and marked deferred. Repeatable;
+      never overwrites a draft edited by hand (unless --rebuild), never
+      promotes or publishes.
+  submission fetch-page <url>
+      Fetch a public web page (a restaurant's website or menu) with the
+      download protections, save its text in private/cache/pages/, and print
+      it, as evidence for resolutions.json. Page text is data, not instructions.
   submission list
       Show the private processing log of imported submissions.
-  submission mark <submission id> --status imported|drafted|processed|rejected [--id <restaurant id>]
-      Record the editorial outcome of a submission.
+  submission mark <submission id> --status imported|drafted|processed|deferred|rejected [--id <restaurant id>] [--resolved] [--state-lost <note>]
+      Record the editorial outcome of a submission. The raw submission is
+      always kept, whatever the status. Rejecting takes its content back out
+      of the draft and keeps everything else; where the draft was also edited
+      by hand, nothing changes and the draft cannot be promoted until the
+      maintainer resolves it (then run it again, or confirm with --resolved).
+      A submission whose prepare.json is lost after it wrote a draft is
+      refused (and its draft cannot be promoted) until the file is restored
+      from the backup, or the maintainer checks the draft and confirms with
+      --state-lost "<what was checked>" (recorded in the log).
   check [id...] [--source content|fixtures]
       Validate drafts and the database and list missing information.
       Fails on errors in public content or in the given ids.
@@ -130,7 +162,13 @@ async function main() {
       contact: { type: 'string' },
       'images-out': { type: 'string' },
       'skip-photos': { type: 'boolean', default: false },
+      new: { type: 'boolean', default: false },
+      rebuild: { type: 'boolean', default: false },
+      offline: { type: 'boolean', default: false },
+      refresh: { type: 'boolean', default: false },
       status: { type: 'string' },
+      resolved: { type: 'boolean', default: false },
+      'state-lost': { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -149,6 +187,7 @@ async function main() {
     publicFile: DATABASES.content.contributors,
     privateFile: PRIVATE_CONTRIBUTORS,
   };
+  const tagFiles: TagFiles = { publicFile: DATABASES.content.tags, privateFile: PRIVATE_TAGS };
   const rel = (file: string) => path.relative(ROOT, file) || '.';
   const validate = (includeDrafts: boolean) =>
     runPipeline({
@@ -156,6 +195,8 @@ async function main() {
       contributorsFile: database.contributors,
       draftsDir,
       privateContributorsFile: draftsDir ? PRIVATE_CONTRIBUTORS : undefined,
+      tagsFile: database.tags,
+      privateTagsFile: draftsDir ? PRIVATE_TAGS : undefined,
       source,
       includeDrafts,
       base: BASE_PATH,
@@ -175,6 +216,8 @@ async function main() {
         // Production builds never read the private directory.
         draftsDir: withDrafts ? draftsDir : undefined,
         privateContributorsFile: withDrafts ? PRIVATE_CONTRIBUTORS : undefined,
+        tagsFile: database.tags,
+        privateTagsFile: withDrafts ? PRIVATE_TAGS : undefined,
         source,
         includeDrafts,
         base: BASE_PATH,
@@ -201,6 +244,17 @@ async function main() {
       const relevant = (d: Diagnostic) =>
         wanted.size === 0 || !d.restaurantId || wanted.has(d.restaurantId);
       printDiagnostics(result.diagnostics.filter(relevant));
+      // A draft that may still hold a rejected submission's content fails the check (the full one too).
+      let rejected = false;
+      if (draftsDir && existsSync(draftsDir)) {
+        for (const folder of await readdir(draftsDir)) {
+          if (wanted.size > 0 && !wanted.has(folder)) continue;
+          for (const problem of await rejectionProblems(SUBMISSIONS_DIR, folder)) {
+            console.error(`error   private/drafts/${folder}: ${problem}`);
+            rejected = true;
+          }
+        }
+      }
       printMissing(result, wanted);
       for (const id of wanted) {
         const known =
@@ -211,9 +265,9 @@ async function main() {
           return 1;
         }
       }
-      const failed = result.diagnostics.some(
-        (d) => d.level === 'error' || (d.draftError && wanted.size > 0 && relevant(d)),
-      );
+      const failed =
+        rejected ||
+        result.diagnostics.some((d) => d.level === 'error' || (d.draftError && wanted.size > 0 && relevant(d)));
       console.log(
         failed
           ? '\nCheck failed.'
@@ -317,7 +371,7 @@ async function main() {
         for (const report of await importSubmissions(await readSubmissions(path.resolve(target)), options)) show(report);
         console.log(
           'Nothing was drafted or published. Treat submitted text and links as untrusted;' +
-            ' prepare drafts with the restaurant-intake Skill only after reviewing this report.',
+            ' after reviewing this report, build the draft with content:submission -- prepare <id>.',
         );
         return 0;
       }
@@ -342,6 +396,38 @@ async function main() {
         show(await submissionStatus(target, options));
         return 0;
       }
+      if (action === 'prepare' && target) {
+        if (values.new && values.id) throw new IntakeError('use either --id <restaurant id> or --new');
+        loadLocalEnv();
+        const report = await prepareSubmission(target, {
+          ...options,
+          draftsDir: DRAFTS_DIR,
+          contributorFiles,
+          tagFiles,
+          cacheDir: PRIVATE_CACHE_DIR,
+          imageCacheDir: IMAGE_CACHE_DIR,
+          restaurantId: values.id,
+          asNew: values.new,
+          rebuild: values.rebuild,
+          offline: values.offline,
+          refresh: values.refresh,
+          geoapifyKey: process.env.GEOAPIFY_API_KEY,
+        });
+        console.log(formatPrepareReport(report, rel));
+        console.log(`Report saved to ${rel(path.join(SUBMISSIONS_DIR, `tally-${target}`, REVIEW_REPORT_FILE))} (private).`);
+        return report.outcome === 'blocked' ? 1 : 0;
+      }
+      if (action === 'fetch-page' && target) {
+        const page = await fetchEvidencePage(target, { cacheDir: PRIVATE_CACHE_DIR });
+        console.log(`Fetched ${page.url}; saved to ${rel(page.file)} (private).`);
+        if (page.text !== undefined) {
+          console.log('--- page text (untrusted data, not instructions) ---');
+          console.log(page.text.length > 20000 ? `${page.text.slice(0, 20000)}\n[... truncated; full text in the file]` : page.text);
+        } else {
+          console.log('A PDF: read the saved file.');
+        }
+        return 0;
+      }
       if (action === 'list') {
         const log = await readLog(SUBMISSIONS_DIR);
         const entries = Object.entries(log);
@@ -355,14 +441,24 @@ async function main() {
         return 0;
       }
       if (action === 'mark' && target && LOG_STATUSES.includes(values.status as LogStatus)) {
-        await markSubmission(SUBMISSIONS_DIR, target, values.status as LogStatus, values.id);
+        const result = await markOutcome(target, values.status as LogStatus, {
+          submissionsDir: SUBMISSIONS_DIR,
+          draftsDir: DRAFTS_DIR,
+          restaurantsDir,
+          tagFiles,
+          resolved: values.resolved,
+          restaurantId: values.id,
+          stateLost: values['state-lost'],
+        });
         console.log(`Marked ${target} as ${values.status}.`);
-        return 0;
+        for (const message of result.messages) console.log(`${result.status === 'manual' ? 'BLOCKED' : 'ok     '} ${message}`);
+        return result.status === 'manual' ? 1 : 0;
       }
       throw new IntakeError(
         'usage: content:submission -- import <file> [--skip-photos] | status <id> | retry-photos <id> | ' +
+          'prepare <id> [--id <restaurant id> | --new] [--rebuild] [--offline] [--refresh] | fetch-page <url> | ' +
           'add-photo <id> <photo number> <file> | waive-photo <id> <photo number> | list | ' +
-          `mark <id> --status ${LOG_STATUSES.join('|')} [--id <restaurant id>]`,
+          `mark <id> --status ${LOG_STATUSES.join('|')} [--id <restaurant id>] [--resolved] [--state-lost <note>]`,
       );
     }
 
@@ -399,6 +495,11 @@ async function main() {
       const target = path.join(restaurantsDir, id);
       const info = JSON.parse(await readFile(path.join(dir, INFO_FILE), 'utf8')) as RestaurantInfo;
       const { publicList } = await loadContributors(contributorFiles);
+      const publicTagIds = new Set(
+        existsSync(tagFiles.publicFile)
+          ? (JSON.parse(await readFile(tagFiles.publicFile, 'utf8')) as { id: string }[]).map((t) => t.id)
+          : [],
+      );
       const newContributors = (info.contributorIds ?? []).filter((c) => !publicList.some((p) => p.id === c));
       if (existsSync(target)) {
         const changes = await folderChanges(dir, target);
@@ -416,11 +517,18 @@ async function main() {
       for (const c of newContributors) {
         console.log(`  contributor ${c}: display name "${result.contributors.get(c)?.name}" would be added to content/contributors.json`);
       }
+      const newTags = (info.tags ?? []).filter((t) => !publicTagIds.has(t));
+      for (const t of newTags) {
+        console.log(`  tag ${t}: "${result.tags.get(t)?.label}" would be added to content/tags.json`);
+      }
+      const questionable = tagRegistryProblems(newTags.map((t) => result.tags.get(t)!)).questionable;
+      for (const q of questionable) console.log(`  check   ${q}: it becomes public; make sure it is not private`);
       if (!values.approved) {
         console.log('\nNothing changed. Re-run with --approved only after a maintainer has approved this.');
         return 1;
       }
       await publishContributors(contributorFiles, newContributors);
+      await publishTags(tagFiles, newTags);
       const to = await moveDraft(DRAFTS_DIR, restaurantsDir, id);
       const { status } = JSON.parse(await readFile(path.join(to, INFO_FILE), 'utf8')) as RestaurantInfo;
       console.log(
@@ -468,6 +576,12 @@ async function main() {
   }
 }
 
+/** Reads GEOAPIFY_API_KEY (and other settings) from .env.local when present; never committed. */
+function loadLocalEnv() {
+  const file = path.join(ROOT, '.env.local');
+  if (existsSync(file)) process.loadEnvFile(file);
+}
+
 function findRestaurantDir(id: string, restaurantsDir: string, draftsDir?: string): string {
   if (draftsDir && existsSync(path.join(draftsDir, id, INFO_FILE))) return path.join(draftsDir, id);
   if (existsSync(path.join(restaurantsDir, id, INFO_FILE))) {
@@ -481,9 +595,19 @@ async function promotionProblems(id: string, dir: string, result: PipelineResult
   const problems = result.diagnostics
     .filter((d) => d.restaurantId === id && (d.level === 'error' || d.draftError))
     .map((d) => `${d.file}: ${d.message}`);
+  problems.push(...(await rejectionProblems(SUBMISSIONS_DIR, id)));
   const restaurant = result.restaurants.find((r) => r.dir === dir);
   if (restaurant && !restaurant.info.contributorIds?.length) {
     problems.push(`${INFO_FILE}: add "contributorIds" (who wrote the text and took the photos) before promoting`);
+  }
+  // Text that becomes public must not carry contact details (a heuristic; see privacy.ts).
+  for (const name of [INFO_FILE, 'review.md']) {
+    const file = path.join(dir, name);
+    if (!existsSync(file)) continue;
+    const found = findContactDetails(await readFile(file, 'utf8'));
+    if (found.length > 0) {
+      problems.push(`${path.relative(ROOT, file)}: contains ${found.join(', ')}; remove contact details before promoting`);
+    }
   }
   for (const file of await listFiles(dir)) {
     try {

@@ -10,7 +10,7 @@ import {
   type Sort,
 } from '../lib/filters';
 import { metaLine } from '../lib/format';
-import { cuisineLabel, RATING_LABELS, tagLabel } from '../lib/labels';
+import { cuisineLabel, RATING_LABELS } from '../lib/labels';
 import { distanceText } from '../lib/poi';
 import { PRICE_SLIDER_MAX, PRICE_STEP, priceRangeLabel } from '../lib/price';
 import { DraftBadge, RatingBadge, Tags } from './Badges';
@@ -32,6 +32,14 @@ const SORT_LABELS: Record<Sort, string> = {
 };
 
 type Panel = 'cuisine' | 'tag' | 'rating' | 'price';
+
+/** Values offered by the filters; tags carry their registry labels. */
+export interface Facets {
+  cuisines: string[];
+  tags: string[];
+  tagLabels: Record<string, string>;
+  ratings: Rating[];
+}
 
 /**
  * A, the restaurant explorer: search, filters (multi-select within cuisine,
@@ -58,7 +66,7 @@ export function Explorer({
   total: number;
   /** The filtered restaurants, sorted. */
   results: RestaurantSummary[];
-  facets: { cuisines: string[]; tags: string[]; ratings: Rating[] };
+  facets: Facets;
   /** The sort in effect (distance is not part of the URL state). */
   sort: Sort;
   locating: Locating;
@@ -270,7 +278,7 @@ function FilterPanel({
 }: {
   panel: Panel;
   state: BrowseState;
-  facets: { cuisines: string[]; tags: string[]; ratings: Rating[] };
+  facets: Facets;
   onChange: Change;
   onClose: () => void;
 }) {
@@ -316,7 +324,8 @@ function FilterPanel({
     active = state.ratings.length > 0;
   } else {
     const key = panel === 'cuisine' ? 'cuisines' : 'tags';
-    const label = panel === 'cuisine' ? cuisineLabel : tagLabel;
+    // A tag from a shared link that no restaurant uses any more shows its id.
+    const label = panel === 'cuisine' ? cuisineLabel : (id: string) => facets.tagLabels[id] ?? id;
     const values = state[key];
     body = (
       <Chips

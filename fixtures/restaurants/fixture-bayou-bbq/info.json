@@ -11,12 +11,16 @@
   },
   "rating": 5,
   "pricePerPerson": 28,
-  "tags": ["group"],
+  "tags": ["group", "pet-friendly"],
   "dishes": [
     {
       "name": "烟熏牛胸（示例）",
       "verdict": 1,
-      "image": "images/02-brisket.jpg"
+      "images": [
+        "images/02-brisket.jpg",
+        "images/03-brisket-sliced.jpg",
+        "images/04-brisket-bark.jpg"
+      ]
     },
     {
       "name": "冰茶（示例）"

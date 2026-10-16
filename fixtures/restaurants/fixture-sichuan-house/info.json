@@ -17,7 +17,7 @@
       "name": "麻婆豆腐（示例）",
       "verdict": 1,
       "comment": "虚构点评：麻辣适中。",
-      "image": "images/02-mapo-tofu.jpg"
+      "images": ["images/02-mapo-tofu.jpg"]
     },
     {
       "name": "夫妻肺片（示例）",

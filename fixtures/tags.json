@@ -1,0 +1,23 @@
+[
+  { "id": "budget", "label": "实惠", "aliases": ["便宜", "性价比高", "平价", "cheap", "budget"] },
+  {
+    "id": "date",
+    "label": "适合约会",
+    "aliases": ["约会", "适合情侣", "适合情侣约会", "约会圣地", "date night"]
+  },
+  {
+    "id": "group",
+    "label": "适合聚餐",
+    "aliases": ["聚餐", "适合聚会", "多人聚餐", "适合多人", "group dinner"]
+  },
+  {
+    "id": "late-night",
+    "label": "营业到很晚",
+    "aliases": ["营业很晚", "夜宵", "深夜食堂", "宵夜", "late night"]
+  },
+  { "id": "quick", "label": "出餐快", "aliases": ["上菜快", "快", "quick"] },
+  { "id": "solo", "label": "适合一人食", "aliases": ["一人食", "适合一个人", "一个人吃", "solo"] },
+  { "id": "spicy", "label": "偏辣", "aliases": ["很辣", "辣", "spicy"] },
+  { "id": "study", "label": "适合学习", "aliases": ["可以学习", "适合自习", "自习", "study"] },
+  { "id": "pet-friendly", "label": "可带宠物（示例）", "aliases": ["适合带宠物", "宠物友好"] }
+]

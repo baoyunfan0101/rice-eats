@@ -20,6 +20,8 @@ export const HIDDEN_FIELDS = {
   poiId: 'poi_id',
   selectionMethod: 'selection_method',
   source: 'source',
+  /** The contributor's own keywords, as a JSON array of strings (see serializeKeywords). */
+  keywords: 'tags_raw',
 } as const;
 
 /** Where a submission was started; sent as the `source` hidden field. */
@@ -49,6 +51,59 @@ export interface SubmissionContext {
   address?: string;
   poiProvider?: string;
   poiId?: string;
+  /** Free-form keywords the contributor typed (not tag ids); sent as tags_raw. */
+  keywords?: string[];
+}
+
+/**
+ * Limits of the keyword input. Keywords are free text (not chosen from a
+ * list); intake maps them to the tag registry.
+ */
+export const KEYWORD_LIMITS = { count: 10, length: 20 } as const;
+
+/** Trims and collapses spaces; the text is otherwise kept exactly as typed. */
+export const cleanKeyword = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+/** Key for "the same keyword": width, case, and spacing do not make a keyword new. */
+export const keywordKey = (text: string) => cleanKeyword(text.normalize('NFKC')).toLowerCase();
+
+/**
+ * Serializes keywords for the tags_raw hidden field: a JSON array, so commas,
+ * quotes, spaces, and any language survive the URL and Tally's CSV export.
+ * Empty when there are none (the field is then left out).
+ */
+export function serializeKeywords(keywords: readonly string[] | undefined): string {
+  const list = (keywords ?? []).map(cleanKeyword).filter(Boolean);
+  return list.length > 0 ? JSON.stringify(list) : '';
+}
+
+/**
+ * Reads a tags_raw value back into keywords. Accepts the JSON array the
+ * website writes and, for hand transcriptions, a list separated by commas,
+ * "，", "、", or new lines. Missing or empty (older submissions) gives [].
+ * Never throws; duplicates are dropped, and order is kept.
+ */
+export function parseKeywords(value: string | undefined): string[] {
+  const text = value?.trim();
+  if (!text) return [];
+  let items: unknown[] | undefined;
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (Array.isArray(parsed)) items = parsed;
+    } catch {
+      // Not JSON after all: read it as a list below.
+    }
+  }
+  const list = (items ?? text.split(/[,，、\n]/)).filter((v): v is string => typeof v === 'string');
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of list.map(cleanKeyword)) {
+    if (!item || seen.has(keywordKey(item))) continue;
+    seen.add(keywordKey(item));
+    result.push(item);
+  }
+  return result;
 }
 
 /** True for coordinates that are finite and in range. */
@@ -236,6 +291,7 @@ export function tallyUrls(formId: string, context: SubmissionContext): TallyUrls
   set(HIDDEN_FIELDS.poiId, context.poiId);
   set(HIDDEN_FIELDS.selectionMethod, context.selectionMethod);
   set(HIDDEN_FIELDS.source, context.source);
+  set(HIDDEN_FIELDS.keywords, serializeKeywords(context.keywords));
   const id = encodeURIComponent(formId);
   const embedParams = new URLSearchParams({
     alignLeft: '1',

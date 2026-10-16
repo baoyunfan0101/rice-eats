@@ -14,7 +14,13 @@ import { copyFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { ContentIndex, RestaurantDetail } from '../shared/content/model.ts';
 import { BASE_PATH, GENERATED_DIR } from '../site.config.ts';
-import { DRAFTS_DIR, PRIVATE_CONTRIBUTORS, RESTAURANT_DIRS, ROOT } from './content/paths.ts';
+import {
+  DRAFTS_DIR,
+  PRIVATE_CONTRIBUTORS,
+  RESTAURANT_DIRS,
+  ROOT,
+  SUBMISSIONS_DIR,
+} from './content/paths.ts';
 import { findSensitiveMetadata, sniffImageFormat } from './content/privacy.ts';
 
 /** Files in public/ that are deployed as-is. Add new static files here deliberately. */
@@ -33,6 +39,8 @@ export interface PostbuildOptions {
   draftsDir?: string;
   /** Private contributor file whose contact details must never appear in the output. */
   privateContributorsFile?: string;
+  /** Raw submissions (private/submissions) whose emails and photo links must never appear in the output. */
+  submissionsDir?: string;
   base?: string;
   /** Allow fixture data (end-to-end test builds only; never deployed). */
   allowFixtures?: boolean;
@@ -170,13 +178,16 @@ export async function postbuild(distDir: string, options: PostbuildOptions): Pro
   }
 
   // 6. Private contact details must not appear in any deployed text file.
-  const secrets = await privateContactDetails(options.privateContributorsFile);
+  const secrets = [
+    ...(await privateContactDetails(options.privateContributorsFile)),
+    ...(await submissionSecrets(options.submissionsDir)),
+  ];
   if (secrets.length > 0) {
     for (const file of files) {
       if (!/\.(html|js|css|json|svg|txt)$/.test(file)) continue;
       const text = (await readFile(path.join(distDir, file), 'utf8')).toLowerCase();
       if (secrets.some((secret) => text.includes(secret))) {
-        problems.push(`${file} contains a private contributor contact detail`);
+        problems.push(`${file} contains a private contributor contact detail or submission link`);
       }
     }
   }
@@ -207,6 +218,34 @@ async function privateContactDetails(file: string | undefined): Promise<string[]
     .flatMap((r) => [r.email, r.contact])
     .filter((v): v is string => typeof v === 'string' && v.trim().length >= 4)
     .map((v) => v.trim().toLowerCase());
+}
+
+/** Contact emails and photo-link paths of stored submissions (raw Tally data). */
+async function submissionSecrets(dir: string | undefined): Promise<string[]> {
+  if (!dir || !existsSync(dir)) return [];
+  const secrets: string[] = [];
+  for (const folder of await readdir(dir)) {
+    const file = path.join(dir, folder, 'submission.json');
+    if (!existsSync(file)) continue;
+    try {
+      const s = JSON.parse(await readFile(file, 'utf8')) as {
+        email?: unknown;
+        photoUrls?: unknown[];
+        dishes?: { photoUrls?: unknown[] }[];
+      };
+      const links = [...(s.photoUrls ?? []), ...(s.dishes ?? []).flatMap((d) => d.photoUrls ?? [])];
+      for (const value of [
+        s.email,
+        ...links.map((l) => (typeof l === 'string' ? l.split('?')[0] : undefined)),
+      ]) {
+        if (typeof value === 'string' && value.trim().length >= 6)
+          secrets.push(value.trim().toLowerCase());
+      }
+    } catch {
+      // Unreadable raw files are reported by content:submission.
+    }
+  }
+  return secrets;
 }
 
 async function readInfos(dir: string | undefined): Promise<{ id?: unknown; status?: unknown }[]> {
@@ -248,6 +287,7 @@ if (import.meta.main) {
     restaurantsDir: RESTAURANT_DIRS[e2e ? 'fixtures' : 'content'],
     draftsDir: e2e ? undefined : DRAFTS_DIR,
     privateContributorsFile: PRIVATE_CONTRIBUTORS,
+    submissionsDir: SUBMISSIONS_DIR,
     allowFixtures: e2e,
   });
   if (problems.length > 0) {

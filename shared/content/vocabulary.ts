@@ -1,7 +1,10 @@
 // Controlled vocabularies of the canonical database: the only list of valid
 // keys. Restaurant data stores these language-independent keys; display labels
-// belong to the website (src/lib/labels.ts). To add a cuisine or tag, add its
-// key here and its label there (TypeScript reports a missing label).
+// belong to the website (src/lib/labels.ts). To add a cuisine, add its key here
+// and its label there (TypeScript reports a missing label).
+//
+// Tags are not a fixed list: they live in the tag registry (content/tags.json,
+// schema in schema.ts), which grows through reviewed submissions.
 
 export const CUISINE_IDS = [
   'american',
@@ -23,19 +26,6 @@ export const CUISINE_IDS = [
   'vietnamese',
 ] as const;
 export type CuisineId = (typeof CUISINE_IDS)[number];
-
-/** Scenario tags ("good for ..."). */
-export const TAG_IDS = [
-  'budget',
-  'date',
-  'group',
-  'late-night',
-  'quick',
-  'solo',
-  'spicy',
-  'study',
-] as const;
-export type TagId = (typeof TAG_IDS)[number];
 
 /** Personal rating: an integer from 5 (highest) to 1 (lowest). */
 export const RATINGS = [5, 4, 3, 2, 1] as const;

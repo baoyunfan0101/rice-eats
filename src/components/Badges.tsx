@@ -1,5 +1,5 @@
-import type { Rating, Verdict } from '../../shared/content/model';
-import { tagLabel, VERDICT_LABELS } from '../lib/labels';
+import type { Rating, Tag, Verdict } from '../../shared/content/model';
+import { VERDICT_LABELS } from '../lib/labels';
 import { RATING_HINT, RATING_LABELS, RATING_STYLES } from '../lib/format';
 
 export function RatingBadge({ rating, size = 'sm' }: { rating?: Rating; size?: 'sm' | 'lg' }) {
@@ -31,16 +31,16 @@ export function DraftBadge() {
   );
 }
 
-export function Tags({ tags }: { tags: string[] }) {
+export function Tags({ tags }: { tags: Tag[] }) {
   if (tags.length === 0) return null;
   return (
     <ul className="flex flex-wrap gap-1.5" aria-label="标签">
       {tags.map((tag) => (
         <li
-          key={tag}
+          key={tag.id}
           className="px-corners bg-sand px-2 py-0.5 text-xs leading-4 font-semibold text-muted"
         >
-          {tagLabel(tag)}
+          {tag.label}
         </li>
       ))}
     </ul>

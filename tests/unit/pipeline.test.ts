@@ -163,7 +163,7 @@ describe('content pipeline', () => {
       name: '',
       summary: 'removed field',
       cuisines: ['越南菜'],
-      tags: ['not-a-tag'],
+      tags: ['Not A Tag'],
     });
     const outDir = path.join(await tempDir(), 'out');
     const result = await pipeline(root, { outDir });
@@ -173,7 +173,7 @@ describe('content pipeline', () => {
     expect(messages).toMatch(/name: must not be empty/);
     expect(messages).toMatch(/Unrecognized key: "summary"/);
     expect(messages).toMatch(/cuisines.0: unknown cuisine; use one of .*vietnamese/);
-    expect(messages).toMatch(/tags.0: unknown tag; .* or add it to shared\/content\/vocabulary.ts/);
+    expect(messages).toMatch(/tags.0: must be a lowercase slug/);
     expect(existsSync(outDir)).toBe(false);
   });
 
@@ -199,7 +199,7 @@ describe('content pipeline', () => {
       id: 'wip',
       status: 'draft',
       name: 'WIP',
-      dishes: [{ name: 'x', image: 'images/01-missing.jpg' }],
+      dishes: [{ name: 'x', images: ['images/01-missing.jpg'] }],
     });
     const result = await pipeline(root);
     expect(result.failed).toBe(false);
@@ -233,19 +233,21 @@ describe('content pipeline', () => {
     await writeRestaurant(
       root,
       'a',
-      validInfo('a', { dishes: [{ name: 'x', image: 'images/01-nope.jpg' }] }),
+      validInfo('a', { dishes: [{ name: 'x', images: ['images/01-nope.jpg'] }] }),
     );
     await writeRestaurant(
       root,
       'b',
-      validInfo('b', { dishes: [{ name: 'x', image: '../a/info.json' }] }),
+      validInfo('b', { dishes: [{ name: 'x', images: ['../a/info.json'] }] }),
     );
     await writeRestaurant(root, 'c', validInfo('c'), {
       'review.md': '![x](https://example.com/x.jpg)\n\n![y](images/02-gone.png)\n',
     });
     const messages = errors(await pipeline(root)).join('\n');
-    expect(messages).toMatch(/dishes.0.image: "images\/01-nope.jpg" is not in images\//);
-    expect(messages).toMatch(/dishes.0.image: must be a file in the restaurant's images\/ folder/);
+    expect(messages).toMatch(/dishes.0.images.0: "images\/01-nope.jpg" is not in images\//);
+    expect(messages).toMatch(
+      /dishes.0.images.0: must be a file in the restaurant's images\/ folder/,
+    );
     expect(messages).toMatch(/must be a local file in images\/, not a URL/);
     expect(messages).toMatch(/image "images\/02-gone.png" is not in images\//);
   });
@@ -306,7 +308,10 @@ describe('content pipeline', () => {
       root,
       'r',
       validInfo('r', {
-        dishes: [{ name: 'Ribs', verdict: 1, image: 'images/03-ribs.jpg' }, { name: 'Tea' }],
+        dishes: [
+          { name: 'Ribs', verdict: 1, images: ['images/03-ribs.jpg', 'images/02-room.jpg'] },
+          { name: 'Tea' },
+        ],
       }),
       {
         'review.md':
@@ -316,7 +321,8 @@ describe('content pipeline', () => {
     for (const name of ['01-front.jpg', '02-room.jpg', '03-ribs.jpg'])
       await makeImage(path.join(dir, 'images', name));
     const detail = (await pipeline(root)).details[0]!;
-    expect(detail.dishes.map((d) => d.imageIndex)).toEqual([2, undefined]);
+    expect(detail.dishes.map((d) => d.imageIndexes)).toEqual([[2, 1], []]);
+    expect(detail.images.map((i) => i.alt)).toEqual(['Test r', 'Ribs（2/2）', 'Ribs（1/2）']);
     expect(detail.reviewImageIndexes).toEqual([2, 0]); // review order, each photo once
     const html = detail.reviewHtml;
     expect(html.indexOf('03-ribs')).toBeLessThan(html.indexOf('Middle.'));
@@ -325,7 +331,44 @@ describe('content pipeline', () => {
     expect(html.match(/03-ribs-[0-9a-f]{8}-\d+\.webp"/g)?.length).toBeGreaterThanOrEqual(2); // explicit repeat kept
   });
 
-  it('stores only language-independent keys in generated data', async () => {
+  it('checks tags against the registry: public restaurants only use public tags', async () => {
+    const root = await tempDir();
+    await writeRestaurant(root, 'a', validInfo('a', { tags: ['date', 'pet-friendly'] }));
+    expect(errors(await pipeline(root)).join('\n')).toMatch(
+      /tags: "pet-friendly" is not in the tag registry/,
+    );
+    const drafts = await tempDir();
+    await writeRestaurant(drafts, 'b', validInfo('b', { status: 'draft', tags: ['pet-friendly'] }));
+    const privateTagsFile = path.join(await tempDir(), 'tags.json');
+    await writeFile(
+      privateTagsFile,
+      JSON.stringify({ proposed: [{ id: 'pet-friendly', label: '可带宠物' }], aliases: {} }),
+    );
+    const withProposal = await pipeline(root, {
+      draftsDir: drafts,
+      privateTagsFile,
+      includeDrafts: true,
+    });
+    // A draft may use a proposed tag; the public restaurant still may not.
+    expect(withProposal.diagnostics.filter((d) => d.restaurantId === 'b')).toEqual([]);
+    expect(errors(withProposal).join('\n')).toMatch(
+      /tags: "pet-friendly" is only a proposed tag \(private\/tags.json\); promote the restaurant/,
+    );
+  });
+
+  it('explains the move from a single dish image to "images"', async () => {
+    const root = await tempDir();
+    await writeRestaurant(
+      root,
+      'a',
+      validInfo('a', { dishes: [{ name: 'x', image: 'images/01-a.jpg' }] }),
+    );
+    expect(errors(await pipeline(root)).join('\n')).toMatch(
+      /Unrecognized key: "image".*a dish lists its photos as "images"/,
+    );
+  });
+
+  it('stores language-independent keys, and tags with their registry labels', async () => {
     const root = await tempDir();
     await writeRestaurant(
       root,
@@ -340,9 +383,9 @@ describe('content pipeline', () => {
     const json = JSON.stringify((await pipeline(root)).details);
     expect(json).toContain('"rating":2');
     expect(json).toContain('"cuisines":["sichuan"]');
-    expect(json).toContain('"tags":["date"]');
+    expect(json).toContain('"tags":[{"id":"date","label":"适合约会"}]');
     expect(json).toContain('"verdict":-1');
-    expect(json).not.toMatch(/NPC|川菜|约会|避雷/);
+    expect(json).not.toMatch(/NPC|川菜|避雷/);
   });
 
   it('resolves contributors by id and requires them to publish', async () => {
