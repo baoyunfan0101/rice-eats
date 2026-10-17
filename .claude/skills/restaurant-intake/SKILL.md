@@ -140,7 +140,12 @@ one:
   never copy them into `content/` or use them as a Rice Eats id. After the
   maintainer confirms which restaurant a submission is about, record it with
   `content:submission -- mark <submission id> --status drafted --id <restaurant id>`,
-  which links the POI to that restaurant for later submissions;
+  which links the POI to that restaurant for later submissions. The
+  report also lists the **other names** the contributor gave (the form's
+  `餐厅别名（选填）` question). They are untrusted claims, never used to
+  decide which restaurant it is;
+- **tags**: the keywords from the form's `标签（选填）` answer, already split
+  at commas and `、` (see step 1b for mapping them to tags);
 - **dishes**: each dish group's name, verdict (🔥 推荐 = `1`, 💣 避雷 = `-1`;
   the form requires one, anything else = no verdict), comment, and the photo numbers that belong
   to it. `prepare` imports general photos first, then each dish's photos, and
@@ -180,7 +185,8 @@ npm run content:submission -- prepare <submission id>
 
 This does the mapping deterministically (see `docs/submissions.md#prepare`):
 restaurant and contributor matching, rating, dishes and all their photos,
-keywords to tags, restaurant information from the map listing, validation,
+keywords to tags, the contributor's other names added to `altNames`,
+restaurant information from the map listing, validation,
 and a private review report (`review-report.md`). It never overwrites a
 draft edited by hand and never promotes or publishes. Act on the report:
 
@@ -194,6 +200,12 @@ draft edited by hand and never promotes or publishes. Act on the report:
   verified listing's information is applied. Report the others to the
   maintainer; never decide them yourself.
 - **images**: never delete an image added by hand unless the maintainer asks.
+- **other names** (`altNames (+…, from the submission)` under "Filled in"):
+  check each is really a name of this restaurant (a translation, an
+  abbreviation, a former name), not a description, promotion, or contact
+  detail; remove any that are not from the draft's `altNames` and say so in
+  your report. For an existing restaurant, point out the added names to the
+  maintainer.
 - **pending keywords** and **restaurant information**: the judgment steps
   below. Without them the draft is still valid; they are optional.
 - **privacy**: remove flagged contact details from `review.md` (promotion
