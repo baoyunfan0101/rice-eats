@@ -20,6 +20,8 @@ export interface RestaurantCandidate {
   location: LatLngValue;
   /** Distance in meters from the search center, when known. */
   distance?: number;
+  /** Set for a restaurant already on Rice Eats (provider "existing"): its id. */
+  restaurantId?: string;
 }
 
 /** A map area in degrees. */

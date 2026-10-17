@@ -66,6 +66,24 @@ describe('normalizing results', () => {
     ]);
     expect(normalizeGeoapifyGeocode({})).toEqual([]);
   });
+
+  it('marks only clear places to eat as restaurants, with their POI', () => {
+    const result = (extra: object) =>
+      normalizeGeoapifyGeocode({
+        results: [{ place_id: 'p', name: 'Pho Garden', lat: 29.7, lon: -95.5, ...extra }],
+      })[0]!.restaurant;
+    expect(result({ result_type: 'amenity', category: 'catering.restaurant' })).toEqual({
+      provider: 'geoapify',
+      id: 'p',
+    });
+    expect(
+      result({ result_type: 'amenity', datasource: { raw: { amenity: 'fast_food' } } }),
+    ).toEqual({ provider: 'geoapify', id: 'p' });
+    // A shop, a building, or a street is a place, even with a food-sounding name.
+    expect(result({ result_type: 'amenity', category: 'commercial.supermarket' })).toBeUndefined();
+    expect(result({ result_type: 'building', category: 'catering.restaurant' })).toBeUndefined();
+    expect(result({ result_type: 'street' })).toBeUndefined();
+  });
 });
 
 describe('geocode', () => {

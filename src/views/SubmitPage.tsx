@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from '../components/Link';
 import { StepIndicator } from '../components/StepIndicator';
-import type { SearchArea } from '../lib/areas';
 import { Loading, Message } from '../components/States';
 import { useContentIndex } from '../lib/content';
 import { browseHref, restaurantHref } from '../lib/router';
@@ -76,7 +75,6 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
   const [selection, setSelection] = useState<Selection | undefined>(initial);
   // Where the map was, so going back to step 1 keeps the contributor's place.
   const [mapView, setMapView] = useState<MapView>();
-  const [searchArea, setSearchArea] = useState<SearchArea>();
   const heading = useRef<HTMLHeadingElement>(null);
   const first = useRef(true);
 
@@ -138,11 +136,9 @@ function SubmitFlow({ formId, initial }: { formId: string; initial?: Selection }
         <RestaurantSelector
           selection={selection}
           startView={mapView}
-          startArea={searchArea}
           onSelect={setSelection}
           onNext={() => setStep('form')}
           onViewChange={setMapView}
-          onAreaChange={setSearchArea}
         />
       )}
     </div>

@@ -42,42 +42,48 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   "在新窗口打开投稿表单" (the Tally-hosted form with the same hidden fields).
   Neither appears while the form works. Choosing another restaurant starts a
   fresh form and check.
-- **Search area** (`src/views/AreaPicker.tsx`, `src/lib/areas.ts`,
-  `src/lib/geocode.ts`): step 1 starts with "选择查找区域" (A), then the
-  restaurant is chosen (B) on the same page, each in its own box under the
-  page title and the step ("投稿：分享你的用餐体验", then "第一步 · 选择餐厅").
-  One group of controls moves the map: "使用当前位置" first and highlighted
-  (the browser asks only after that click; a denial leaves the other ways),
-  then "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in
-  southwest Houston, between Dun Huang Plaza and Hong Kong City Mall; static
-  coordinates, no request). "或者：输入地址或地点" is a fallback that opens
-  an address, landmark, or place search when clicked (searched only when
-  submitted). A single
-  match moves the map at once; several are listed by name and address to
-  choose from; a failed search offers "重试", and the presets, the current
-  location, the map, and manual entry keep working. The last request wins:
-  each action (a preset, "使用当前位置", a search, choosing a result,
-  choosing a restaurant, placing a manual marker, or dragging or zooming the
-  map by hand) cancels the pending search and makes any older answer, including a late
-  device location or a late error, change nothing, so the map always ends
-  where the contributor last asked for. Hand moves are recognized
-  from their input (`src/views/PickerMap.tsx`: Leaflet's `dragstart`, the
-  wheel, a double click, a two-finger touch, the zoom buttons, and the map's
-  keys), never from `moveend`/`zoomend`, which programmatic `setView` calls
-  (a preset, a search result, a selection, restoring the view) also fire;
-  the area controls and the map share one `LocateIntent`
-  (`src/lib/locateIntent.ts`). "当前查找区域：…" names the area while the map is within about
-  1.2 km of its center, and "地图当前位置附近" once the contributor has moved
-  away. Choosing an area only moves the map: it never selects a restaurant,
-  and the selected restaurant and the area are separate (both are kept when
-  coming back from step 2).
+- **Finding the restaurant** (`src/views/MapSearch.tsx`, `src/lib/areas.ts`,
+  `src/lib/geocode.ts`): step 1 is one box, "选择餐厅", under the page title
+  and the step. At its top are one search box ("搜索餐厅名称或地址") and the
+  map shortcuts: "使用当前位置" first and highlighted (the browser asks only
+  after that click, never on load; a denial leaves the other ways), then
+  "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in southwest
+  Houston, between Dun Huang Plaza and Hong Kong City Mall; static
+  coordinates, no request), and "上次的位置" when this browser remembers
+  where the contributor last went on to the form (the map view, rounded to
+  about 100 m, in `localStorage` only; never sent anywhere). Typing narrows
+  the pins and the list to the names that match, in view (no request).
+  "搜索" (or Enter) also searches beyond the map and shows two groups:
+  **餐厅**, the matching restaurants on Rice Eats (anywhere) and places to
+  eat found by Geoapify Geocoding (a result of type `amenity` in a
+  `catering` category or with a food amenity), chosen directly with one
+  click; and **地址或地点**, every other result, which only moves the map so
+  the contributor picks from the pins there. A single place moves the map at
+  once; a failed search offers "重试", and the shortcuts, the map, and
+  manual entry keep working. Without a Geoapify key, only restaurants on
+  Rice Eats are found by name. The last request wins: each action (a
+  shortcut, "使用当前位置", a search, choosing a result, choosing a
+  restaurant, placing a manual marker, or dragging or zooming the map by
+  hand) cancels the pending search and makes any older answer, including a
+  late device location or a late error, change nothing, so the map always
+  ends where the contributor last asked for. Hand moves are recognized from
+  their input (`src/views/PickerMap.tsx`: Leaflet's `dragstart`, the wheel, a
+  double click, a two-finger touch, the zoom buttons, and the map's keys),
+  never from `moveend`/`zoomend`, which programmatic `setView` calls (a
+  shortcut, a search result, a selection, restoring the view) also fire; the
+  search, the shortcuts, and the map share one `LocateIntent`
+  (`src/lib/locateIntent.ts`). Moving the map never selects a restaurant.
 - **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
   `src/views/PickerMap.tsx`, `src/lib/poi.ts`) is map-first. The map opens on
-  Rice University and shows the restaurants in view (restaurants, fast food,
-  cafes, food courts from the
-  [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)) as pins
-  labelled with the restaurant name; clicking a pin (or its name) selects that
-  restaurant. Labels (`src/lib/labelLayout.ts`) go on the right of a pin, or
+  Rice University and shows the restaurants in view as pins labelled with the
+  restaurant name: restaurants already on Rice Eats as green pins ("已收录";
+  choosing one is like starting from its restaurant page:
+  `selection_method=existing` with its `restaurant_id`), and restaurants,
+  fast food, cafes, and food courts from the
+  [Geoapify Places API](https://apidocs.geoapify.com/docs/places/) as the
+  usual pins (a place within 100 m of a listed restaurant with the same name
+  or other name shows once, as the listed one). Clicking a pin (or its name)
+  selects that restaurant. Labels (`src/lib/labelLayout.ts`) go on the right of a pin, or
   on the left near the right edge, so they stay inside the map; they never
   overlap each other or cover another pin. The selected restaurant's name is
   always shown (truncated only if neither side has room); the others are
@@ -106,19 +112,19 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
     and "重试" (or moving the map) loads only the failed tiles again (failures
     are not cached). When nothing loads, the previous pins stay with an error
     and "重试". Results for an area the map has already left are ignored.
-  - "或者：在当前区域搜索餐厅" is the fallback to picking on the map, shown
-    the same way as the address search. It narrows the pins and the list to
-    the restaurants in view whose name contains the text (no request), so the
-    list is always the map's area AND the name; it opens by itself while
-    searching. The selected restaurant with "下一步：填写点评 →" closes the
-    page, below the boxes and the data-source line. If the place is missing,
-    "手动添加餐厅" takes the 餐厅名称 and a map marker (drawn like a selected
-    restaurant pin, with the name beside it);
-    a name alone ("我不确定具体位置") is allowed and is marked for location
-    verification. Manual entry has the same area controls but no restaurant
-    pins. The area is never the restaurant's location: only the
-    contributor's marker is, or a searched place after "用这个地点作为餐厅位置"
-    (whose address is then sent; there is no separate address field).
+  - While a name is typed, the list opens by itself and shows the
+    restaurants in view whose name (or other name) contains the text, so the
+    list is always the map's area AND the name. Choosing a restaurant clears
+    the search. The selected restaurant with "下一步：填写点评 →" closes the
+    page, below the box and the data-source line. If the place is missing,
+    "找不到？手动添加餐厅" takes the 餐厅名称 and a map marker (drawn like a
+    selected restaurant pin, with the name beside it); a name alone
+    ("我不确定具体位置") is allowed and is marked for location verification.
+    Manual entry has the same search box (addresses and places only) and
+    shortcuts, but no restaurant pins. A searched or shortcut location is
+    never the restaurant's location: only the contributor's marker is, or a
+    searched place after "用这个地点作为餐厅位置" (whose address is then sent;
+    there is no separate address field).
   - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
     (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
     the rest of the session), or a Geoapify request fails, the search goes to
@@ -756,9 +762,12 @@ checked by hand once the form exists:
    a text-only test response.
 2. Use "使用当前位置" (allow the permission) and check that the map moves and
    the pins update; pan the map elsewhere and check again. Search a
-   restaurant by name and submit a photo-only test response. Then deny the
-   location permission once and check that the message appears and the map
-   still works.
+   restaurant by name with "搜索" (one beyond the map), choose it from the
+   "餐厅" results, and submit a photo-only test response. Search an address
+   and check that it only moves the map. Then deny the location permission
+   once and check that the message appears and the map still works. Reload
+   the page and check that "上次的位置" returns to where the last restaurant
+   was chosen.
 3. Add a restaurant by hand (name and marker) and submit a test response.
 4. On a restaurant page, use "补充点评或照片" and submit a test response.
 5. In Tally, confirm the responses recorded `restaurant_name`,

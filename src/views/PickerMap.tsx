@@ -20,11 +20,16 @@ const escapeHtml = (text: string) =>
  * (names come from POI data: escaped). The anchor is the tip of the pin
  * (src/lib/pin.ts).
  */
-function poiIcon(name: string, selected: boolean, label?: LabelPlacement): L.DivIcon {
+function poiIcon(
+  name: string,
+  selected: boolean,
+  label?: LabelPlacement,
+  listed = false,
+): L.DivIcon {
   const html = label
     ? `<span class="poi-label${label.side === 'left' ? ' is-left' : ''}" style="max-width:${label.maxWidth}px;margin-top:${label.dy}px">${escapeHtml(name)}</span>`
     : '';
-  return L.divIcon(pinIconOptions(selected, html));
+  return L.divIcon(pinIconOptions(selected, html, listed));
 }
 
 export interface MapArea {
@@ -157,10 +162,10 @@ function CandidateMarkers({
       <Marker
         key={c.key}
         position={[c.location.lat, c.location.lng]}
-        icon={poiIcon(c.name, selected, label)}
+        icon={poiIcon(c.name, selected, label, !!c.restaurantId)}
         zIndexOffset={selected ? 1000 : label ? 100 : 0}
-        title={c.name}
-        alt={c.name}
+        title={c.restaurantId ? `${c.name}（已收录）` : c.name}
+        alt={c.restaurantId ? `${c.name}（已收录）` : c.name}
         eventHandlers={{
           click: () => onSelect?.(c),
           keypress: (e) => {
