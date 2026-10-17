@@ -51,19 +51,19 @@ export interface SubmissionContext {
   poiId?: string;
 }
 
-/** Characters that separate keywords in the form's keyword answer (also English commas and new lines). */
-export const KEYWORD_SEPARATORS = /[,，、;；\n]/;
+/** Characters that separate items in a list answer (also English commas and new lines). */
+export const LIST_SEPARATORS = /[,，、;；\n]/;
 
 /**
- * Reads the answer to the form's keyword question into keywords: separated
- * by commas ("，" or ","), "、", semicolons, or new lines; spaces inside a
- * keyword are kept ("date night"). Duplicates (ignoring width, case, and
- * spacing) are dropped and the order is kept. No answer gives [].
+ * Reads a list answer (the form's tags and restaurant aliases): items
+ * separated by commas ("，" or ","), "、", semicolons, or new lines; spaces
+ * inside an item are kept ("date night"). Duplicates (ignoring width, case,
+ * and spacing) are dropped and the order is kept. No answer gives [].
  */
-export function parseKeywords(value: string | undefined): string[] {
+export function parseList(value: string | undefined): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
-  for (const item of (value ?? '').split(KEYWORD_SEPARATORS)) {
+  for (const item of (value ?? '').split(LIST_SEPARATORS)) {
     const keyword = item.replace(/\s+/g, ' ').trim();
     const key = keyword.normalize('NFKC').toLowerCase();
     if (!keyword || seen.has(key)) continue;
@@ -105,8 +105,10 @@ export function contextProblem(context: SubmissionContext): string | undefined {
  */
 export const TALLY_QUESTIONS = {
   review: ['你的点评', 'review'],
-  /** Optional short text: keywords separated by commas or "、" (see parseKeywords). */
-  keywords: ['关键词', 'keywords'],
+  /** Optional short text "标签（选填）": keywords separated by commas or "、" (see parseList). */
+  keywords: ['标签', 'tags'],
+  /** Optional short text "餐厅别名（选填）": other names of the restaurant, separated like tags. */
+  altNames: ['餐厅别名', 'restaurant aliases'],
   photos: ['照片', 'photos'],
   rating: ['总体评级', 'overall rating'],
   displayName: ['署名', 'display name'],

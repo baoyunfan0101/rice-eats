@@ -22,7 +22,7 @@ import {
   SELECTION_METHODS,
   type SelectionMethod,
   type LatLngValue,
-  parseKeywords,
+  parseList,
   TALLY_CONSENT_OPTION,
   TALLY_DISH_GROUPS,
   TALLY_MAX_DISH_PHOTOS,
@@ -50,6 +50,8 @@ export const submissionSchema = z
     restaurantId: z.string().optional(),
     /** The selected or manually entered restaurant name (hidden field). */
     restaurantName: z.string().optional(),
+    /** Other names of the restaurant the contributor gave (the form's alias question). */
+    restaurantAltNames: z.array(z.string()).default([]),
     restaurantAddress: z.string().optional(),
     /** The explicitly selected restaurant location, only when the coordinates are valid. */
     restaurantLocation: z.object({ lat: z.number(), lng: z.number() }).strict().optional(),
@@ -80,7 +82,7 @@ export const submissionSchema = z
       .default([]),
     /**
      * The contributor's own keywords (the form's keyword question, split by
-     * parseKeywords), as typed. Mapped to tags by prepare.ts.
+     * parseList), as typed. Mapped to tags by prepare.ts.
      */
     keywords: z.array(z.string()).default([]),
     displayName: z.string().optional(),
@@ -169,6 +171,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     selectionMethod: exact(HIDDEN_FIELDS.selectionMethod),
     source: exact(HIDDEN_FIELDS.source),
     keywords: first(TALLY_QUESTIONS.keywords),
+    altNames: first(TALLY_QUESTIONS.altNames),
     submittedAt: exact('Submitted at'),
   };
 
@@ -208,6 +211,7 @@ export function submissionsFromCsv(text: string): Submission[] {
       source: value(picked.source),
       restaurantId: value(picked.restaurantId),
       restaurantName: value(picked.restaurantName),
+      restaurantAltNames: parseList(value(picked.altNames)),
       restaurantAddress: value(picked.address),
       ...parseLocation(value(picked.lat), value(picked.lng)),
       ...(value(picked.poiProvider) && value(picked.poiId)
@@ -218,7 +222,7 @@ export function submissionsFromCsv(text: string): Submission[] {
       ratingAnswer: value(picked.rating),
       photoUrls: linksIn(picked.photos),
       dishes,
-      keywords: parseKeywords(value(picked.keywords)),
+      keywords: parseList(value(picked.keywords)),
       displayName: value(picked.displayName),
       email: value(picked.email),
       consent,
@@ -1069,6 +1073,7 @@ function describeSelection(s: Submission): string {
   const parts = [
     `method ${s.selectionMethod ?? '(unknown)'}`,
     s.restaurantName?.trim() ? `name "${s.restaurantName.trim()}"` : 'no name',
+    ...(s.restaurantAltNames.length ? [`other names ${s.restaurantAltNames.map((n) => `"${n}"`).join(', ')}`] : []),
     s.restaurantAddress?.trim() ? `address "${s.restaurantAddress.trim()}"` : 'no address',
     s.restaurantLocation
       ? `at ${s.restaurantLocation.lat.toFixed(6)},${s.restaurantLocation.lng.toFixed(6)}`

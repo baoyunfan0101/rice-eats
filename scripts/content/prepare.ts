@@ -732,6 +732,13 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   };
   if (!info.address) fill('address', submission.restaurantAddress?.trim() || undefined);
   fill('location', submission.restaurantLocation);
+  // Other names the contributor gave: added to altNames (never replacing the name); not used to match restaurants.
+  const knownNames = [info.name, ...((info.altNames as string[] | undefined) ?? [])].map((n) => normalizeKeyword(String(n)));
+  const newNames = submission.restaurantAltNames.filter((n) => !knownNames.includes(normalizeKeyword(n)));
+  if (newNames.length) {
+    info.altNames = [...((info.altNames as string[] | undefined) ?? []), ...newNames];
+    report.filled.push(`altNames (+${newNames.join(', ')}, from the submission)`);
+  }
   fill('rating', report.rating);
   const dishes = submission.dishes.map((d, i) => ({
     name: d.name?.trim(),

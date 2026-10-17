@@ -20,12 +20,17 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   (back to step 1, keeping the selection and restoring the map where the
   contributor left it), then the embedded form. The form loads only on that
   page, and the website never writes to the database.
-- **Keywords** are a question of the form itself (`关键词（选填）`, below the
+- **Keywords** are a question of the form itself (`标签（选填）`, below the
   review): contributors type free-form words separated by commas (`，` `,`)
   or `、` ("适合约会，很安静、份量大"). Intake splits the answer
-  (`parseKeywords` in `shared/submission.ts`, which also accepts semicolons
+  (`parseList` in `shared/submission.ts`, which also accepts semicolons
   and new lines), keeps spaces inside a keyword ("date night"), and drops
   repeats (ignoring width, case, and spacing).
+- **Restaurant aliases** are another question (`餐厅别名（选填）`, below the
+  tags): other names of the restaurant (an English name, a short name),
+  split the same way. Prepare adds the new ones to the draft's `altNames`
+  (never replacing its name; a rejection takes them out again); they are
+  not used to decide which restaurant a submission is about.
 - **Form loading** (`src/views/SubmitPage.tsx`): the iframe's load event also
   fires for Tally's error pages, so the page waits instead for Tally's own
   `Tally.FormLoaded` message, which embedded forms post to the parent page
@@ -189,8 +194,10 @@ access to them. Menu names may differ slightly in Tally's editor.
    | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                  |
    | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
    | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                               |
-   | Short answer       | `关键词（选填）`        | Optional. Placeholder: "例如：适合约会，很安静，份量大".                                                    |
-   | Text               |                         | Below it: "用几个词描述这家店，多个关键词用逗号（，）或顿号（、）分开。"                                    |
+   | Short answer       | `标签（选填）`          | Optional. Placeholder: "例如：适合约会，适合聚餐".                                                          |
+   | Text               |                         | Below it: "用几个词描述这家店，多个标签用逗号（，）或顿号（、）分开。"                                      |
+   | Short answer       | `餐厅别名（选填）`      | Optional. Placeholder: "例如：英文名、简称".                                                                |
+   | Text               |                         | Below it: "这家店的其他名字，多个用逗号（，）或顿号（、）分开。"                                            |
    | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                |
    | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                            |
    | Divider            |                         |                                                                                                             |
@@ -759,7 +766,7 @@ checked by hand once the form exists:
    `manual`, `existing`), `poi_provider` / `poi_id` for the first two,
    `restaurant_id` and `source=restaurant-page` for the fourth, and
    `source=site` for the others, and that the page showed the restaurant name above the form.
-   Answer `关键词（选填）` in one response (see the checklist below); the
+   Answer `标签（选填）` in one response (see the checklist below); the
    others leave it empty. Include a dish with a photo
    in one response and check that the import lists the photo under that dish.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
@@ -776,12 +783,12 @@ checked by hand once the form exists:
    their folders in `private/` afterwards is an explicit erasure (see
    [Retention](#retention-and-backup)), not a cleanup that happens on its own.
 
-### Keywords in the live form
+### Tags and aliases in the live form
 
-The automated tests use a stub instead of Tally, so check the keyword
-question in the real form once (and after changing it), and record the
+The automated tests use a stub instead of Tally, so check the tag and
+alias questions in the real form once (and after changing it), and record the
 result; until then it is not verified. For each answer, check the CSV
-column `关键词（选填）` and the keywords in the report of `import` and
+column `标签（选填）` and the keywords in the report of `import` and
 `prepare`:
 
 | #   | Answer                                         | Expect                                               |
@@ -791,6 +798,7 @@ column `关键词（选填）` and the keywords in the report of `import` and
 | 3   | (empty)                                        | no keywords, no error                                |
 | 4   | `安静，安静、ＱＵＩＥＴ、quiet`                | `安静` and `ＱＵＩＥＴ` once each (repeats dropped)  |
 | 5   | the same answer through "在新窗口打开投稿表单" | the same keywords and restaurant fields as the embed |
+| 6   | `餐厅别名（选填）`: `Example House、小汤包`    | the draft's `altNames` gains both                    |
 
-The CSV header must start with `关键词` (`TALLY_QUESTIONS.keywords` in
+The CSV headers must start with `标签` and `餐厅别名` (`TALLY_QUESTIONS` in
 `shared/submission.ts`).

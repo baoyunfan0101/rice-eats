@@ -57,7 +57,8 @@ const COLUMNS = [
   'poi_id',
   'selection_method',
   'source',
-  '关键词（选填）',
+  '标签（选填）',
+  '餐厅别名（选填）',
 ];
 const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 const row = (values: Record<string, string>) =>
@@ -93,7 +94,7 @@ const NEW_RESTAURANT = {
   poi_id: 'node/1001',
   selection_method: 'poi',
   source: 'site',
-  '关键词（选填）': '适合情侣约会，约会圣地、很安静, 适合带宠物\n适合聚餐',
+  '标签（选填）': '适合情侣约会，约会圣地、很安静, 适合带宠物\n适合聚餐',
 };
 
 /** Fake network: a distinct JPEG per Tally path, and an Overpass answer for node/1001. */
@@ -198,11 +199,16 @@ const validate = (t: Awaited<ReturnType<typeof setup>>) =>
   });
 
 describe('submission import (new export format)', () => {
-  it('reads the keywords from their question, split at commas and 、', () => {
-    const [s] = submissionsFromCsv(csv(row(NEW_RESTAURANT)));
+  it('reads the tags and the restaurant aliases from their questions, split at commas and 、', () => {
+    const [s] = submissionsFromCsv(
+      csv(
+        row({ ...NEW_RESTAURANT, '餐厅别名（选填）': 'Example Dumpling House、 汤包馆 ，汤包馆' }),
+      ),
+    );
     expect(s!.keywords).toEqual(['适合情侣约会', '约会圣地', '很安静', '适合带宠物', '适合聚餐']);
+    expect(s!.restaurantAltNames).toEqual(['Example Dumpling House', '汤包馆']);
     expect(s!.dishes.map((d) => d.photoUrls.length)).toEqual([3, 2]);
-    const old = COLUMNS.filter((c) => c !== '关键词（选填）');
+    const old = COLUMNS.filter((c) => c !== '标签（选填）');
     const [withoutQuestion] = submissionsFromCsv(
       [
         old.join(','),
@@ -210,6 +216,7 @@ describe('submission import (new export format)', () => {
       ].join('\n'),
     );
     expect(withoutQuestion!.keywords).toEqual([]);
+    expect(withoutQuestion!.restaurantAltNames).toEqual([]);
   });
 });
 
@@ -656,7 +663,7 @@ describe('prepare', () => {
 
   it('works without network access, and a submission without keywords', async () => {
     const t = await setup();
-    const { '关键词（选填）': _unused, ...withoutKeywords } = NEW_RESTAURANT;
+    const { '标签（选填）': _unused, ...withoutKeywords } = NEW_RESTAURANT;
     void _unused;
     await t.importCsv(csv(row(withoutKeywords)));
     const requests = t.net.requests.length;
@@ -845,10 +852,22 @@ describe('rejecting a prepared submission', () => {
     await writeFile(path.join(dir, 'info.json'), JSON.stringify(manual, null, 2));
     await makeImage(t.p('manual.jpg'));
     await importImages(dir, [t.p('manual.jpg')]);
-    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    await t.importCsv(
+      csv(
+        row({
+          ...NEW_RESTAURANT,
+          '餐厅别名（选填）': '小汤包，示例汤包馆、Example Dumpling House',
+        }),
+      ),
+    );
     const report = await t.prepare('mAbC12', { restaurantId: 'r-manual1' });
     expect(report.outcome).toBe('drafted');
     const prepared = await t.readJson(path.join(dir, 'info.json'));
+    // The contributor's other names are added (not the name itself), and taken out again below.
+    expect(prepared.altNames).toEqual(['小汤包', 'Example Dumpling House']);
+    expect(report.filled.join('\n')).toMatch(
+      /altNames \(\+小汤包, Example Dumpling House, from the submission\)/,
+    );
     expect(prepared).toMatchObject({
       rating: 4,
       contributorIds: ['u-002'],

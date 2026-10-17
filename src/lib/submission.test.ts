@@ -3,7 +3,7 @@ import { RATINGS } from '../../shared/content/vocabulary';
 import {
   contextProblem,
   isValidLatLng,
-  parseKeywords,
+  parseList,
   parseTallyForm,
   ratingFromAnswer,
   TALLY_RATING_OPTIONS,
@@ -102,7 +102,7 @@ describe("keywords (the form's keyword question)", () => {
     ['Quiet、quiet、ＱＵＩＥＴ', ['Quiet']],
     ['，、 ,', []],
   ])('reads %j', (value, expected) => {
-    expect(parseKeywords(value)).toEqual(expected);
+    expect(parseList(value)).toEqual(expected);
   });
 });
 
