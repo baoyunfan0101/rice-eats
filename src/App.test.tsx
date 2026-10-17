@@ -176,10 +176,6 @@ const formParams = () => {
   return Object.fromEntries(params);
 };
 const NEXT = '下一步：填写点评 →';
-const SKIP = '跳过，填写点评表单 →';
-/** Step 2 starts with the optional keywords; skipping them opens the form. */
-const skipKeywords = async (user: ReturnType<typeof userEvent.setup>) =>
-  user.click(await screen.findByRole('button', { name: SKIP }));
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -878,8 +874,6 @@ describe('submissions', () => {
     await user.click(screen.getByRole('button', { name: NEXT }));
     expect(stepNow('填写点评')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: '为「小面馆」投稿' })).toHaveFocus();
-    await skipKeywords(user);
-    expect(screen.getByRole('region', { name: '关键词' })).toHaveFocus();
     expect(formParams()).toEqual({
       restaurant_name: '小面馆',
       selection_method: 'manual',
@@ -919,7 +913,6 @@ describe('submissions', () => {
     await user.click(screen.getByRole('button', { name: '下一步' }));
     expect(screen.getByRole('button', { name: '图钉：Corner Cafe' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: NEXT }));
-    await skipKeywords(user);
     const params = formParams();
     expect(params).toMatchObject({
       restaurant_name: 'Corner Cafe',
@@ -1143,7 +1136,6 @@ describe('submissions', () => {
       expect(screen.queryByRole('button', { name: '确认餐厅' })).not.toBeInTheDocument();
       expect(document.querySelector('iframe')).toBeNull();
       await user.click(screen.getByRole('button', { name: NEXT }));
-      await skipKeywords(user);
       expect(formParams()).toEqual({
         restaurant_name: 'Noodle Corner',
         restaurant_lat: '29.718300',
@@ -1179,7 +1171,6 @@ describe('submissions', () => {
       await user.click(screen.getByRole('button', { name: '使用当前位置' }));
       await user.click(await screen.findByRole('button', { name: '图钉：Home Cafe' }));
       await user.click(screen.getByRole('button', { name: NEXT }));
-      await skipKeywords(user);
       const params = formParams();
       expect(params.restaurant_lat).toBe('29.711300');
       expect(JSON.stringify(params)).not.toContain('29.7111');
@@ -1515,7 +1506,6 @@ describe('submissions', () => {
       visit('submit/');
       await user.click(await screen.findByRole('button', { name: '图钉：Noodle Corner' }));
       await user.click(screen.getByRole('button', { name: NEXT }));
-      await skipKeywords(user);
       expect(formParams()).toMatchObject({
         restaurant_name: 'Noodle Corner',
         restaurant_address: '7 Pine St',
@@ -1750,7 +1740,6 @@ describe('submissions', () => {
         ).not.toBeInTheDocument();
         await user.click(screen.getByRole('button', { name: '下一步' }));
         await user.click(screen.getByRole('button', { name: NEXT }));
-        await skipKeywords(user);
         expect(formParams()).toMatchObject({
           restaurant_name: 'Marker Cafe',
           restaurant_lat: '29.700000',
@@ -1851,7 +1840,6 @@ describe('submissions', () => {
         expect(screen.getByText('已标出位置，可以再点一下修改。')).toBeInTheDocument();
         await user.click(screen.getByRole('button', { name: '下一步' }));
         await user.click(screen.getByRole('button', { name: NEXT }));
-        await skipKeywords(user);
         expect(formParams()).toMatchObject({
           restaurant_name: 'Drag Cafe',
           restaurant_lat: '29.700000',
@@ -1904,7 +1892,6 @@ describe('submissions', () => {
       );
       await user.click(next);
       await user.click(screen.getByRole('button', { name: NEXT }));
-      await skipKeywords(user);
       expect(formParams()).toMatchObject({
         restaurant_name: 'Norfolk Noodles',
         restaurant_lat: '29.733300',
@@ -1932,7 +1919,6 @@ describe('submissions', () => {
       await user.click(await screen.findByRole('button', { name: '图钉：Taco Stop' }));
       expect(mapView()).toBe('29.7352,-95.3897,16');
       await user.click(screen.getByRole('button', { name: NEXT }));
-      await skipKeywords(user);
       expect(formParams()).toMatchObject({ restaurant_name: 'Taco Stop', poi_id: 'p-taco' });
     });
 
@@ -1997,8 +1983,6 @@ describe('submissions', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: '为「Bayou BBQ」投稿' }),
     ).toBeInTheDocument();
-    expect(document.querySelector('iframe')).toBeNull();
-    await skipKeywords(user);
     expect(formParams()).toEqual({
       restaurant_id: 'bayou-bbq',
       restaurant_name: 'Bayou BBQ',
@@ -2026,38 +2010,7 @@ describe('submissions', () => {
     expect(screen.getByRole('button', { name: '图钉：Bayou BBQ' })).toBeInTheDocument();
     expect(document.querySelector('iframe')).toBeNull();
     await user.click(screen.getByRole('button', { name: NEXT }));
-    // The keywords were already confirmed for this restaurant.
     expect(formParams()).toMatchObject({ restaurant_id: 'bayou-bbq', source: 'restaurant-page' });
-  });
-
-  it('asks for optional keywords before the form and passes them as tags_raw', async () => {
-    vi.stubEnv('VITE_TALLY_FORM', FORM);
-    const user = userEvent.setup();
-    visit('submit/?restaurant=bayou-bbq');
-    const input = await screen.findByLabelText('用几个关键词描述这家店（选填）');
-    expect(document.querySelector('iframe')).toBeNull();
-    await user.type(input, '适合约会{Enter}很安静');
-    // Leaving the field for the button keeps what was typed.
-    await user.click(screen.getByRole('button', { name: '下一步：填写点评表单 →' }));
-    expect(formParams()).toMatchObject({
-      restaurant_id: 'bayou-bbq',
-      tags_raw: '["适合约会","很安静"]',
-    });
-    const summary = screen.getByRole('region', { name: '关键词' });
-    expect(summary).toHaveTextContent('关键词：适合约会、很安静');
-    const frame = screen.getByTitle('Rice Eats 投稿表单');
-    // Changing them reloads the form, so it asks first.
-    await user.click(screen.getByRole('button', { name: '修改关键词' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('表单里已经填写的内容会被清空');
-    await user.click(screen.getByRole('button', { name: '取消' }));
-    expect(screen.getByTitle('Rice Eats 投稿表单')).toBe(frame);
-    await user.click(screen.getByRole('button', { name: '修改关键词' }));
-    await user.click(screen.getByRole('button', { name: '确认修改' }));
-    expect(document.querySelector('iframe')).toBeNull();
-    await user.click(screen.getByRole('button', { name: '删除关键词「适合约会」' }));
-    await user.click(screen.getByRole('button', { name: '下一步：填写点评表单 →' }));
-    expect(formParams()).toMatchObject({ tags_raw: '["很安静"]' });
-    expect(screen.getByTitle('Rice Eats 投稿表单')).not.toBe(frame);
   });
 
   describe('embedded form loading', () => {
@@ -2080,7 +2033,6 @@ describe('submissions', () => {
     /** Opens the form and lets its effects run, so the timeout and the message listener are in place. */
     const openForm = async () => {
       visit('submit/?restaurant=bayou-bbq');
-      fireEvent.click(await screen.findByRole('button', { name: SKIP }));
       await screen.findByTitle('Rice Eats 投稿表单');
       await act(async () => {});
     };
@@ -2157,7 +2109,6 @@ describe('submissions', () => {
       await user.click(screen.getByLabelText(/我不确定具体位置/));
       await user.click(screen.getByRole('button', { name: '下一步' }));
       await user.click(screen.getByRole('button', { name: NEXT }));
-      await skipKeywords(user);
       // The old timeout does not carry over to the new form.
       expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
       expect(screen.getByText('正在加载投稿表单…')).toBeInTheDocument();

@@ -24,7 +24,6 @@ import {
   type Submission,
 } from '../../scripts/content/submissions.ts';
 import { publishTags } from '../../scripts/content/tags.ts';
-import { serializeKeywords } from '../../shared/submission.ts';
 import { makeImage, tempDir, writeRestaurant } from './helpers.ts';
 
 // End-to-end tests of the deterministic submission pipeline on a temporary
@@ -58,7 +57,7 @@ const COLUMNS = [
   'poi_id',
   'selection_method',
   'source',
-  'tags_raw',
+  '关键词（选填）',
 ];
 const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 const row = (values: Record<string, string>) =>
@@ -94,7 +93,7 @@ const NEW_RESTAURANT = {
   poi_id: 'node/1001',
   selection_method: 'poi',
   source: 'site',
-  tags_raw: serializeKeywords(['适合情侣约会', '约会圣地', '很安静', '适合带宠物', '适合聚餐']),
+  '关键词（选填）': '适合情侣约会，约会圣地、很安静, 适合带宠物\n适合聚餐',
 };
 
 /** Fake network: a distinct JPEG per Tally path, and an Overpass answer for node/1001. */
@@ -199,18 +198,18 @@ const validate = (t: Awaited<ReturnType<typeof setup>>) =>
   });
 
 describe('submission import (new export format)', () => {
-  it('restores keywords from tags_raw exactly, and older exports without it still parse', () => {
+  it('reads the keywords from their question, split at commas and 、', () => {
     const [s] = submissionsFromCsv(csv(row(NEW_RESTAURANT)));
     expect(s!.keywords).toEqual(['适合情侣约会', '约会圣地', '很安静', '适合带宠物', '适合聚餐']);
     expect(s!.dishes.map((d) => d.photoUrls.length)).toEqual([3, 2]);
-    const old = COLUMNS.filter((c) => c !== 'tags_raw');
-    const [legacy] = submissionsFromCsv(
+    const old = COLUMNS.filter((c) => c !== '关键词（选填）');
+    const [withoutQuestion] = submissionsFromCsv(
       [
         old.join(','),
         old.map((c) => quote((NEW_RESTAURANT as Record<string, string>)[c] ?? '')).join(','),
       ].join('\n'),
     );
-    expect(legacy!.keywords).toEqual([]);
+    expect(withoutQuestion!.keywords).toEqual([]);
   });
 });
 
@@ -655,9 +654,9 @@ describe('prepare', () => {
     expect(existsSync(t.options.draftsDir)).toBe(false);
   });
 
-  it('works without network access, and an old submission without keywords', async () => {
+  it('works without network access, and a submission without keywords', async () => {
     const t = await setup();
-    const { tags_raw: _unused, ...withoutKeywords } = NEW_RESTAURANT;
+    const { '关键词（选填）': _unused, ...withoutKeywords } = NEW_RESTAURANT;
     void _unused;
     await t.importCsv(csv(row(withoutKeywords)));
     const requests = t.net.requests.length;

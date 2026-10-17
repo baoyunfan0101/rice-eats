@@ -91,8 +91,8 @@ used in data and in `?tag=` URLs, never renamed), its display `label`, and
 optional `aliases` (other words for it). Ids, labels, and aliases must not
 collide; `content:check` rejects a restaurant tag that is not in the registry.
 
-Contributors type free-form keywords on the website (the `tags_raw` hidden
-field). `content:submission -- prepare` maps each keyword to a tag by id, label,
+Contributors type free-form keywords in the submission form (the
+`关键词（选填）` question, separated by commas or "、"). `content:submission -- prepare` maps each keyword to a tag by id, label,
 or alias, then by aliases learned from earlier reviewed submissions; other
 keywords wait for a reviewed decision in the submission's `resolutions.json`
 (reuse a tag, create a new one, or skip). New tags are proposed privately in

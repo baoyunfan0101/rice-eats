@@ -690,9 +690,6 @@ async function fakePlaces(page: Page, fixtures = FAKE_PLACES) {
 }
 
 const NEXT = '下一步：填写点评 →';
-/** Step 2 asks for optional keywords first; skipping them opens the form. */
-const skipKeywords = (page: Page) =>
-  page.getByRole('button', { name: '跳过，填写点评表单 →' }).click();
 const pin = (page: Page, name: string) => page.locator(`.leaflet-marker-icon[title="${name}"]`);
 
 const formQuery = (page: Page) =>
@@ -726,7 +723,6 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   await expect(selected).toContainText('1 Fake St');
   await expect(page.getByRole('button', { name: '确认餐厅' })).toHaveCount(0);
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   await expect(page.locator('[aria-current="step"]')).toContainText('填写点评');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('为「Fake Noodle Bar」投稿');
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
@@ -1028,7 +1024,6 @@ test('the current location moves the map and the pins follow', async ({ page, co
   await expect(pin(page, 'Fake Noodle Bar')).toHaveCount(0);
   await pin(page, 'Fake Taco Stop').click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_lat=29.735200');
   // The device position itself is never submitted.
@@ -1081,7 +1076,6 @@ test('the map falls back to OpenStreetMap when Geoapify is out of credits', asyn
   await page.goto('/rice-eats/submit/');
   await pin(page, 'Fake Noodle Bar').click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
@@ -1254,7 +1248,6 @@ test('the manual pin tip marks exactly the clicked point, through zooms, pans, a
   await page.mouse.click(start.x + start.width / 2, start.y + start.height / 2);
   await page.getByRole('button', { name: '下一步', exact: true }).click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = new URLSearchParams((await formQuery(page).textContent()) ?? '');
   expect(Math.abs(Number(query.get('restaurant_lat')) - 29.7174)).toBeLessThan(0.00003);
   expect(Math.abs(Number(query.get('restaurant_lng')) - -95.4018)).toBeLessThan(0.00003);
@@ -1339,7 +1332,6 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   await expect(page.getByText('已标出位置，可以再点一下修改。')).toBeVisible();
   await page.getByRole('button', { name: '下一步' }).click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = formQuery(page);
   await expect(query).toContainText(
     'restaurant_name=%E6%96%B0%E5%BC%80%E7%9A%84%E9%9D%A2%E9%A6%86',
@@ -1356,7 +1348,6 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   await page.getByRole('button', { name: '下一步' }).click();
   await expect(page.getByText(/没有位置信息/)).toBeVisible();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   await expect(query).toContainText(
     'restaurant_name=Mystery+Diner&selection_method=manual&source=site',
   );
@@ -1369,8 +1360,8 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
     '为「蜀味小馆（虚构示例）」投稿',
   );
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await skipKeywords(page);
+  // The form comes right away: keywords are one of its questions, not a step of their own.
+  await expect(page.getByText(/关键词/)).toHaveCount(0);
   const query = formQuery(page);
   await expect(
     page.frameLocator('iframe[title="Rice Eats 投稿表单"]').getByText('Stub Tally form'),
@@ -1391,51 +1382,6 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 
-test('contributors add keywords before the form, which receives them as tags_raw', async ({
-  page,
-}) => {
-  await page.goto('/rice-eats/submit/?restaurant=fixture-sichuan-house');
-  const field = page.getByLabel('用几个关键词描述这家店（选填）');
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await field.fill('适合约会');
-  await field.press('Enter');
-  // Enter adds a chip; it never submits anything or loads the form.
-  await expect(page.getByRole('list', { name: '已添加的关键词' })).toContainText('适合约会');
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await field.fill('适合约会');
-  await field.press('Enter');
-  await expect(page.getByText('已经添加过「适合约会」')).toBeVisible();
-  // An input method's Enter confirms characters only (keyCode 229 while composing).
-  await field.pressSequentially('hen');
-  await field.evaluate((el) => {
-    el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-    el.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Enter',
-        keyCode: 229,
-        bubbles: true,
-        isComposing: true,
-      }),
-    );
-    el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
-  });
-  await expect(
-    page.getByRole('list', { name: '已添加的关键词' }).getByRole('listitem'),
-  ).toHaveCount(1);
-  // Typed text becomes a keyword when the field loses focus.
-  await field.fill('很安静');
-  await page.getByRole('button', { name: '删除关键词「适合约会」' }).click();
-  await field.fill('份量大');
-  await page.getByRole('button', { name: '下一步：填写点评表单 →' }).click();
-  const query = formQuery(page);
-  await expect(query).toContainText(
-    `tags_raw=${encodeURIComponent('["很安静","份量大"]').replace(/%20/g, '+')}`,
-  );
-  await expect(page.getByRole('region', { name: '关键词' })).toContainText(
-    '关键词：很安静、份量大',
-  );
-});
-
 test('the form offers recovery when Tally does not load', async ({ page }) => {
   // Tally answers with a page that never reports a loaded form (like its
   // error page): the iframe still fires its load event.
@@ -1447,9 +1393,6 @@ test('the form offers recovery when Tally does not load', async ({ page }) => {
   );
   await page.clock.install();
   await page.goto('/rice-eats/submit/?restaurant=fixture-sichuan-house');
-  await page.getByLabel('用几个关键词描述这家店（选填）').fill('适合约会');
-  await page.keyboard.press('Enter');
-  await page.getByRole('button', { name: '下一步：填写点评表单 →' }).click();
   await expect(page.getByText('正在加载投稿表单…')).toBeVisible();
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
   await page.clock.fastForward(11000);
@@ -1459,7 +1402,6 @@ test('the form offers recovery when Tally does not load', async ({ page }) => {
   expect(direct.pathname).toBe('/r/e2eForm');
   expect(direct.searchParams.get('restaurant_id')).toBe('fixture-sichuan-house');
   expect(direct.searchParams.get('source')).toBe('restaurant-page');
-  expect(direct.searchParams.get('tags_raw')).toBe('["适合约会"]');
   expect(direct.searchParams.has('hideTitle')).toBe(false);
 
   // Once Tally works again, reloading shows the form and clears the notice.

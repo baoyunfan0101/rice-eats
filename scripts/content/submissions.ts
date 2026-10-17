@@ -79,8 +79,8 @@ export const submissionSchema = z
       )
       .default([]),
     /**
-     * The contributor's own keywords (the tags_raw hidden field), exactly as
-     * typed. Empty for older submissions. Mapped to tags by prepare.ts.
+     * The contributor's own keywords (the form's keyword question, split by
+     * parseKeywords), as typed. Mapped to tags by prepare.ts.
      */
     keywords: z.array(z.string()).default([]),
     displayName: z.string().optional(),
@@ -168,7 +168,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     poiId: exact(HIDDEN_FIELDS.poiId),
     selectionMethod: exact(HIDDEN_FIELDS.selectionMethod),
     source: exact(HIDDEN_FIELDS.source),
-    keywords: exact(HIDDEN_FIELDS.keywords),
+    keywords: first(TALLY_QUESTIONS.keywords),
     submittedAt: exact('Submitted at'),
   };
 
@@ -218,7 +218,6 @@ export function submissionsFromCsv(text: string): Submission[] {
       ratingAnswer: value(picked.rating),
       photoUrls: linksIn(picked.photos),
       dishes,
-      // A missing column (older form) or an empty value gives no keywords.
       keywords: parseKeywords(value(picked.keywords)),
       displayName: value(picked.displayName),
       email: value(picked.email),

@@ -18,22 +18,14 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   separate confirmation page. "第二步 · 填写点评" shows the restaurant name
   once in the heading ("为「…」投稿") with "更换餐厅" as a secondary action
   (back to step 1, keeping the selection and restoring the map where the
-  contributor left it), then optional keywords, then the embedded form. The
-  form loads only on that page, and the website never writes to the database.
-- **Keywords** (`src/components/KeywordInput.tsx`): "用几个关键词描述这家店（选填）"
-  takes free-form words ("适合约会", "很安静"). Enter, a comma (`,` `，` `、`),
-  or leaving the field turns the text into a chip with its own delete button;
-  Backspace in the empty field removes the last one; a pasted list is split.
-  While an input method is composing (pinyin), Enter only confirms the
-  characters. Repeats (ignoring width, case, and spacing) are ignored with a
-  note; at most 10 keywords of 20 characters. The keywords are confirmed with
-  "下一步：填写点评表单 →" (or "跳过，填写点评表单 →" without any) before the
-  form loads, because they reach it as the `tags_raw` hidden field, a JSON
-  array (`["适合约会","很安静"]`), in the embedded form and in the
-  new-window link alike. "修改关键词" afterwards warns that the form reloads
-  and loses what was typed in it, and only then reopens the keywords, so the
-  form never reloads by surprise. Keywords are kept per restaurant while the
-  page is open.
+  contributor left it), then the embedded form. The form loads only on that
+  page, and the website never writes to the database.
+- **Keywords** are a question of the form itself (`关键词（选填）`, below the
+  review): contributors type free-form words separated by commas (`，` `,`)
+  or `、` ("适合约会，很安静、份量大"). Intake splits the answer
+  (`parseKeywords` in `shared/submission.ts`, which also accepts semicolons
+  and new lines), keeps spaces inside a keyword ("date night"), and drops
+  repeats (ignoring width, case, and spacing).
 - **Form loading** (`src/views/SubmitPage.tsx`): the iframe's load event also
   fires for Tally's error pages, so the page waits instead for Tally's own
   `Tally.FormLoaded` message, which embedded forms post to the parent page
@@ -194,10 +186,11 @@ access to them. Menu names may differ slightly in Tally's editor.
    |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                    |
    |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                             |
    |                    | `source`                | `site` or `restaurant-page`.                                                                                |
-   |                    | `tags_raw`              | The contributor's keywords as a JSON array, e.g. `["适合约会","很安静"]`; absent without keywords.          |
    | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                  |
    | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
    | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                               |
+   | Short answer       | `关键词（选填）`        | Optional. Placeholder: "例如：适合约会，很安静，份量大".                                                    |
+   | Text               |                         | Below it: "用几个词描述这家店，多个关键词用逗号（，）或顿号（、）分开。"                                    |
    | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                |
    | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                            |
    | Divider            |                         |                                                                                                             |
@@ -245,12 +238,7 @@ access to them. Menu names may differ slightly in Tally's editor.
 
 3. **Hidden fields.** The names must be exactly as in the table; the website
    passes only the non-empty ones as URL parameters, e.g.
-   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site&tags_raw=...`.
-   For a form created before keywords existed, add the hidden field
-   `tags_raw` (Tally: the "Hidden fields" block, "+ Add field", the exact
-   name `tags_raw`), publish the form, and check one test response: the
-   Submissions tab and the CSV export then have a `tags_raw` column. Older
-   responses without it import with no keywords.
+   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site`.
    The form has no name question and does not repeat the name: the restaurant
    is chosen on the website, which shows it above the form (to change it,
    contributors use "更换餐厅" on the website). The
@@ -771,8 +759,8 @@ checked by hand once the form exists:
    `manual`, `existing`), `poi_provider` / `poi_id` for the first two,
    `restaurant_id` and `source=restaurant-page` for the fourth, and
    `source=site` for the others, and that the page showed the restaurant name above the form.
-   Add two keywords (one typed with a Chinese input method) to one response
-   and check its `tags_raw`; the others have none. Include a dish with a photo
+   Answer `关键词（选填）` in one response (see the checklist below); the
+   others leave it empty. Include a dish with a photo
    in one response and check that the import lists the photo under that dish.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
 7. Export the CSV, run `npm run content:submission -- import`, and confirm the
@@ -788,25 +776,21 @@ checked by hand once the form exists:
    their folders in `private/` afterwards is an explicit erasure (see
    [Retention](#retention-and-backup)), not a cleanup that happens on its own.
 
-### Keywords (`tags_raw`) in the live form
+### Keywords in the live form
 
-The automated tests use a stub, so they cannot show that the real form
-accepts `tags_raw` and exports it unchanged. Check it once the hidden field
-exists (and after changing it), and record the result; until then it is not
-verified:
+The automated tests use a stub instead of Tally, so check the keyword
+question in the real form once (and after changing it), and record the
+result; until then it is not verified. For each answer, check the CSV
+column `关键词（选填）` and the keywords in the report of `import` and
+`prepare`:
 
-| #   | Do                                                                      | Expect in the CSV export / notification, then after `import` and `prepare` |
-| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 1   | Several Chinese keywords (`适合约会`, `很安静`)                         | `tags_raw` is `["适合约会","很安静"]`; the report lists both keywords      |
-| 2   | A keyword typed with a Chinese input method (Enter confirms the pinyin) | the composed characters, no stray Latin letters                            |
-| 3   | English keywords (`date night`)                                         | kept as typed                                                              |
-| 4   | A keyword with spaces inside                                            | spaces kept                                                                |
-| 5   | No keywords ("跳过")                                                    | `tags_raw` empty; no keywords in the report                                |
-| 6   | The same keyword twice (also in another width or case)                  | stored once                                                                |
-| 7   | "在新窗口打开投稿表单" (direct link)                                    | same `tags_raw` and restaurant fields as the embedded form                 |
-| 8   | Import an export from before `tags_raw` existed                         | imports without keywords, no error                                         |
-| 9   | Select a restaurant, add keywords, submit                               | restaurant fields and keywords both present                                |
-| 10  | Type in the form, then "修改关键词"                                     | the warning appears first; cancelling keeps the form as typed              |
+| #   | Answer                                         | Expect                                               |
+| --- | ---------------------------------------------- | ---------------------------------------------------- |
+| 1   | `适合约会，很安静、份量大` (typed with pinyin) | three keywords: `适合约会`, `很安静`, `份量大`       |
+| 2   | `date night, quiet`                            | `date night` (space kept) and `quiet`                |
+| 3   | (empty)                                        | no keywords, no error                                |
+| 4   | `安静，安静、ＱＵＩＥＴ、quiet`                | `安静` and `ＱＵＩＥＴ` once each (repeats dropped)  |
+| 5   | the same answer through "在新窗口打开投稿表单" | the same keywords and restaurant fields as the embed |
 
-The hidden field must be named exactly `tags_raw` (`HIDDEN_FIELDS.keywords` in
+The CSV header must start with `关键词` (`TALLY_QUESTIONS.keywords` in
 `shared/submission.ts`).
