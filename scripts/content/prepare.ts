@@ -114,6 +114,8 @@ const prepareStateSchema = z.strictObject({
     info: z.record(z.string(), z.unknown()),
     /** The contributor's earlier review (its .json and .md text), which this submission updates. */
     review: z.strictObject({ json: z.string(), md: z.string().optional() }).optional(),
+    /** The submission that wrote that earlier review (a submission by the same contributor), if one did. */
+    reviewFrom: z.string().optional(),
     /** Image files the draft had before (never removed by prepare or a rejection). */
     images: z.array(z.string()),
   }),
@@ -582,6 +584,8 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
     let createdDraft = false;
     if (existsSync(path.join(target, INFO_FILE))) {
       base = await snapshot(target, contributorId);
+      const from = base.review && (await currentWriter(options.submissionsDir, id, restaurantId, contributorId, target));
+      if (from) base.reviewFrom = from;
     } else if (mode === 'existing') {
       base = await snapshot(publicDir(restaurantId), contributorId);
       base.info.status = 'draft';
@@ -1097,11 +1101,16 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
     return { status: 'nothing', messages: [...messages, 'nothing of it is in a draft'] };
   }
   const saveState = () => writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
-  const finish = async (status: 'done' | 'resolved', details: string[]) => {
+  /**
+   * `left`: what of the submission stays in the draft because a review kept
+   * there uses it (dishes, photos), so rejecting that review later removes it too.
+   */
+  const finish = async (status: 'done' | 'resolved', details: string[], left?: { dishes: DishEntry[]; images: string[] }) => {
     state.rejection = { status, at: clock(), details };
     delete state.written;
-    delete state.owned;
-    state.photos = [];
+    if (left?.dishes.length) state.owned = { fields: {}, entries: {}, dishes: left.dishes };
+    else delete state.owned;
+    state.photos = state.photos.filter((m) => left?.images.includes(m.image));
     await saveState();
     await updateLog(options.submissionsDir, id, (e) => ({ ...e!, draftWritten: false }));
     await withdrawProposedTags(state.proposedTags, options);
@@ -1142,7 +1151,10 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   // The contributor's review: taken out only while it is exactly what this
   // submission wrote (with its photos). A later submission by the same
   // contributor or a hand edit replaced it otherwise, and it stays.
-  const previous = state.base.review;
+  // The earlier review, unless the submission that wrote it was rejected
+  // since: then the review from before that one (and so on).
+  const rejected = await rejectedPredecessors(options.submissionsDir, state);
+  const previous = rejected.length ? rejected.at(-1)!.state.base.review : state.base.review;
   const [currentJson, currentMd] = [await read(own('json')), await read(own('md'))];
   const alreadyBack = previous
     ? currentJson === previous.json && currentMd === previous.md
@@ -1234,7 +1246,22 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
     };
   }
 
-  const removable = ownImages.filter((image) => !usedImages.includes(image));
+  // What rejected predecessors left because this review used it goes too, unless another review still uses it.
+  const goneOfPredecessors: string[] = [];
+  for (const r of rejected) {
+    if (Array.isArray(info.dishes) && r.state.owned) {
+      info.dishes = (info.dishes as DishEntry[]).filter(
+        (dish) => rated.has(String(dish.id)) || !r.state.owned!.dishes.some((d) => same(d, dish)),
+      );
+      if ((info.dishes as DishEntry[]).length === 0) delete info.dishes;
+    }
+    for (const m of r.state.photos) {
+      const file = path.join(target, m.image);
+      if (!usedElsewhere.has(m.image) && (await fileHash(file)) === m.stored) goneOfPredecessors.push(m.image);
+    }
+  }
+
+  const removable = [...ownImages.filter((image) => !usedImages.includes(image)), ...goneOfPredecessors];
   await writeAtomic(path.join(target, INFO_FILE), json(ordered(info)));
   if (!keepReview && !alreadyBack) {
     if (previous) {
@@ -1248,23 +1275,43 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   }
   if (existsSync(reviewsDir) && (await readdir(reviewsDir)).length === 0) await rm(reviewsDir, { recursive: true });
   for (const image of removable) await rm(path.join(target, image), { force: true });
+  for (const r of rejected) {
+    // Their leftovers are gone now (or still used by a review that stays, and kept with it).
+    const leftDishes = (r.state.owned?.dishes ?? []).filter((d) => (info.dishes as DishEntry[] | undefined)?.some((x) => same(x, d)));
+    r.state.photos = r.state.photos.filter((m) => !removable.includes(m.image));
+    if (leftDishes.length) r.state.owned = { fields: {}, entries: {}, dishes: leftDishes };
+    else delete r.state.owned;
+    await writeAtomic(path.join(submissionDir(options.submissionsDir, r.id), PREPARE_STATE_FILE), json(r.state));
+  }
   const status = conflicts.length ? 'resolved' : 'done';
   const details: string[] = [];
+  if (rejected.length) {
+    details.push(
+      `the review it replaced came from rejected submission ${rejected.map((r) => r.id).join(', then ')}: ` +
+        (previous ? 'put back the review from before that instead' : 'there was none before, so the review goes'),
+    );
+  }
+  const left = {
+    dishes: owned.dishes.filter((d) => (info.dishes as DishEntry[] | undefined)?.some((x) => same(x, d)) && rated.has(String(d.id))),
+    images: usedImages,
+  };
 
-  // A folder prepare created goes when nothing but the restaurant before the submission is left in it.
+  // A folder prepare created (for this submission or a rejected one before it)
+  // goes when nothing but the restaurant from before is left in it.
   const publicDir = path.join(options.restaurantsDir, state.restaurantId);
-  if (state.createdDraft) {
+  const creator = state.createdDraft ? state : rejected.findLast((r) => r.state.createdDraft)?.state;
+  if (creator) {
     const unchanged =
-      state.mode === 'new'
+      creator.mode === 'new'
         ? !existsSync(reviewsDir) &&
-          same(ordered(info), ordered(state.base.info)) &&
-          same(await listImages(target), state.base.images)
+          same(ordered(info), ordered(creator.base.info)) &&
+          same(await listImages(target), creator.base.images)
         : existsSync(path.join(publicDir, INFO_FILE)) &&
           Object.values(await folderChanges(target, publicDir)).every((list) => list.length === 0);
     if (unchanged) {
       await rm(target, { recursive: true });
       details.push(`removed private/drafts/${state.restaurantId}/, which only held this submission's content`);
-      return finish(status, details);
+      return finish(status, details, { dishes: [], images: [] });
     }
   }
   details.push(
@@ -1276,7 +1323,38 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
       '; the rest of the draft is unchanged',
   );
   if (conflicts.length) details.push(`kept as confirmed by the maintainer: ${conflicts.join(', ')}`);
-  return finish(status, details);
+  return finish(status, details, left);
+}
+
+/**
+ * The chain of rejected submissions behind this one's earlier review: the
+ * submission that wrote it, if it was rejected since, then the one that
+ * wrote the review it replaced, and so on (nearest first).
+ */
+async function rejectedPredecessors(submissionsDir: string, state: PrepareState) {
+  const chain: { id: string; state: PrepareState }[] = [];
+  for (let from = state.base.reviewFrom; from && !chain.some((r) => r.id === from); ) {
+    let earlier: PrepareState | undefined;
+    try {
+      earlier = await readState(submissionDir(submissionsDir, from));
+    } catch {
+      break; // Reported by content:check (rejectionProblems).
+    }
+    const finished = earlier?.rejection?.status === 'done' || earlier?.rejection?.status === 'resolved';
+    if (!earlier || !finished || earlier.written !== undefined) break;
+    chain.push({ id: from, state: earlier });
+    from = earlier.base.reviewFrom;
+  }
+  return chain;
+}
+
+/** The submission by this contributor whose review is in the draft exactly as it wrote it, if any. */
+async function currentWriter(submissionsDir: string, id: string, restaurantId: string, contributorId: string, target: string) {
+  for (const other of await laterSubmissions(submissionsDir, id, restaurantId, contributorId)) {
+    const s = await readState(submissionDir(submissionsDir, other));
+    if (s && (await ownFingerprint(target, contributorId, s.photos.map((m) => m.image))) === s.written) return other;
+  }
+  return undefined;
 }
 
 /** Other submissions by this contributor prepared into the same restaurant and not rejected since. */

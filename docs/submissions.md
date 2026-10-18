@@ -500,7 +500,11 @@ between, so preparing it again never widens what it owns):
 
 - the contributor's review goes (or, for an update, their earlier review is
   put back), but only while it is exactly what the submission wrote; other
-  reviews are never touched;
+  reviews are never touched. When that earlier review came from another
+  submission by the same contributor that was rejected since (say A, kept
+  with `--resolved` under this one), the review from before A is put back
+  instead, or none, so a rejected submission never comes back; what A left
+  only because this review used it (photos, dishes) goes with it;
 - each field of `info.json` the submission filled and nobody changed since
   goes; one changed since is a conflict (below);
 - lists (`tags`, `altNames`, `cuisines`): only the entries the submission
