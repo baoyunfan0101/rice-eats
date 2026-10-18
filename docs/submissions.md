@@ -492,20 +492,26 @@ npm run content:submission -- mark <submission id> --status rejected
 
 The raw submission stays in `private/submissions/` (rejection never deletes
 it). Its contribution is taken back out of the draft, using what
-`prepare.json` recorded: the restaurant before the submission (`base`) and
-what prepare wrote:
+`prepare.json` recorded: the contributor's review before the submission, a
+fingerprint of the review and photos as prepare last wrote them, and what the
+submission itself added to `info.json` (`owned`: each run records only the
+values it added, never what other submissions or the maintainer added in
+between, so preparing it again never widens what it owns):
 
 - the contributor's review goes (or, for an update, their earlier review is
-  put back); other reviews are never touched;
-- each field of `info.json` changed by prepare and not edited since goes back
-  to its value before; one edited only by the maintainer is kept;
+  put back), but only while it is exactly what the submission wrote; other
+  reviews are never touched;
+- each field of `info.json` the submission filled and nobody changed since
+  goes; one changed since is a conflict (below);
 - lists (`tags`, `altNames`, `cuisines`): only the entries the submission
   added are removed; dishes it added go unless another review rates them;
 - images the submission brought (recognized by content) are removed, unless
   another review uses them; images that were there before or were added by
   hand stay;
-- a draft folder that prepare created and that holds nothing else is
-  removed; a restaurant's earlier draft (`content:new`, `content:edit`) keeps
+- a draft folder that prepare created is removed when nothing else is left
+  in it (no other review, no other information or photo; for a checked-out
+  restaurant, nothing that differs from the public one); a restaurant's
+  earlier draft (`content:new`, `content:edit`) keeps
   everything that did not come from the submission;
 - tags the submission proposed are withdrawn from `private/tags.json` unless
   another draft uses them. The contributor stays in
@@ -522,12 +528,15 @@ other status, `prepare` refuses the submission, and `content:check` and
 `content:promote` (also with `--approved`) fail for that restaurant's draft,
 whatever the log says. This happens when:
 
-- a field of `info.json` was edited by hand **and** written by the
-  submission (say the maintainer corrected the address it gave), or another
-  review now uses one of its photos: nothing is changed and the command exits
-  with code 1 listing the fields. Remove the submission's content from them
-  (or put back what was there before) and run it again, or, after checking
-  them, keep their current values with `--resolved`;
+- something the submission wrote was changed since: the contributor's review
+  (its text, data, or photos), by hand or by a later submission from the same
+  contributor that updated it (the message names that submission); a field
+  of `info.json` it filled (say the maintainer corrected the address it
+  gave); a dish it added; or another review now uses one of its photos.
+  Nothing is changed and the command exits with code 1 listing them. Remove
+  the submission's content from them (or put back what was there before) and
+  run it again, or, after checking them, keep their current content with
+  `--resolved` (a kept review keeps every photo it uses);
 - the command was interrupted (the state is written before the log): run it
   again, which is always safe;
 - `prepare.json` cannot be read, or is missing although the log shows the
