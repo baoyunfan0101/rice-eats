@@ -210,7 +210,6 @@ const summary = (
   cuisines: [],
   tags: tags.map((t) => ({ id: t, label: TAG_LABELS[t] ?? t })),
   links: {},
-  ratingCount: extra.rating !== undefined ? 1 : 0,
   reviewCount: 1,
   ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,
@@ -231,7 +230,6 @@ const restaurants = [
     tags: ['group'],
     rating: 5,
     ratingAverage: 4.5,
-    ratingCount: 2,
     reviewCount: 2,
     pricePerPerson: 28,
     location: { lat: 29.74, lng: -95.39 },
@@ -472,17 +470,17 @@ describe('browsing', () => {
     expect(screen.getByText('没有符合条件的餐厅')).toBeInTheDocument();
   });
 
-  it('restores state from a shared or older URL and handles no results', async () => {
+  it('restores state from a shared URL and handles no results', async () => {
     const user = userEvent.setup();
-    visit('?view=grid&q=zzz');
+    visit('?q=zzz');
     expect(await screen.findByText('没有符合条件的餐厅')).toBeInTheDocument();
     expect(screen.getByRole('searchbox')).toHaveValue('zzz');
     await user.click(screen.getByRole('button', { name: '清除全部筛选' }));
     expect(names(await screen.findByRole('list', { name: '餐厅列表' }))).toHaveLength(3);
   });
 
-  it('opens older single-value links on the unified page', async () => {
-    visit('?view=map&tag=group&price=2');
+  it('opens a shared link with filters on the page', async () => {
+    visit('?tag=group&min=15&max=30');
     await screen.findByRole('list', { name: '餐厅列表' });
     expect(names(list())).toEqual(['Bayou BBQ']);
     expect(screen.getByRole('button', { name: /^标签 \(1\)/ })).toBeInTheDocument();

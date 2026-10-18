@@ -582,10 +582,10 @@ test('photo-only restaurants show their photos; same-name restaurants stay separ
   await expect(
     page.getByRole('img', { name: '只有照片的小店（虚构示例）', exact: true }).first(),
   ).toBeVisible(); // cover
-  // A review without a rating still shows its photos; it does not count towards the rating.
-  await expect(page.getByText('暂无评分')).toBeVisible();
+  // A review without text or dishes: its rating and its photos.
+  await expect(page.getByText('1 人评分')).toBeVisible();
   const review = page.getByRole('region', { name: '点评（1）' });
-  await expect(review.getByText('未评级')).toBeVisible();
+  await expect(review.getByText('🤤 人上人')).toBeVisible();
   await expect(review.getByRole('img')).toHaveCount(3);
   await expect(page.getByRole('link', { name: /Google 地图导航/ })).toHaveAttribute(
     'href',
@@ -616,13 +616,7 @@ test('unknown pages and drafts are not found', async ({ page }) => {
 });
 
 test('layout fits the viewport without horizontal scrolling', async ({ page }) => {
-  for (const url of [
-    '/rice-eats/',
-    '/rice-eats/?view=grid',
-    '/rice-eats/?view=map',
-    '/rice-eats/r/fixture-sichuan-house/',
-    '/rice-eats/submit/',
-  ]) {
+  for (const url of ['/rice-eats/', '/rice-eats/r/fixture-sichuan-house/', '/rice-eats/submit/']) {
     await page.goto(url);
     await expect(page.getByRole('main')).not.toBeEmpty();
     await page.waitForLoadState('networkidle');

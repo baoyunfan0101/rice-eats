@@ -1,15 +1,4 @@
 /**
- * Price buckets of older links (`?price=1..4`), in US dollars per person; the
- * filter itself is now a continuous range (see filters.ts).
- */
-export const PRICE_BUCKETS = [
-  { id: '1', min: 0, max: 15 },
-  { id: '2', min: 15, max: 30 },
-  { id: '3', min: 30, max: 60 },
-  { id: '4', min: 60, max: Infinity },
-] as const;
-
-/**
  * The price slider's range. Its top end means "no upper limit", so a higher
  * price per person is never excluded by the slider; any amount can be typed.
  */

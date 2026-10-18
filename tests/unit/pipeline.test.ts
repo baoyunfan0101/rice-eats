@@ -61,11 +61,11 @@ describe('content pipeline', () => {
     ]);
     expect(detail.reviews[0]!.html).toContain('<h3>Title</h3>');
     expect(detail.contributors).toEqual([{ id: 'u-001', name: 'Tester' }]);
-    expect(detail).toMatchObject({ rating: 4, ratingAverage: 4, ratingCount: 1, reviewCount: 1 });
+    expect(detail).toMatchObject({ rating: 4, ratingAverage: 4, reviewCount: 1 });
 
     const index = JSON.parse(await readFile(path.join(outDir, 'index.json'), 'utf8'));
     expect(index.restaurants).toHaveLength(1);
-    expect(index.restaurants[0]).toMatchObject({ rating: 4, ratingCount: 1, reviewCount: 1 });
+    expect(index.restaurants[0]).toMatchObject({ rating: 4, reviewCount: 1 });
     expect(existsSync(path.join(outDir, 'restaurants', 'noodles.json'))).toBe(true);
     const urls =
       JSON.stringify(result.details).match(/\/rice-eats\/generated\/[^" ,]+\.webp/g) ?? [];
@@ -88,15 +88,14 @@ describe('content pipeline', () => {
       images: [],
       dishes: [],
       reviews: [{ id: 'u-001', html: '', imageIndexes: [], dishes: [] }],
-      ratingCount: 0,
       reviewCount: 1,
       links: {},
     });
-    expect(result.details[0]!.rating).toBeUndefined();
+    expect(result.details[0]!).toMatchObject({ rating: 4, ratingAverage: 4 });
     expect(result.details[0]!.cover).toBeUndefined();
   });
 
-  it('shows photo-only reviews: no text, rating, or dishes needed', async () => {
+  it('shows photo-only reviews: no text or dishes needed', async () => {
     const root = await tempDir();
     const dir = await writeRestaurant(
       root,
@@ -105,6 +104,7 @@ describe('content pipeline', () => {
       {
         'reviews/u-001.json': JSON.stringify({
           date: '2026-10-01',
+          rating: 3,
           images: ['images/01-a.jpg', 'images/02-b.jpg', 'images/03-c.jpg'],
         }),
       },
@@ -115,7 +115,6 @@ describe('content pipeline', () => {
     expect(detail.images).toHaveLength(3);
     expect(detail.cover).toEqual(detail.images[0]);
     expect(detail.reviews[0]).toMatchObject({ html: '', imageIndexes: [0, 1, 2] });
-    expect(detail.rating).toBeUndefined();
   });
 
   it('orders images by their number, so a new image never changes the cover', async () => {
@@ -252,7 +251,7 @@ describe('content pipeline', () => {
 
   it('detects missing, unsafe, shared, and text-placed image references', async () => {
     const root = await tempDir();
-    const review = (data: object) => JSON.stringify({ date: '2026-10-01', ...data });
+    const review = (data: object) => JSON.stringify({ date: '2026-10-01', rating: 3, ...data });
     await writeRestaurant(root, 'a', validInfo('a', { dishes: [{ id: 'd1', name: 'x' }] }), {
       'reviews/u-001.json': review({ dishes: [{ dish: 'd1', images: ['images/01-nope.jpg'] }] }),
     });
@@ -296,18 +295,17 @@ describe('content pipeline', () => {
     expect(messages).toMatch(/km from Rice University; check the coordinates/);
   });
 
-  it('accepts whole-number ratings 1-5, rejects others, and allows no rating', async () => {
+  it('requires a whole-number rating 1-5 in every review', async () => {
     const root = await tempDir();
     const review = (data: object) => ({
-      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', ...data }),
+      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 3, ...data }),
     });
     for (const rating of [1, 2, 3, 4, 5])
       await writeRestaurant(root, `r${rating}`, validInfo(`r${rating}`), review({ rating }));
-    await writeRestaurant(root, 'unrated', validInfo('unrated'));
     const ok = await pipeline(root);
     expect(errors(ok)).toEqual([]);
-    expect(ok.details.map((d) => d.rating).sort()).toEqual([1, 2, 3, 4, 5, undefined]);
-    for (const [i, rating] of [0, 6, 3.5, '5', '夯'].entries()) {
+    expect(ok.details.map((d) => d.rating).sort()).toEqual([1, 2, 3, 4, 5]);
+    for (const [i, rating] of [undefined, 0, 6, 3.5, '5', '夯'].entries()) {
       const bad = await tempDir();
       await writeRestaurant(bad, `x${i}`, validInfo(`x${i}`), review({ rating }));
       expect(errors(await pipeline(bad)).join('\n'), String(rating)).toMatch(
@@ -316,18 +314,18 @@ describe('content pipeline', () => {
     }
   });
 
-  it('averages the reviews: the level, one decimal, and how many rated', async () => {
+  it('averages the reviews: the level, one decimal, and how many reviewed', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'r', validInfo('r'), {
       'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 5 }),
       'reviews/u-002.json': JSON.stringify({ date: '2026-10-03', rating: 4 }),
       'reviews/u-003.json': JSON.stringify({ date: '2026-10-02', rating: 4 }),
-      'reviews/u-004.json': JSON.stringify({ date: '2026-10-02' }),
+      'reviews/u-004.json': JSON.stringify({ date: '2026-10-02', rating: 4 }),
     });
     const people = [1, 2, 3, 4].map((n) => ({ id: `u-00${n}`, name: `P${n}` }));
     const detail = (await pipeline(root, { contributorsFile: await contributors(people) }))
       .details[0]!;
-    expect(detail).toMatchObject({ rating: 4, ratingAverage: 4.3, ratingCount: 3, reviewCount: 4 });
+    expect(detail).toMatchObject({ rating: 4, ratingAverage: 4.3, reviewCount: 4 });
     // Newest first; the same day by contributor id.
     expect(detail.reviews.map((r) => r.id)).toEqual(['u-002', 'u-003', 'u-004', 'u-001']);
   });
@@ -342,6 +340,7 @@ describe('content pipeline', () => {
     await writeRestaurant(root, 'r', validInfo('r', { dishes }), {
       'reviews/u-001.json': JSON.stringify({
         date: '2026-10-01',
+        rating: 3,
         dishes: [
           { dish: 'd1', verdict: 1, comment: 'Good' },
           { dish: 'd2', verdict: -1 },
@@ -350,6 +349,7 @@ describe('content pipeline', () => {
       }),
       'reviews/u-002.json': JSON.stringify({
         date: '2026-10-02',
+        rating: 3,
         dishes: [{ dish: 'd1', verdict: 1 }],
       }),
     });
@@ -380,6 +380,7 @@ describe('content pipeline', () => {
         {
           'reviews/u-001.json': JSON.stringify({
             date: '2026-10-01',
+            rating: 3,
             dishes: [{ dish: 'd1', verdict }],
           }),
         },
@@ -391,7 +392,11 @@ describe('content pipeline', () => {
     // A review may only rate the restaurant's dishes.
     const unknown = await tempDir();
     await writeRestaurant(unknown, 'u', validInfo('u'), {
-      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', dishes: [{ dish: 'd9' }] }),
+      'reviews/u-001.json': JSON.stringify({
+        date: '2026-10-01',
+        rating: 3,
+        dishes: [{ dish: 'd9' }],
+      }),
     });
     expect(errors(await pipeline(unknown)).join('\n')).toMatch(
       /dishes.0.dish: "d9" is not one of the dishes/,
@@ -412,6 +417,7 @@ describe('content pipeline', () => {
       {
         'reviews/u-001.json': JSON.stringify({
           date: '2026-10-01',
+          rating: 3,
           images: ['images/01-front.jpg'],
           dishes: [
             { dish: 'd1', verdict: 1, images: ['images/03-ribs.jpg', 'images/02-room.jpg'] },
@@ -485,7 +491,7 @@ describe('content pipeline', () => {
     const { rm } = await import('node:fs/promises');
     await rm(path.join(root, 'a', 'reviews'), { recursive: true });
     await writeRestaurant(root, 'b', validInfo('b'), {
-      'reviews/u-999.json': JSON.stringify({ date: '2026-10-01' }),
+      'reviews/u-999.json': JSON.stringify({ date: '2026-10-01', rating: 3 }),
     });
     await writeRestaurant(root, 'c', validInfo('c'), {
       'reviews/u-001.json': JSON.stringify({ date: 'yesterday' }),
@@ -522,7 +528,7 @@ describe('content pipeline', () => {
   it('sanitizes review Markdown', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'a', validInfo('a'), {
-      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01' }),
+      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 3 }),
       'reviews/u-001.md': [
         '<script>alert(1)</script>',
         '<img src=x onerror=alert(1)>',
@@ -584,7 +590,7 @@ describe('content pipeline', () => {
       drafts,
       'wip',
       { id: 'wip', status: 'draft', name: 'WIP' },
-      { 'reviews/u-002.json': JSON.stringify({ date: '2026-10-01' }) },
+      { 'reviews/u-002.json': JSON.stringify({ date: '2026-10-01', rating: 3 }) },
     );
     await writeRestaurant(drafts, 'early', validInfo('early'));
 
@@ -605,7 +611,7 @@ describe('content pipeline', () => {
 
     // A public restaurant may not reference a contributor who is still private.
     await writeRestaurant(root, 'leak', validInfo('leak'), {
-      'reviews/u-002.json': JSON.stringify({ date: '2026-10-01' }),
+      'reviews/u-002.json': JSON.stringify({ date: '2026-10-01', rating: 3 }),
     });
     const leak = await pipeline(root, {
       draftsDir: drafts,

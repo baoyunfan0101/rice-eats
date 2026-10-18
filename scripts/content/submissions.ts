@@ -139,8 +139,7 @@ export function submissionsFromCsv(text: string): Submission[] {
   const [header, ...rows] = parseCsv(text);
   if (!header) throw new IntakeError('the CSV file is empty');
   const headers = header.map(normalizeHeader);
-  const columns = (names: readonly string[]) =>
-    headers.flatMap((h, i) => (names.some((name) => h.startsWith(normalizeHeader(name))) ? [i] : []));
+  const columns = (title: string) => headers.flatMap((h, i) => (h.startsWith(normalizeHeader(title)) ? [i] : []));
   const exact = (name: string) => headers.indexOf(normalizeHeader(name));
 
   const idColumn = exact('Submission ID');
@@ -150,11 +149,11 @@ export function submissionsFromCsv(text: string): Submission[] {
   const consentColumns = columns(TALLY_QUESTIONS.consent);
   if (consentColumns.length === 0) {
     throw new IntakeError(
-      `no consent column (a header starting with "${TALLY_QUESTIONS.consent[0]}"); ` +
+      `no consent column (a header starting with "${TALLY_QUESTIONS.consent}"); ` +
         'check the form against docs/submissions.md',
     );
   }
-  const first = (names: readonly string[]) => columns(names)[0];
+  const first = (title: string) => columns(title)[0];
   const picked = {
     review: first(TALLY_QUESTIONS.review),
     photos: columns(TALLY_QUESTIONS.photos),
@@ -176,10 +175,10 @@ export function submissionsFromCsv(text: string): Submission[] {
   };
 
   const dishColumns = Array.from({ length: TALLY_DISH_GROUPS }, (_, g) => ({
-    name: first([dishQuestion(g + 1, 'name')]),
-    verdict: first([dishQuestion(g + 1, 'verdict')]),
-    comment: first([dishQuestion(g + 1, 'comment')]),
-    photos: columns([dishQuestion(g + 1, 'photos')]),
+    name: first(dishQuestion(g + 1, 'name')),
+    verdict: first(dishQuestion(g + 1, 'verdict')),
+    comment: first(dishQuestion(g + 1, 'comment')),
+    photos: columns(dishQuestion(g + 1, 'photos')),
   }));
 
   return rows.map((row, i) => {
@@ -192,7 +191,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     const agreed = normalizeHeader(TALLY_CONSENT_OPTION);
     const consent = consentColumns.some((c) => {
       const v = normalizeHeader(row[c] ?? '');
-      return YES.has(v) || v.startsWith(agreed) || v.startsWith('i agree');
+      return YES.has(v) || v.startsWith(agreed);
     });
     const linksIn = (cols: number[]) => [
       ...new Set(cols.flatMap((c) => (row[c] ?? '').match(/https?:\/\/[^\s,]+/g) ?? [])),
@@ -671,16 +670,7 @@ export interface Readiness {
 export function readiness(submission: Submission, state: PhotoState[]): Readiness {
   const blockers: string[] = [];
   const notes: string[] = [];
-  const hasText =
-    Boolean(submission.review?.trim()) ||
-    submission.dishes.some((d) => d.name?.trim() || d.comment?.trim());
-  // A valid overall rating is content on its own: the form requires the
-  // rating and makes the review text optional, so a rating-only submission
-  // is complete (older form versions required the text instead).
-  const rating = ratingFromAnswer(submission.ratingAnswer);
-  const hasRating = rating !== undefined;
-  const links = photoLinks(submission).length;
-  const usable = state.filter((p) => USABLE.includes(p.status)).length;
+  // The form requires the rating, so every review has one; text, dishes, and photos are optional.
   const unresolved = state.filter((p) => UNRESOLVED.includes(p.status)).map((p) => p.slot);
   if (!submission.consent) {
     blockers.push('no publication consent: do not prepare or publish anything; ask the contributor or reject');
@@ -712,22 +702,18 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
       notes.push(`dish ${i + 1} verdict "${dish.verdictAnswer}" is not 推荐 or 避雷; leave it out`);
     }
   }
-  if (!hasText && !hasRating && links === 0) {
-    blockers.push('neither a valid rating, review text, dishes, nor photos were submitted');
-  }
-  if (!hasText && !hasRating && links > 0 && usable === 0) {
-    blockers.push('photo-only submission without any retrieved photo: retry, add the photos by hand, or reject');
-  }
   if (unresolved.length > 0) {
     notes.push(
       `photo intake incomplete (photo ${unresolved.join(', ')} missing): run retry-photos, add them with ` +
         'add-photo, or waive them if the maintainer decides to proceed without them',
     );
   }
-  if (submission.ratingAnswer && !hasRating) {
-    notes.push(`rating answer "${submission.ratingAnswer}" is not one of the five levels; leave the rating out`);
-  } else if (!submission.ratingAnswer) {
-    notes.push('no overall rating (optional in older form versions): leave the rating out');
+  if (ratingFromAnswer(submission.ratingAnswer) === undefined) {
+    blockers.push(
+      submission.ratingAnswer
+        ? `rating answer "${submission.ratingAnswer}" is not one of the five levels (the form requires one)`
+        : 'no overall rating (the form requires one)',
+    );
   }
   if (!submission.email) notes.push('no contact email: questions cannot be sent back to the contributor');
   if (!submission.displayName) notes.push('no display name: credit it as 匿名 (the form says so)');

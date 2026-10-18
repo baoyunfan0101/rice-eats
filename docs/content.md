@@ -111,9 +111,9 @@ contact details; the checks are described in
 | 1        | 🤮 拉完了 |     |           |         |
 
 The overall rating is not stored: the build averages the ratings of every
-review that has one (one decimal, shown with the label of the nearest level and
-the number of reviewers). Sorting by rating uses that average and puts
-restaurants without a rated review last.
+review (one decimal, shown with the label of the nearest level and the number
+of reviewers). Sorting by rating uses that average; a draft without reviews
+sorts last.
 
 Example:
 
@@ -145,7 +145,7 @@ adding another. A published restaurant needs at least one review.
 | Field    | Type / values                             | Notes                                                                                                                         |
 | -------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `date`   | `"YYYY-MM-DD"`                            | Required. When it was submitted (or last updated); reviews are shown newest first.                                            |
-| `rating` | integer `1`-`5`                           | This contributor's rating (labels above). Reviews without one are shown but not averaged.                                     |
+| `rating` | integer `1`-`5`                           | Required. This contributor's rating (labels above).                                                                           |
 | `images` | `["images/<file>", ...]`                  | Photos of the restaurant (not of one dish), in display order.                                                                 |
 | `dishes` | `{ dish, verdict?, comment?, images? }[]` | `dish`: an id from `info.json` `dishes` (each at most once). `verdict`: `1` 推荐, `-1` 避雷, absent = no opinion. Its photos. |
 

@@ -158,16 +158,14 @@ one:
   to it. `prepare` imports general photos first, then each dish's photos, and
   lists them in the review's entry for that dish; never move a photo to a
   different dish;
-- **rating**: already mapped to 1-5 from the form's five options, or none;
-  never infer dish verdicts from it. The form requires the rating and makes
-  the review text optional, so a **rating-only** submission is valid: a
-  review with the rating and no text. Older submissions may have text and no
-  rating (their review is not counted in the average);
+- **rating**: already mapped to 1-5 from the form's five options; never
+  infer dish verdicts from it. The form requires the rating and makes
+  everything else optional, so a **rating-only** submission is valid: a
+  review with the rating and no text;
 - **credit and consent**: the display name (credit a blank one as 匿名, as the form promises), whether a contact email exists
   (the email stays private: pass it only to `content:contributor -- add
---email`), and consent. A `BLOCKED` submission (no consent, or neither a
-  valid rating, text, nor photos, or photos only and none retrieved) gets no
-  draft; report it to the maintainer.
+--email`), and consent. A `BLOCKED` submission (no consent, or no valid
+  rating) gets no draft; report it to the maintainer.
 - **review checks**: notes starting with `review check:` flag promotion,
   a possible undisclosed relationship with the restaurant, strong
   accusations, near-identical texts, or repeat reviews by one email. They
@@ -197,7 +195,7 @@ restaurant information from the map listing, validation,
 and a private review report (`review-report.md`). It never overwrites a
 draft edited by hand and never promotes or publishes. Act on the report:
 
-- **blocked**: no consent, rejected, photos unresolved, contact details as
+- **blocked**: no consent or rating, rejected, photos unresolved, contact details as
   the display name, or an uncertain restaurant. For the restaurant, compare
   the candidates, ask the maintainer when unsure, then rerun with
   `--id <restaurant id>` or `--new`.

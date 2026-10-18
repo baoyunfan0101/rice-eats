@@ -283,7 +283,7 @@ function RatingSummary({ restaurant: r }: { restaurant: RestaurantDetail }) {
     <p className="flex flex-wrap items-center gap-2" title={RATING_HINT}>
       <RatingBadge rating={r.rating} size="lg" />
       <span className="font-black">{r.ratingAverage!.toFixed(1)}</span>
-      <span className="text-sm text-muted">{r.ratingCount} 人评分</span>
+      <span className="text-sm text-muted">{r.reviewCount} 人评分</span>
     </p>
   );
 }
@@ -301,14 +301,10 @@ function DishCounts({ dish }: { dish: Dish }) {
   );
 }
 
-function ReviewHeader({ rating, name, date }: { rating?: Rating; name: string; date: string }) {
+function ReviewHeader({ rating, name, date }: { rating: Rating; name: string; date: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      {rating !== undefined ? (
-        <RatingBadge rating={rating} />
-      ) : (
-        <span className="text-xs text-muted">未评级</span>
-      )}
+      <RatingBadge rating={rating} />
       <span className="font-bold">{name}</span>
       <time dateTime={date} className="text-sm text-muted">
         {date}

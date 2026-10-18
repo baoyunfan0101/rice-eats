@@ -591,7 +591,7 @@ async function renderRestaurant(
       id,
       contributor: people(id),
       date: review.date,
-      ...(review.rating !== undefined ? { rating: review.rating } : {}),
+      rating: review.rating,
       html: text?.trim()
         ? await renderMarkdown(text, (url) => {
             throw new Error(`${REVIEWS_DIR}/${id}.md: images are not placed in review texts ("${url}")`);
@@ -629,8 +629,9 @@ async function renderRestaurant(
       reviews: mentions,
     };
   });
-  const ratings = reviews.flatMap((r) => (r.review.rating !== undefined ? [r.review.rating] : []));
-  const average = ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : undefined;
+  const average = reviews.length
+    ? reviews.reduce((sum, r) => sum + r.review.rating, 0) / reviews.length
+    : undefined;
 
   return {
     id: info.id,
@@ -644,7 +645,6 @@ async function renderRestaurant(
     ...(average !== undefined
       ? { rating: Math.min(5, Math.max(1, Math.round(average))) as Rating, ratingAverage: Math.round(average * 10) / 10 }
       : {}),
-    ratingCount: ratings.length,
     reviewCount: reviews.length,
     pricePerPerson: info.pricePerPerson,
     cover: images[0],
@@ -668,7 +668,6 @@ function toSummary(detail: RestaurantDetail): RestaurantSummary {
     location: detail.location,
     rating: detail.rating,
     ratingAverage: detail.ratingAverage,
-    ratingCount: detail.ratingCount,
     reviewCount: detail.reviewCount,
     pricePerPerson: detail.pricePerPerson,
     cover: detail.cover,

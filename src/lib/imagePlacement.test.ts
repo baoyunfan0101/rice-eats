@@ -23,6 +23,7 @@ const review = (imageIndexes: number[]): Review => ({
   id: 'u-001',
   contributor: { id: 'u-001', name: 'A' },
   date: '2026-10-01',
+  rating: 4,
   html: '',
   imageIndexes,
   dishes: [],

@@ -244,7 +244,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     expect(published.details[0]!.contributors).toEqual([
       { id: contributor, name: '投稿人（虚构）' },
     ]);
-    expect(published.details[0]).toMatchObject({ rating: 3, ratingCount: 1 });
+    expect(published.details[0]).toMatchObject({ rating: 3, reviewCount: 1 });
     expect(JSON.stringify(published.details)).not.toContain('someone@example.com');
 
     expect(await Promise.all(originals.map((f) => sha(path.join(submission, f))))).toEqual(before);
@@ -263,7 +263,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     await mkdir(path.join(dir, 'reviews'));
     await writeFile(
       path.join(dir, 'reviews', `${contributor}.json`),
-      JSON.stringify({ date: '2026-10-14', images: stored }),
+      JSON.stringify({ date: '2026-10-14', rating: 3, images: stored }),
     );
     await moveDraft(db.drafts, db.restaurants, 'r-photos');
     await setStatus(path.join(db.restaurants, 'r-photos'), 'published');

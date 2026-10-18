@@ -119,7 +119,7 @@ const prepareStateSchema = z.strictObject({
   }),
   /** True when prepare created the draft folder (new restaurant, or a checkout of a public one). */
   createdDraft: z.boolean(),
-  contributorId: contributorIdSchema.optional(),
+  contributorId: contributorIdSchema,
   /** Submitted photo slot -> stored image (and the stored file's SHA-256), so photos are imported once. */
   photos: z.array(
     z.strictObject({ slot: z.number().int().min(1), sha256: z.string(), image: z.string(), stored: z.string() }),
@@ -810,11 +810,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   const general = [...new Set([...(previous?.images ?? []), ...generalPhotos])];
   const review: Review = {
     date: submittedDate,
-    ...(report.rating !== undefined
-      ? { rating: report.rating as Rating }
-      : previous?.rating !== undefined
-        ? { rating: previous.rating }
-        : {}),
+    rating: report.rating as Rating,
     ...(general.length ? { images: general } : {}),
     ...(reviewDishes.length ? { dishes: reviewDishes } : {}),
   };
@@ -1059,7 +1055,7 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
     messages.push(...details);
     return { status, messages };
   };
-  const cid = state.contributorId!;
+  const cid = state.contributorId;
   const target = path.join(options.draftsDir, state.restaurantId);
   if (!existsSync(path.join(target, INFO_FILE))) {
     if (existsSync(path.join(options.restaurantsDir, state.restaurantId, REVIEWS_DIR, `${cid}.json`))) {

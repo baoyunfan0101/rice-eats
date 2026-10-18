@@ -101,19 +101,19 @@ export function contextProblem(context: SubmissionContext): string | undefined {
 /**
  * Question titles in the Tally form (docs/submissions.md). Intake finds the
  * answers in a Tally CSV export by these titles (a column whose header starts
- * with the title or one of its English aliases), so keep them when editing the form.
+ * with the title, so "（选填）" may follow), so keep them when editing the form.
  */
 export const TALLY_QUESTIONS = {
-  review: ['你的点评', 'review'],
+  review: '你的点评',
   /** Optional short text "标签（选填）": keywords separated by commas or "、" (see parseList). */
-  keywords: ['标签', 'tags'],
+  keywords: '标签',
   /** Optional short text "餐厅别名（选填）": other names of the restaurant, separated like tags. */
-  altNames: ['餐厅别名', 'restaurant aliases'],
-  photos: ['照片', 'photos'],
-  rating: ['总体评级', 'overall rating'],
-  displayName: ['署名', 'display name'],
-  email: ['联系邮箱', 'contact email'],
-  consent: ['发布授权', 'publication consent'],
+  altNames: '餐厅别名',
+  photos: '照片',
+  rating: '总体评级',
+  displayName: '署名',
+  email: '联系邮箱',
+  consent: '发布授权',
 } as const;
 
 /**

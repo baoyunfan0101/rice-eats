@@ -174,7 +174,7 @@ const images = z
 export const reviewSchema = z.strictObject({
   /** The day the review was submitted (or last updated), YYYY-MM-DD. */
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date like "2026-10-14"'),
-  rating: rating.optional(),
+  rating,
   /** Photos of the restaurant (not of one dish), in display order. */
   images: images.optional(),
   dishes: z

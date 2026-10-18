@@ -23,7 +23,7 @@ Key paths: `shared/content/` (data contract: canonical schema, generated-data mo
 - Follow established project conventions (`.editorconfig`, `.gitattributes`, existing code style).
 - Keep changes focused on the assigned task.
 - Do not add dependencies or backend infrastructure without a concrete need.
-- The project has not launched: do not add version numbers, releases, changelogs, schema versions, or backward-compatibility code. When a structure changes, update the code, content, and tests directly.
+- Until a new version is released, there is nothing to stay compatible with: never write migration or compatibility handling between in-progress formats (old field names, legacy data, old links, fallbacks), and never bump any version number, of the site or of anything inside it (package, schema, state or cache formats). When a structure changes, update the code, content, fixtures, tests, and docs directly to the one current format.
 
 ## Commands
 

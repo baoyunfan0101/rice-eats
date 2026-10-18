@@ -10,7 +10,7 @@ Website: https://baoyunfan0101.github.io/rice-eats/
 
 ## Features
 
-- **One discovery page**: a restaurant explorer (search by Chinese, English, or other names; multi-select cuisine, tag, and rating filters; a price-per-person range; sorting by rating, distance, price, or name) next to a map of the results. On phones, the map fills the screen under a three-state bottom sheet. The map shows what the explorer selects and never changes it; filters live in the URL, and older `?view=` links still work.
+- **One discovery page**: a restaurant explorer (search by Chinese, English, or other names; multi-select cuisine, tag, and rating filters; a price-per-person range; sorting by rating, distance, price, or name) next to a map of the results. On phones, the map fills the screen under a three-state bottom sheet. The map shows what the explorer selects and never changes it; filters live in the URL.
 - **Shareable URLs**: the view, filters, and selected restaurant are kept in the address bar, and every restaurant has its own link (`/rice-eats/r/<id>/`).
 - **Restaurant pages** in the style of a review site: the overall rating is the average of every reviewer's rating; each dish shows its 推荐 and 避雷 counts and opens a panel with every reviewer's comment and photos; all reviews are listed newest first, each with its reviewer's rating. Any number of photos (photo-only restaurants work too), and Google Maps and Apple Maps navigation links.
 - **Responsive** layouts for phones and desktops, keyboard accessible, with loading, empty, and error states.

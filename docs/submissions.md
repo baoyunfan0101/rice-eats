@@ -230,7 +230,7 @@ access to them. Menu names may differ slightly in Tally's editor.
    use Tally's required setting only. Help text sits directly below the
    question it belongs to and does not repeat "选填". Intake matches titles by
    prefix, so `你的点评（选填）` and `菜品1 照片（选填）` are read like
-   `你的点评` and `菜品1 照片` (exports of the older titles still work).
+   `你的点评` and `菜品1 照片`.
 
    Consent option text (`发布授权`); intake treats an answer starting with
    `我同意` as consent:
@@ -265,11 +265,9 @@ access to them. Menu names may differ slightly in Tally's editor.
      are hidden, so a dish's name and verdict are required only once the
      contributor adds that dish. Intake also reports dishes without a name or
      verdict, so a gap here never publishes anything.
-   - The overall rating is required and the review text optional, so a
-     submission may carry only a rating (plus consent). Intake accepts that
-     as content; an invalid rating alone is blocked. Older submissions with
-     text and no rating stay valid; their review is shown but not counted in
-     the restaurant's average.
+   - The overall rating is required and everything else optional, so a
+     submission may carry only a rating (plus consent). Intake blocks a
+     submission without a valid rating.
    - Option labels carry the same emoji as the website (`src/lib/labels.ts`);
      intake accepts the answers with or without the emoji.
 5. **Photos.** In each file upload block, allow multiple files, limit the
@@ -436,7 +434,8 @@ into a private draft with no manual field mapping
 (`scripts/content/prepare.ts`). It never promotes, publishes, commits, or
 touches `content/`, and it can be run again at any time.
 
-- **Blocked** (exit code 1, nothing written) without consent, for a rejected
+- **Blocked** (exit code 1, nothing written) without consent or a valid
+  rating, for a rejected
   submission, while photos are unresolved (pending or failed; recover or
   waive them first), when the display name looks like contact details, or
   when the restaurant is uncertain: give `--id <restaurant id>` for an
@@ -684,10 +683,8 @@ If a link has expired or needs the Tally login, open the submission in the
 Tally dashboard, download the photo, and add it with `add-photo` (it must be
 a JPEG, PNG, WebP, or HEIC image of at most 10 MB; the original file is not
 changed). If the maintainer decides to go ahead without it, use
-`waive-photo`. A photo-only submission without any retrieved photo is
-BLOCKED until a photo is recovered or the submission is rejected; a
-submission with text or some photos can be drafted once the maintainer has
-decided about the missing ones.
+`waive-photo`. A submission can be drafted once the maintainer has decided
+about every missing photo.
 
 **Download security.** Photo links come from untrusted submissions, so every
 request, including each redirect, is checked before it is made: https only,

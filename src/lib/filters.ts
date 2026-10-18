@@ -8,7 +8,6 @@
 import type { LatLng, RestaurantSummary } from '../../shared/content/model';
 import { CUISINE_IDS, RATINGS, type Rating } from '../../shared/content/vocabulary';
 import { distanceMeters } from './poi';
-import { PRICE_BUCKETS } from './price';
 
 /** Sorts kept in the URL. Distance needs the visitor's location, so it is never stored. */
 export const SORTS = ['rating', 'price-asc', 'price-desc', 'name'] as const;
@@ -63,27 +62,17 @@ const price = (value: string | null): number | undefined => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined;
 };
 
-/**
- * Reads the state from the URL. Invalid values are ignored. Older links still
- * work: `view=list|grid|map` is ignored (there is one page now), and the
- * single-value `cuisine`, `tag`, `rating`, `price=<bucket>`, and `sort=price`
- * map onto the new filters.
- */
+/** Reads the state from the URL. Invalid values are ignored. */
 export function parseBrowseState(params: URLSearchParams): BrowseState {
   const ratings = listParam(params, 'rating')
     .map(Number)
     .filter((r): r is Rating => (RATINGS as readonly number[]).includes(r));
   let priceMin = price(params.get('min'));
   let priceMax = price(params.get('max'));
-  const bucket = PRICE_BUCKETS.find((b) => b.id === params.get('price'));
-  if (bucket && priceMin === undefined && priceMax === undefined) {
-    priceMin = bucket.min > 0 ? bucket.min : undefined;
-    priceMax = Number.isFinite(bucket.max) ? bucket.max : undefined;
-  }
   if (priceMin !== undefined && priceMax !== undefined && priceMin > priceMax) {
     [priceMin, priceMax] = [priceMax, priceMin];
   }
-  const sortParam = params.get('sort') === 'price' ? 'price-asc' : params.get('sort');
+  const sortParam = params.get('sort');
   return {
     query: params.get('q') ?? '',
     cuisines: canonical(listParam(params, 'cuisine'), CUISINE_IDS),

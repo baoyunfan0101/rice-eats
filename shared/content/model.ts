@@ -61,7 +61,7 @@ export interface Review {
   contributor: Contributor;
   /** YYYY-MM-DD. */
   date: string;
-  rating?: Rating;
+  rating: Rating;
   /** Sanitized HTML of the review text; empty without text. */
   html: string;
   /** Indexes into RestaurantDetail.images of the review's photos (not of one dish). */
@@ -94,11 +94,10 @@ export interface RestaurantSummary {
   tags: Tag[];
   address?: string;
   location?: LatLng;
-  /** The average of the reviews' ratings, rounded to a level; absent without ratings. */
+  /** The average of the reviews' ratings, rounded to a level; absent without reviews (a draft). */
   rating?: Rating;
-  /** The average itself (one decimal) and how many reviews rated. */
+  /** The average itself, one decimal. */
   ratingAverage?: number;
-  ratingCount: number;
   reviewCount: number;
   pricePerPerson?: number;
   /** The first image of the restaurant, if any. */

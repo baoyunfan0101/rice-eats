@@ -54,7 +54,9 @@ export const validInfo = (id: string, extra: Record<string, unknown> = {}) => ({
 });
 
 /** A minimal review by u-001 (a published restaurant needs one). */
-export const TEST_REVIEW = { 'reviews/u-001.json': JSON.stringify({ date: '2026-10-01' }) };
+export const TEST_REVIEW = {
+  'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 4 }),
+};
 
 /**
  * Writes a restaurant folder named after its id (or `folder`) with extra
