@@ -13,7 +13,7 @@ export const RATING_STYLES: Record<Rating, string> = {
   1: 'bg-sand text-muted',
 };
 
-export const RATING_HINT = `个人评级，从高到低：${RATINGS.map((r) => RATING_LABELS[r]).join(' > ')}`;
+export const RATING_HINT = `评级，从高到低：${RATINGS.map((r) => RATING_LABELS[r]).join(' > ')}`;
 
 export function priceText(price: number | undefined): string | undefined {
   if (price === undefined) return undefined;

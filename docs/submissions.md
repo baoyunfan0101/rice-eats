@@ -268,7 +268,8 @@ access to them. Menu names may differ slightly in Tally's editor.
    - The overall rating is required and the review text optional, so a
      submission may carry only a rating (plus consent). Intake accepts that
      as content; an invalid rating alone is blocked. Older submissions with
-     text and no rating stay valid.
+     text and no rating stay valid; their review is shown but not counted in
+     the restaurant's average.
    - Option labels carry the same emoji as the website (`src/lib/labels.ts`);
      intake accepts the answers with or without the emoji.
 5. **Photos.** In each file upload block, allow multiple files, limit the
@@ -417,7 +418,7 @@ whose id is not in `npm run content:submission -- list`; move its email from
    checking restaurant information) and run it for you.
 
 5. Review and approve as usual (`content:promote`, `content:publish`). Then
-   record the outcome (prepare records `drafted` and `deferred` itself):
+   record the outcome (prepare records `drafted` itself):
 
    ```sh
    npm run content:submission -- mark <submission id> --status processed --id <restaurant id>
@@ -448,15 +449,19 @@ touches `content/`, and it can be run again at any time.
   name alone; a submission without an email gets its own contributor (with a
   note when the name is already taken), and anonymous and named submissions
   are never merged.
-- **One contributor per restaurant**: a restaurant's review comes from the
-  first accepted submission only (a public record crediting someone, or
-  another submission that is drafted or processed). Every later submission
-  for it is kept and marked `deferred`, never merged into the existing review
-  and never treated as a duplicate import. A rejected earlier submission does
-  not count, so the next one can be used.
-- **Draft**: rating, review, named dishes with their verdicts, comments, and
-  all their photos (`images`), other photos for the gallery, keywords mapped
-  to tags, restaurant information (below), and the contributor. Photos are
+- **One review per contributor**: the submission becomes the contributor's
+  review, `reviews/<contributor id>.json` (date, rating, dish verdicts and
+  comments, photos) and `.md` (the text). Other contributors' reviews are
+  never changed. A later submission from the same contributor updates their
+  review: the new date, rating, and text, with their earlier photos and the
+  dishes it does not mention again kept (the report says "updates the
+  contributor's earlier review").
+- **Dishes**: a dish name (or one of its `altNames`, ignoring width, case,
+  and spacing) that the restaurant already has is that dish; any other name
+  becomes a new dish (`d1`, `d2`, …) in `info.json`. To merge two dishes,
+  move one's verdicts to the other's id and add its name to `altNames`.
+- **Draft**: the review, named dishes, keywords mapped to tags, restaurant
+  information (below), and the contributor. Photos are
   standardized in slot order (metadata removed) and imported once each by
   content hash, so a rerun or a recovered photo never creates a second copy.
   Values already in the draft or the public record are never overwritten; a
@@ -464,16 +469,15 @@ touches `content/`, and it can be run again at any time.
 - **Idempotent and recoverable**: progress is kept in `prepare.json` next to
   the submission; an interrupted run continues where it stopped, and a run
   with nothing new reports `unchanged`. A draft edited by hand since the last
-  run is left alone (`--rebuild` starts `info.json` and `review.md` again from
-  the submission). A deleted draft is recreated.
+  run (its review files or photos) is left alone (`--rebuild` builds the
+  contributor's review again from the submission). A deleted draft is recreated.
 - **Photos of a rebuilt draft**: each stored image is linked to its photo
   number and content hash. When a photo no longer belongs to the submission
   (its file changed and was added again, or it was waived), the image an
   earlier run imported for it is removed; a replaced photo keeps its image
   number, so the order and the cover stay. Repeated runs never duplicate an
   image. Images added by hand (`content:add-images`) are never removed: the
-  report lists them, since an image no dish or review uses appears in the
-  gallery.
+  report lists them, since an image no review uses appears in the gallery.
 - **Report**: content and photos, each keyword and its tag, each piece of
   restaurant information with its source, method, and confidence, conflicts,
   privacy and consent findings (contact details in the text are flagged and
@@ -490,14 +494,17 @@ npm run content:submission -- mark <submission id> --status rejected
 The raw submission stays in `private/submissions/` (rejection never deletes
 it). Its contribution is taken back out of the draft, using what
 `prepare.json` recorded: the restaurant before the submission (`base`) and
-what prepare wrote. For each field of `info.json` and for `review.md`:
+what prepare wrote:
 
-- changed by prepare and not edited since: back to its value before;
-- edited only by the maintainer: kept;
-- lists (`contributorIds`, `tags`, `altNames`, `cuisines`): only the entries
-  the submission added are removed;
-- images the submission brought (recognized by content) are removed;
-  images that were there before or were added by hand stay;
+- the contributor's review goes (or, for an update, their earlier review is
+  put back); other reviews are never touched;
+- each field of `info.json` changed by prepare and not edited since goes back
+  to its value before; one edited only by the maintainer is kept;
+- lists (`tags`, `altNames`, `cuisines`): only the entries the submission
+  added are removed; dishes it added go unless another review rates them;
+- images the submission brought (recognized by content) are removed, unless
+  another review uses them; images that were there before or were added by
+  hand stay;
 - a draft folder that prepare created and that holds nothing else is
   removed; a restaurant's earlier draft (`content:new`, `content:edit`) keeps
   everything that did not come from the submission;
@@ -505,9 +512,8 @@ what prepare wrote. For each field of `info.json` and for `review.md`:
   another draft uses them. The contributor stays in
   `private/contributors.json` (a record), but no draft credits them.
 
-A rejected submission no longer reserves the restaurant: the command lists
-deferred submissions about it, which can now be prepared. A restaurant that
-was already promoted is not changed; edit it with `content:edit`.
+A restaurant that was already promoted is not changed; edit it with
+`content:edit`.
 
 **The publication block.** The rollback has its own state in `prepare.json`
 (`rejection.status`: `pending` while it runs, `manual` when it needs the
@@ -517,8 +523,9 @@ other status, `prepare` refuses the submission, and `content:check` and
 `content:promote` (also with `--approved`) fail for that restaurant's draft,
 whatever the log says. This happens when:
 
-- a field was edited by hand **and** written by the submission (say the
-  maintainer corrected its review): nothing is changed and the command exits
+- a field of `info.json` was edited by hand **and** written by the
+  submission (say the maintainer corrected the address it gave), or another
+  review now uses one of its photos: nothing is changed and the command exits
   with code 1 listing the fields. Remove the submission's content from them
   (or put back what was there before) and run it again, or, after checking
   them, keep their current values with `--resolved`;
@@ -534,7 +541,7 @@ whatever the log says. This happens when:
   time in the log entry's `audit`:
 
   ```sh
-  npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, photos, and credit"
+  npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, and photos"
   ```
 
 `--resolved` and `--state-lost` are accepted only with `--status rejected`;
@@ -708,9 +715,8 @@ enter `content/` or the website build.
 ## Retention and backup
 
 Every submission received is kept in the private database, whatever its
-status (`imported`, `drafted`, `processed`, `deferred`, or `rejected`), so
-later features (for example several reviews per restaurant) can use the
-original material. The status never decides whether it is kept, and no
+status (`imported`, `drafted`, `processed`, or `rejected`), so a review can
+be rebuilt from the original material. The status never decides whether it is kept, and no
 command deletes it:
 
 | Kept                                                    | Where (all in `private/`, git-ignored)                                               |

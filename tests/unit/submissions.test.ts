@@ -21,7 +21,7 @@ import {
   type ImportOptions,
   type Submission,
 } from '../../scripts/content/submissions.ts';
-import { tempDir, validInfo, writeRestaurant } from './helpers.ts';
+import { TEST_REVIEW, tempDir, validInfo, writeRestaurant } from './helpers.ts';
 
 // Synthetic Tally CSV export: the columns Tally writes (Submission ID,
 // Submitted at, question titles, hidden fields). All data is fictional.
@@ -159,7 +159,7 @@ async function setup() {
     restaurantsDir,
     'r-abc234',
     validInfo('r-abc234', { name: '测试餐厅', altNames: ['Test Place'], address: '1 Main St' }),
-    { 'review.md': review },
+    { ...TEST_REVIEW, 'reviews/u-001.md': review },
   );
   await writeRestaurant(
     restaurantsDir,
@@ -623,7 +623,7 @@ describe('importing submissions', () => {
       ...(await files(id)),
     ];
     const before = { sub1: await stored('sub1'), sub2: await stored('sub2') };
-    for (const status of ['drafted', 'deferred', 'processed', 'rejected', 'imported'] as const) {
+    for (const status of ['drafted', 'processed', 'rejected', 'imported'] as const) {
       await markSubmission(submissionsDir, 'sub1', status, 'r-new111');
       await markSubmission(submissionsDir, 'sub2', status);
       expect(await stored('sub1')).toEqual(before.sub1);
@@ -720,7 +720,9 @@ describe('importing submissions', () => {
     await retryPhotos('sub2', options());
     await submissionStatus('sub3', options());
     expect(await snapshot()).toEqual(before);
-    expect(await readFile(path.join(restaurantsDir, 'r-abc234/review.md'), 'utf8')).toBe(review);
+    expect(await readFile(path.join(restaurantsDir, 'r-abc234/reviews/u-001.md'), 'utf8')).toBe(
+      review,
+    );
     expect(existsSync(draftsDir)).toBe(false);
   });
 });

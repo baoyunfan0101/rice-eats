@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-20",
+  "rating": 5,
+  "dishes": [
+    {
+      "dish": "d1",
+      "verdict": 1,
+      "comment": "（示例）汤头很浓。"
+    }
+  ]
+}

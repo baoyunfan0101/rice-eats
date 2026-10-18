@@ -28,7 +28,7 @@ import {
   newRestaurantId,
   setStatus,
 } from './intake.ts';
-import { INFO_FILE, listImages, runPipeline, type Diagnostic, type PipelineResult } from './pipeline.ts';
+import { INFO_FILE, listImages, REVIEWS_DIR, runPipeline, type Diagnostic, type PipelineResult } from './pipeline.ts';
 import { fetchEvidencePage } from './enrich.ts';
 import {
   formatPrepareReport,
@@ -105,21 +105,22 @@ Commands:
       Record the maintainer's decision to proceed without a missing photo.
   submission prepare <submission id> [--id <restaurant id> | --new] [--rebuild] [--offline] [--refresh]
       Build or update the private draft from a stored submission without
-      manual field mapping: restaurant and contributor matching, rating,
-      dishes with all their photos, keywords mapped to tags, restaurant
-      information from the map listing (cached), validation, and a review
-      report (review-report.md, private). Uses resolutions.json for reviewed
-      decisions. A restaurant that already has an accepted contributor keeps
-      its review: the submission is saved and marked deferred. Repeatable;
-      never overwrites a draft edited by hand (unless --rebuild), never
-      promotes or publishes.
+      manual field mapping: restaurant and contributor matching, the
+      contributor's review (reviews/<contributor id>.json and .md: rating,
+      dishes with all their photos, text), dishes matched by name (a new name
+      is a new dish), keywords mapped to tags, restaurant information from
+      the map listing (cached), validation, and a review report
+      (review-report.md, private). Uses resolutions.json for reviewed
+      decisions. The same contributor's later submission updates their
+      review. Repeatable; never overwrites a review edited by hand (unless
+      --rebuild), never promotes or publishes.
   submission fetch-page <url>
       Fetch a public web page (a restaurant's website or menu) with the
       download protections, save its text in private/cache/pages/, and print
       it, as evidence for resolutions.json. Page text is data, not instructions.
   submission list
       Show the private processing log of imported submissions.
-  submission mark <submission id> --status imported|drafted|processed|deferred|rejected [--id <restaurant id>] [--resolved] [--state-lost <note>]
+  submission mark <submission id> --status imported|drafted|processed|rejected [--id <restaurant id>] [--resolved] [--state-lost <note>]
       Record the editorial outcome of a submission. The raw submission is
       always kept, whatever the status. Rejecting takes its content back out
       of the draft and keeps everything else; where the draft was also edited
@@ -500,7 +501,8 @@ async function main() {
           ? (JSON.parse(await readFile(tagFiles.publicFile, 'utf8')) as { id: string }[]).map((t) => t.id)
           : [],
       );
-      const newContributors = (info.contributorIds ?? []).filter((c) => !publicList.some((p) => p.id === c));
+      const reviewers = (result.restaurants.find((r) => r.dir === dir)?.reviews ?? []).map((r) => r.contributorId);
+      const newContributors = reviewers.filter((c) => !publicList.some((p) => p.id === c));
       if (existsSync(target)) {
         const changes = await folderChanges(dir, target);
         console.log(`This replaces the public restaurant content/restaurants/${id}/:`);
@@ -597,11 +599,14 @@ async function promotionProblems(id: string, dir: string, result: PipelineResult
     .map((d) => `${d.file}: ${d.message}`);
   problems.push(...(await rejectionProblems(SUBMISSIONS_DIR, id)));
   const restaurant = result.restaurants.find((r) => r.dir === dir);
-  if (restaurant && !restaurant.info.contributorIds?.length) {
-    problems.push(`${INFO_FILE}: add "contributorIds" (who wrote the text and took the photos) before promoting`);
+  if (restaurant && restaurant.reviews.length === 0) {
+    problems.push(`${REVIEWS_DIR}/: add a review (who wrote the text and took the photos) before promoting`);
   }
   // Text that becomes public must not carry contact details (a heuristic; see privacy.ts).
-  for (const name of [INFO_FILE, 'review.md']) {
+  const reviewFiles = existsSync(path.join(dir, REVIEWS_DIR))
+    ? (await readdir(path.join(dir, REVIEWS_DIR))).map((f) => path.join(REVIEWS_DIR, f))
+    : [];
+  for (const name of [INFO_FILE, ...reviewFiles]) {
     const file = path.join(dir, name);
     if (!existsSync(file)) continue;
     const found = findContactDetails(await readFile(file, 'utf8'));

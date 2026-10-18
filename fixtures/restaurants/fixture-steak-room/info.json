@@ -2,14 +2,12 @@
   "id": "fixture-steak-room",
   "status": "published",
   "name": "牛排房（虚构示例）",
-  "cuisines": ["american", "steak"],
   "address": "600 Example Ln, Houston, TX 77098 (fictional)",
   "location": {
     "lat": 29.7362,
     "lng": -95.4209
   },
-  "rating": 1,
-  "pricePerPerson": 75,
+  "cuisines": ["american", "steak"],
   "tags": ["date"],
-  "contributorIds": ["u-001"]
+  "pricePerPerson": 75
 }

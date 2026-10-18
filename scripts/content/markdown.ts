@@ -1,4 +1,4 @@
-// review.md -> sanitized HTML. Raw HTML in Markdown is dropped, links are
+// A review's text (reviews/<contributor id>.md) -> sanitized HTML. Raw HTML in Markdown is dropped, links are
 // limited to safe protocols, and local images are replaced by processed renditions.
 
 import type { Element, Root as HastRoot } from 'hast';
@@ -52,12 +52,12 @@ export async function renderMarkdown(
     .use(remarkParse)
     .use(remarkGfm)
     .use(() => (tree: MdastRoot) => {
-      // The page title is the only <h1>; shift review headings so they start at <h2>.
+      // A review sits under the page title (<h1>) and "点评" (<h2>): its headings start at <h3>.
       let minDepth = 6;
       visit(tree, 'heading', (node) => {
         minDepth = Math.min(minDepth, node.depth);
       });
-      const shift = Math.max(0, 2 - minDepth);
+      const shift = Math.max(0, 3 - minDepth);
       visit(tree, 'heading', (node) => {
         node.depth = Math.min(6, node.depth + shift) as typeof node.depth;
       });

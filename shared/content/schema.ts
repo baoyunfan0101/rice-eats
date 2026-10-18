@@ -1,5 +1,7 @@
 // The canonical database formats:
-//   content/restaurants/<id>/info.json   restaurant metadata (restaurantInfoSchema)
+//   content/restaurants/<id>/info.json   restaurant facts and its dishes (restaurantInfoSchema)
+//   content/restaurants/<id>/reviews/<contributor id>.json (+ .md)
+//                                        one contributor's review (reviewSchema)
 //   content/contributors.json            public contributor identities
 //   content/tags.json                    the public tag registry
 //   private/contributors.json            pending contributors and contact details (git-ignored)
@@ -19,6 +21,9 @@ const text = z.string().trim().min(1, 'must not be empty');
 export const idSchema = z
   .string()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be lowercase letters, digits, and single hyphens');
+
+/** Dish ids are short slugs, unique within a restaurant, e.g. "d1". */
+export const dishIdSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be a slug such as "d1"');
 
 /** Contributor ids look like "u-001". */
 export const contributorIdSchema = z.string().regex(/^u-\d{3,}$/, 'must look like "u-001"');
@@ -122,28 +127,19 @@ export const restaurantInfoSchema = z
   cuisines: z.array(controlled(CUISINE_IDS, 'cuisine')).refine(unique, 'must not repeat').optional(),
   /** Ids from the tag registry (content/tags.json); checked against it by the pipeline. */
   tags: z.array(tagIdSchema).refine(unique, 'must not repeat').optional(),
-  rating: z
-    .number()
-    .int('must be a whole number from 1 (lowest) to 5 (highest)')
-    .min(1, 'must be a whole number from 1 (lowest) to 5 (highest)')
-    .max(5, 'must be a whole number from 1 (lowest) to 5 (highest)')
-    .transform((value) => value as Rating)
-    .optional(),
   pricePerPerson: z.number().positive().max(1000).optional(),
+  /** The restaurant's dishes; reviews give their verdicts, comments, and photos. */
   dishes: z
     .array(
       z.strictObject({
+        /** Stable within the restaurant (e.g. "d1"); reviews refer to it. */
+        id: dishIdSchema,
         name: text,
-        verdict: z
-          .literal(VERDICTS, {
-            message: 'must be 1 (recommended) or -1 (not recommended); leave it out for no opinion',
-          })
-          .optional(),
-        comment: text.optional(),
-        /** Every photo of this dish, in display order (zero, one, or more). */
-        images: z.array(imagePathSchema).min(1, 'leave "images" out when the dish has no photo').refine(unique, 'must not repeat').optional(),
+        /** Other names contributors used for this dish; matched like tag aliases. */
+        altNames: z.array(text).optional(),
       }),
     )
+    .refine((list) => unique(list.map((d) => d.id)), 'dish ids must be unique')
     .optional(),
   links: z
     .strictObject({
@@ -152,10 +148,54 @@ export const restaurantInfoSchema = z
       website: httpUrl.optional(),
     })
     .optional(),
-  contributorIds: z.array(contributorIdSchema).refine(unique, 'must not repeat').optional(),
 });
 
 export type RestaurantInfo = z.infer<typeof restaurantInfoSchema>;
+
+const rating = z
+  .number()
+  .int('must be a whole number from 1 (lowest) to 5 (highest)')
+  .min(1, 'must be a whole number from 1 (lowest) to 5 (highest)')
+  .max(5, 'must be a whole number from 1 (lowest) to 5 (highest)')
+  .transform((value) => value as Rating);
+
+const images = z
+  .array(imagePathSchema)
+  .min(1, 'leave "images" out when there is no photo')
+  .refine(unique, 'must not repeat');
+
+/**
+ * content/restaurants/<id>/reviews/<contributor id>.json: one contributor's
+ * review of the restaurant (one per contributor; a later submission by the
+ * same contributor updates it). The review text, if any, is the .md file
+ * with the same name. Photos are stored in the restaurant's images/ and
+ * belong to one review each.
+ */
+export const reviewSchema = z.strictObject({
+  /** The day the review was submitted (or last updated), YYYY-MM-DD. */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date like "2026-10-14"'),
+  rating: rating.optional(),
+  /** Photos of the restaurant (not of one dish), in display order. */
+  images: images.optional(),
+  dishes: z
+    .array(
+      z.strictObject({
+        /** An id from the restaurant's "dishes". */
+        dish: dishIdSchema,
+        verdict: z
+          .literal(VERDICTS, {
+            message: 'must be 1 (recommended) or -1 (not recommended); leave it out for no opinion',
+          })
+          .optional(),
+        comment: text.optional(),
+        /** Every photo of this dish in this review, in display order. */
+        images: images.optional(),
+      }),
+    )
+    .refine((list) => unique(list.map((d) => d.dish)), 'a dish appears once per review')
+    .optional(),
+});
+export type Review = z.infer<typeof reviewSchema>;
 
 const notAnEmail = text.refine((value) => !value.includes('@'), {
   message: 'display names are public; keep email addresses in private/contributors.json',

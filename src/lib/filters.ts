@@ -164,8 +164,8 @@ export function filterRestaurants(
   });
 }
 
-// Highest rating first; unrated restaurants (0) last.
-const ratingOf = (r: RestaurantSummary) => r.rating ?? 0;
+// Highest average rating first; unrated restaurants (0) last.
+const ratingOf = (r: RestaurantSummary) => r.ratingAverage ?? 0;
 const byName = (a: RestaurantSummary, b: RestaurantSummary) =>
   a.name.localeCompare(b.name, 'zh-Hans-CN') || a.id.localeCompare(b.id);
 /** Unknown prices sort after known ones in either direction. */

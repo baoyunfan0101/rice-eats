@@ -1,15 +1,12 @@
 // Decides where each restaurant photo appears on the detail page.
 //
-// Placement (in this order):
-//   1. review.md  explicit editorial placement; every placement is kept, so an
-//                 author can repeat a photo on purpose inside the review.
-//   2. hero       the cover (images[0]), unless the review already places it.
-//   3. dish card  every photo of the dish, in its stored order. A dish's photos
-//                 are part of the dish (structured data), so they are never
-//                 hidden by the other places: a dish photo that is also the
-//                 cover or appears in the review still shows in its card.
-//   4. gallery    every photo not shown above, in stored order, so nothing
-//                 is shown twice outside the dish cards.
+// Every photo belongs to one review (scripts/content/pipeline.ts checks it):
+//   hero        the cover (images[0]).
+//   dish card   every photo of the dish, from every review (newest first);
+//               the dish's panel shows each review's photos with its words.
+//   review      the review's own photos (not of one dish).
+//   gallery     every photo no review uses (added by the maintainer), in
+//               stored order, so nothing stored is hidden.
 // List, grid, and map previews always use the cover; this policy only applies
 // to the detail page.
 
@@ -17,28 +14,27 @@ import type { ImageAsset, RestaurantDetail } from '../../shared/content/model';
 
 export interface ImagePlacement {
   hero?: ImageAsset;
-  /** One entry per dish, aligned with `dishes`: all of its photos, possibly none. */
-  dishImages: ImageAsset[][];
   gallery: ImageAsset[];
 }
 
 export function placeImages(
-  r: Pick<RestaurantDetail, 'images' | 'dishes' | 'reviewImageIndexes'>,
+  r: Pick<RestaurantDetail, 'images' | 'dishes' | 'reviews'>,
 ): ImagePlacement {
-  const used = new Set<number>(r.reviewImageIndexes);
-  let hero: ImageAsset | undefined;
-  if (r.images.length > 0 && !used.has(0)) {
-    hero = r.images[0];
-    used.add(0);
-  }
-  const dishImages = r.dishes.map((dish) => {
-    const indexes = [...new Set(dish.imageIndexes)].filter((i) => r.images[i]);
-    indexes.forEach((i) => used.add(i));
-    return indexes.map((i, n) => ({
-      ...r.images[i]!,
-      alt: indexes.length > 1 ? `${dish.name}（${n + 1}/${indexes.length}）` : dish.name,
-    }));
-  });
-  const gallery = r.images.filter((_, i) => !used.has(i));
-  return { hero, dishImages, gallery };
+  const used = new Set<number>([0]);
+  for (const dish of r.dishes) dish.imageIndexes.forEach((i) => used.add(i));
+  for (const review of r.reviews) review.imageIndexes.forEach((i) => used.add(i));
+  return { hero: r.images[0], gallery: r.images.filter((_, i) => !used.has(i)) };
+}
+
+/** The images at these indexes (each once, in order); `alt` names a dish's photos "name（n/N）". */
+export function imagesAt(
+  r: Pick<RestaurantDetail, 'images'>,
+  indexes: number[],
+  alt?: string,
+): ImageAsset[] {
+  const valid = [...new Set(indexes)].filter((i) => r.images[i]);
+  return valid.map((i, n) => ({
+    ...r.images[i]!,
+    ...(alt ? { alt: valid.length > 1 ? `${alt}（${n + 1}/${valid.length}）` : alt } : {}),
+  }));
 }

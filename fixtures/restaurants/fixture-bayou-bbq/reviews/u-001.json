@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-01",
+  "rating": 5,
+  "images": ["images/01-cover.jpg"],
+  "dishes": [
+    {
+      "dish": "d1",
+      "verdict": 1,
+      "images": [
+        "images/02-brisket.jpg",
+        "images/03-brisket-sliced.jpg",
+        "images/04-brisket-bark.jpg"
+      ]
+    },
+    {
+      "dish": "d2"
+    }
+  ]
+}

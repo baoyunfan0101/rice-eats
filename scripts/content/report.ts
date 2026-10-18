@@ -9,13 +9,13 @@ export function printDiagnostics(diagnostics: Diagnostic[], log = console.error)
 
 /**
  * Information a maintainer may still want to collect, per restaurant. Only
- * contributorIds is required (to publish); everything else is optional and
- * must not be invented to fill this list.
+ * a review is required (to publish); everything else is optional and must
+ * not be invented to fill this list.
  */
 export function missingInfo(restaurant: LoadedRestaurant): string[] {
   const { info } = restaurant;
   const missing: string[] = [];
-  if (!info.contributorIds?.length) missing.push('contributorIds (required to publish)');
+  if (restaurant.reviews.length === 0) missing.push('a review in reviews/ (required to publish)');
   if (!info.address) missing.push('address');
   if (!info.location) missing.push('location (not shown on the map)');
   if (!info.cuisines?.length) missing.push('cuisines');

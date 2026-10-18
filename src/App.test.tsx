@@ -210,6 +210,9 @@ const summary = (
   cuisines: [],
   tags: tags.map((t) => ({ id: t, label: TAG_LABELS[t] ?? t })),
   links: {},
+  ratingCount: extra.rating !== undefined ? 1 : 0,
+  reviewCount: 1,
+  ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,
 });
 
@@ -227,6 +230,9 @@ const restaurants = [
     cuisines: ['bbq'],
     tags: ['group'],
     rating: 5,
+    ratingAverage: 4.5,
+    ratingCount: 2,
+    reviewCount: 2,
     pricePerPerson: 28,
     location: { lat: 29.74, lng: -95.39 },
   }),
@@ -241,31 +247,103 @@ const restaurants = [
   summary('food-truck', { name: 'Food Truck', cuisines: ['fast-food'] }),
 ];
 
-// Photos: 0 cover, 1 and 5 photos of one dish, 2 placed in the review, 3 only
-// in the gallery, 4 used by a dish and the review (shown in both: a dish
-// never loses a photo).
+// Two reviews (newest first). Photos: 0 cover, 1 and 2 of one dish, 3 a
+// review's own photo, 4 used by no review (gallery), 5 of another dish.
+const A = { id: 'u-001', name: '作者甲' };
+const B = { id: 'u-002', name: '作者乙' };
 const detail: RestaurantDetail = {
   ...restaurants[0]!,
   address: '1 Example St',
   cover: img('cover', 'Bayou BBQ'),
   images: [
     img('cover', 'Bayou BBQ'),
-    img('brisket', 'Bayou BBQ (2)'),
-    img('a', '图片说明'),
-    img('extra', 'Bayou BBQ (4)'),
+    img('brisket', '牛胸（1/2）'),
+    img('brisket-2', '牛胸（2/2）'),
+    img('a', 'Bayou BBQ (4)'),
+    img('extra', 'Bayou BBQ (5)'),
     img('ribs', '排骨'),
-    img('brisket-2', 'Bayou BBQ (6)'),
   ],
   dishes: [
-    { name: '牛胸', verdict: 1, comment: '好吃', imageIndexes: [1, 5] },
-    { name: '冰茶', imageIndexes: [] },
-    { name: '豆子', verdict: -1, imageIndexes: [] },
-    { name: '排骨', verdict: 1, imageIndexes: [4] },
+    {
+      id: 'd1',
+      name: '牛胸',
+      recommend: 2,
+      avoid: 0,
+      imageIndexes: [1, 2],
+      reviews: [
+        {
+          reviewId: 'u-002',
+          contributor: B,
+          date: '2026-10-05',
+          verdict: 1,
+          comment: '也好吃',
+          imageIndexes: [],
+        },
+        {
+          reviewId: 'u-001',
+          contributor: A,
+          date: '2026-09-01',
+          verdict: 1,
+          comment: '好吃',
+          imageIndexes: [1, 2],
+        },
+      ],
+    },
+    {
+      id: 'd2',
+      name: '冰茶',
+      recommend: 0,
+      avoid: 0,
+      imageIndexes: [],
+      reviews: [{ reviewId: 'u-001', contributor: A, date: '2026-09-01', imageIndexes: [] }],
+    },
+    {
+      id: 'd3',
+      name: '豆子',
+      recommend: 0,
+      avoid: 1,
+      imageIndexes: [],
+      reviews: [
+        { reviewId: 'u-001', contributor: A, date: '2026-09-01', verdict: -1, imageIndexes: [] },
+      ],
+    },
+    {
+      id: 'd4',
+      name: '排骨',
+      recommend: 1,
+      avoid: 0,
+      imageIndexes: [5],
+      reviews: [
+        { reviewId: 'u-001', contributor: A, date: '2026-09-01', verdict: 1, imageIndexes: [5] },
+      ],
+    },
   ],
-  reviewHtml:
-    '<h2>标题</h2><figure><img src="/a.webp" alt="图片说明"><figcaption>图注</figcaption></figure><p>正文</p><p><img src="/ribs.webp" alt="排骨"></p>',
-  reviewImageIndexes: [2, 4],
-  contributors: [{ id: 'u-001', name: '作者甲' }],
+  reviews: [
+    {
+      id: 'u-002',
+      contributor: B,
+      date: '2026-10-05',
+      rating: 4,
+      html: '<h3>标题</h3><p>第二条点评</p>',
+      imageIndexes: [],
+      dishes: [{ id: 'd1', name: '牛胸', verdict: 1 }],
+    },
+    {
+      id: 'u-001',
+      contributor: A,
+      date: '2026-09-01',
+      rating: 5,
+      html: '<p>第一条点评</p>',
+      imageIndexes: [3],
+      dishes: [
+        { id: 'd1', name: '牛胸', verdict: 1 },
+        { id: 'd2', name: '冰茶' },
+        { id: 'd3', name: '豆子', verdict: -1 },
+        { id: 'd4', name: '排骨', verdict: 1 },
+      ],
+    },
+  ],
+  contributors: [B, A],
 };
 
 let index: ContentIndex;
@@ -724,7 +802,7 @@ describe('browsing', () => {
 });
 
 describe('restaurant details', () => {
-  it('opens from the list and renders text, images, and dishes', async () => {
+  it('opens from the list and shows the average rating, dishes with their counts, and every review', async () => {
     const user = userEvent.setup();
     visit('');
     await user.click(await screen.findByRole('link', { name: /Bayou BBQ/ }));
@@ -735,47 +813,67 @@ describe('restaurant details', () => {
       'srcset',
       '/cover.webp 480w',
     );
-    expect(screen.getByRole('img', { name: '图片说明' })).toBeInTheDocument();
-    expect(screen.getByText('图注')).toBeInTheDocument();
-    // Dishes: only explicit verdicts get labels; no verdict is not a recommendation.
-    expect(screen.getAllByText(/推荐$/)).toHaveLength(2);
-    expect(screen.getAllByText(/避雷/)).toHaveLength(2); // section heading + badge
-    expect(screen.getByRole('heading', { name: '冰茶' }).closest('li')).not.toHaveTextContent(
-      '推荐',
+    // The average of every reviewer's rating, as a level, the number, and the count.
+    expect(screen.getByText('4.5')).toBeInTheDocument();
+    expect(screen.getByText('2 人评分')).toBeInTheDocument();
+    // Dishes, most recommended first, each with its counts.
+    const dishes = screen.getByRole('region', { name: '菜品' });
+    expect(
+      within(dishes)
+        .getAllByRole('heading', { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(['牛胸', '排骨', '冰茶', '豆子']);
+    const card = (name: string) => within(dishes).getByRole('heading', { name }).closest('li')!;
+    expect(card('牛胸')).toHaveTextContent('🔥 推荐 2💣 避雷 0');
+    expect(card('豆子')).toHaveTextContent('🔥 推荐 0💣 避雷 1');
+    // Every review, newest first, each with its rating, name, and date.
+    const reviews = within(screen.getByRole('region', { name: '点评（2）' })).getAllByRole(
+      'listitem',
+      {
+        name: undefined,
+      },
     );
-    // Placement (see src/lib/imagePlacement.ts): the gallery has only what is shown nowhere else.
+    const items = reviews.filter((li) => li.parentElement?.tagName === 'OL');
+    expect(items.map((li) => li.textContent)).toEqual([
+      expect.stringMatching(/^评级：😘 顶级作者乙2026-10-05标题第二条点评🔥 推荐：牛胸$/),
+      expect.stringMatching(/^评级：🥵 夯作者甲2026-09-01第一条点评/),
+    ]);
+    // A review's own photo shows with it; the gallery has only what no review uses.
+    expect(within(items[1]!).getByRole('img', { name: 'Bayou BBQ (4)' })).toBeInTheDocument();
     const gallery = screen.getByRole('region', { name: '照片' });
     expect(
       within(gallery)
         .getAllByRole('img')
         .map((i) => i.getAttribute('src')),
     ).toEqual(['/extra.webp']);
-    const shown = (name: string) =>
-      screen.getAllByRole('img').filter((i) => i.getAttribute('src') === `/${name}.webp`).length;
-    for (const name of ['cover', 'brisket', 'a', 'extra']) expect(shown(name), name).toBe(1);
-    // The dish whose photo the review shows keeps its card and its photo.
-    const ribs = screen.getByRole('heading', { name: '排骨' }).closest('li')!;
-    expect(ribs).toHaveTextContent('推荐');
-    expect(within(ribs).getByRole('img', { name: '排骨' })).toBeInTheDocument();
     // A dish with several photos shows all of them, switchable.
-    const brisket = screen.getByRole('heading', { name: '牛胸' }).closest('li')!;
+    const brisket = card('牛胸');
     expect(within(brisket).getByRole('img', { name: '牛胸（1/2）' })).toHaveAttribute(
       'src',
       '/brisket.webp',
     );
-    expect(within(brisket).getByText('1/2')).toBeInTheDocument();
     await user.click(within(brisket).getByRole('button', { name: '查看第 2 张照片' }));
     expect(within(brisket).getByRole('img', { name: '牛胸（2/2）' })).toHaveAttribute(
       'src',
       '/brisket-2.webp',
     );
-    expect(within(brisket).getByRole('button', { name: '查看第 2 张照片' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
     await user.keyboard('{ArrowRight}');
-    expect(within(brisket).getByRole('img', { name: '牛胸（1/2）' })).toBeInTheDocument();
     expect(within(brisket).getByRole('button', { name: '查看第 1 张照片' })).toHaveFocus();
+    // The dish panel: every review's word on it, newest first; in the address, closed with Escape.
+    await user.click(within(brisket).getByRole('button', { name: '查看 2 条评价' }));
+    const panel = screen.getByRole('dialog', { name: '牛胸' });
+    expect(window.location.hash).toBe('#dish-d1');
+    expect(within(panel).getByRole('button', { name: '关闭' })).toHaveFocus();
+    expect([...panel.querySelectorAll('ol > li')].map((li) => li.textContent)).toEqual([
+      expect.stringMatching(/作者乙2026-10-05也好吃$/),
+      expect.stringMatching(/作者甲2026-09-01好吃$/),
+    ]);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // A review's dish verdict opens the same panel.
+    await user.click(within(items[1]!).getByRole('button', { name: '💣 避雷：豆子' }));
+    expect(screen.getByRole('dialog', { name: '豆子' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '关闭' }));
     // Map apps.
     expect(screen.getByRole('link', { name: /Google 地图导航/ }).getAttribute('href')).toContain(
       'https://www.google.com/maps/search/?api=1&query=29.74%2C-95.39',
@@ -783,12 +881,18 @@ describe('restaurant details', () => {
     expect(screen.getByRole('link', { name: /Apple 地图导航/ }).getAttribute('href')).toBe(
       'https://maps.apple.com/?q=Bayou+BBQ&ll=29.74%2C-95.39',
     );
-    expect(screen.getByText(/作者甲/)).toBeInTheDocument();
+    expect(screen.getByText('点评作者：作者乙、作者甲')).toBeInTheDocument();
     expect(document.title).toBe('Bayou BBQ · Rice Eats');
 
     await user.click(screen.getByRole('button', { name: '← 返回列表' }));
     expect(await screen.findByRole('list', { name: '餐厅列表' })).toBeInTheDocument();
     expect(document.title).toBe('Rice Eats · 莱斯周边的美食地图');
+  });
+
+  it('opens a dish from a shared link', async () => {
+    window.history.replaceState(null, '', `${BASE}r/bayou-bbq/#dish-d4`);
+    render(<App />);
+    expect(await screen.findByRole('dialog', { name: '排骨' })).toBeInTheDocument();
   });
 
   it('works as a direct link, beside the map, and offers a way back', async () => {
@@ -821,7 +925,7 @@ describe('submissions', () => {
     const { unmount } = visit('r/bayou-bbq');
     await screen.findByRole('heading', { level: 1, name: 'Bayou BBQ' });
     expect(screen.queryByRole('link', { name: '我要投稿' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: '补充点评或照片' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '点评这家餐厅' })).not.toBeInTheDocument();
     unmount();
     visit('submit/');
     expect(screen.getByText('投稿功能即将开放')).toBeInTheDocument();
@@ -2063,7 +2167,8 @@ describe('submissions', () => {
     vi.stubEnv('VITE_TALLY_FORM', FORM);
     const user = userEvent.setup();
     visit('r/bayou-bbq');
-    await user.click(await screen.findByRole('link', { name: '补充点评或照片' }));
+    // At the top of the page (and again at the end).
+    await user.click((await screen.findAllByRole('link', { name: '点评这家餐厅' }))[0]!);
     expect(window.location.pathname + window.location.search).toBe(
       `${BASE}submit/?restaurant=bayou-bbq`,
     );

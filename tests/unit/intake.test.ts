@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { cp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
@@ -72,7 +72,7 @@ describe('intake helpers', () => {
       status: 'draft',
       name: '新店',
     });
-    expect(existsSync(path.join(dir, 'review.md'))).toBe(false); // no empty review
+    expect(existsSync(path.join(dir, 'reviews'))).toBe(false); // no empty review
     await expect(createDraft(drafts, a, 'Again')).rejects.toThrow(/already exists/);
     await expect(createDraft(drafts, 'Bad Id', 'x')).rejects.toThrow(/invalid id/);
     await expect(createDraft(drafts, 'r-noname', ' ')).rejects.toThrow(
@@ -182,7 +182,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     const originals = ['IMG_0001.JPG', 'Dish Photo 2.png', 'notes.txt'];
     const before = await Promise.all(originals.map((f) => sha(path.join(submission, f))));
 
-    // Prepare the draft privately.
+    // Prepare the draft privately: the restaurant, and the contributor's review.
     const id = newRestaurantId(new Set());
     const contributor = await addContributor(files, {
       name: '投稿人（虚构）',
@@ -200,34 +200,41 @@ describe('agent content workflow (synthetic submissions)', () => {
       status: 'draft',
       name: '晨光面包坊（虚构）',
       cuisines: ['bakery'],
-      rating: 3, // the contributor wrote "人上人"
       pricePerPerson: 15,
       dishes: [
-        { name: '可颂', verdict: 1, comment: '很酥，强烈推荐！', images: [croissant] },
-        { name: '抹茶卷', verdict: -1, comment: '一般，有点甜。' },
+        { id: 'd1', name: '可颂' },
+        { id: 'd2', name: '抹茶卷' },
       ],
     };
     await writeFile(path.join(dir, 'info.json'), JSON.stringify(info));
-    await writeFile(
-      path.join(dir, 'review.md'),
-      `店面很小，周末早上要排队。\n\n![店里的面包柜](${shelf})\n`,
-    );
 
     const draft = await check(true);
     expect(draft.diagnostics.filter((d) => d.level === 'error' || d.draftError)).toEqual([]);
     expect(missingInfo(draft.restaurants[0]!)).toEqual([
-      'contributorIds (required to publish)',
+      'a review in reviews/ (required to publish)',
       'address',
       'location (not shown on the map)',
     ]);
-    expect(draft.details[0]!.cover?.alt).toBe('晨光面包坊（虚构）');
+    await mkdir(path.join(dir, 'reviews'));
+    await writeFile(
+      path.join(dir, 'reviews', `${contributor}.json`),
+      JSON.stringify({
+        date: '2026-10-14',
+        rating: 3, // the contributor wrote "人上人"
+        images: [shelf],
+        dishes: [
+          { dish: 'd1', verdict: 1, comment: '很酥，强烈推荐！', images: [croissant] },
+          { dish: 'd2', verdict: -1, comment: '一般，有点甜。' },
+        ],
+      }),
+    );
+    await writeFile(path.join(dir, 'reviews', `${contributor}.md`), '店面很小，周末早上要排队。\n');
+    const reviewed = await check(true);
+    expect(reviewed.diagnostics.filter((d) => d.level === 'error' || d.draftError)).toEqual([]);
+    expect(reviewed.details[0]!.cover?.alt).toBe('晨光面包坊（虚构）');
     expect((await check(false, false)).index.restaurants).toEqual([]); // production never reads drafts
 
-    // After the maintainer approves: credit the contributor, promote, publish.
-    await writeFile(
-      path.join(dir, 'info.json'),
-      JSON.stringify({ ...info, contributorIds: [contributor] }),
-    );
+    // After the maintainer approves: promote, publish.
     await publishContributors(files, [contributor]);
     const publicDir = await moveDraft(db.drafts, db.restaurants, id);
     expect((await check(false, false)).index.restaurants).toEqual([]); // promoted, not yet published
@@ -237,6 +244,7 @@ describe('agent content workflow (synthetic submissions)', () => {
     expect(published.details[0]!.contributors).toEqual([
       { id: contributor, name: '投稿人（虚构）' },
     ]);
+    expect(published.details[0]).toMatchObject({ rating: 3, ratingCount: 1 });
     expect(JSON.stringify(published.details)).not.toContain('someone@example.com');
 
     expect(await Promise.all(originals.map((f) => sha(path.join(submission, f))))).toEqual(before);
@@ -249,55 +257,64 @@ describe('agent content workflow (synthetic submissions)', () => {
     const dir = await createDraft(db.drafts, 'r-photos', 'Photo Spot');
     const photo = path.join(await tempDir(), 'photo.jpg');
     await makeImage(photo);
-    await importImages(dir, [photo, photo]);
-    const info = JSON.parse(await readFile(path.join(dir, 'info.json'), 'utf8'));
+    const stored = (await importImages(dir, [photo, photo])).map((i) =>
+      path.relative(dir, i.stored),
+    );
+    await mkdir(path.join(dir, 'reviews'));
     await writeFile(
-      path.join(dir, 'info.json'),
-      JSON.stringify({ ...info, contributorIds: [contributor] }),
+      path.join(dir, 'reviews', `${contributor}.json`),
+      JSON.stringify({ date: '2026-10-14', images: stored }),
     );
     await moveDraft(db.drafts, db.restaurants, 'r-photos');
     await setStatus(path.join(db.restaurants, 'r-photos'), 'published');
     const detail = (await check(false, false)).details[0]!;
     expect(detail.images).toHaveLength(2);
-    expect(detail.reviewHtml).toBe('');
+    expect(detail.reviews[0]).toMatchObject({ html: '', imageIndexes: [0, 1] });
     expect(detail.dishes).toEqual([]);
   });
 
-  it('updates an existing restaurant in place instead of creating a second review', async () => {
+  it('adds a review to an existing restaurant in place instead of creating a second restaurant', async () => {
     const { db, files, check } = await makeDatabase();
-    const contributor = await addContributor(files, { name: 'Author' });
-    await publishContributors(files, [contributor]);
+    const first = await addContributor(files, { name: 'Author' });
+    const second = await addContributor(files, { name: 'Second' });
+    await publishContributors(files, [first, second]);
     const dir = await createDraft(db.drafts, 'r-update', 'Original Name');
-    const info = JSON.parse(await readFile(path.join(dir, 'info.json'), 'utf8'));
+    await mkdir(path.join(dir, 'reviews'));
     await writeFile(
-      path.join(dir, 'info.json'),
-      JSON.stringify({ ...info, contributorIds: [contributor] }),
+      path.join(dir, 'reviews', `${first}.json`),
+      JSON.stringify({ date: '2026-10-01', rating: 5 }),
     );
-    await writeFile(path.join(dir, 'review.md'), 'First visit.\n');
+    await writeFile(path.join(dir, 'reviews', `${first}.md`), 'First visit.\n');
     await moveDraft(db.drafts, db.restaurants, 'r-update');
     await setStatus(path.join(db.restaurants, 'r-update'), 'published');
 
-    // A later submission about the same restaurant: check it out, edit, promote.
+    // A later review of the same restaurant: check it out, add it, promote.
     const draft = await checkoutRestaurant(db.restaurants, db.drafts, 'r-update');
     await expect(checkoutRestaurant(db.restaurants, db.drafts, 'r-update')).rejects.toThrow(
       /already exists/,
     );
-    await writeFile(path.join(draft, 'review.md'), 'First visit.\n\nSecond visit: still good.\n');
+    await writeFile(
+      path.join(draft, 'reviews', `${second}.json`),
+      JSON.stringify({ date: '2026-10-05', rating: 4 }),
+    );
+    await writeFile(path.join(draft, 'reviews', `${second}.md`), 'Second visit: still good.\n');
     const edited = JSON.parse(await readFile(path.join(draft, 'info.json'), 'utf8'));
     await writeFile(path.join(draft, 'info.json'), JSON.stringify({ ...edited, name: 'Renamed' }));
 
     const changes = await folderChanges(draft, path.join(db.restaurants, 'r-update'));
-    expect(changes).toEqual({ added: [], changed: ['info.json', 'review.md'], removed: [] });
+    expect(changes).toEqual({
+      added: [`reviews/${second}.json`, `reviews/${second}.md`],
+      changed: ['info.json'],
+      removed: [],
+    });
     await moveDraft(db.drafts, db.restaurants, 'r-update');
 
     const result = await check(false, false);
-    expect(result.index.restaurants.map((r) => [r.id, r.name, r.status])).toEqual([
-      ['r-update', 'Renamed', 'published'],
+    expect(result.index.restaurants.map((r) => [r.id, r.name, r.status, r.ratingAverage])).toEqual([
+      ['r-update', 'Renamed', 'published', 4.5],
     ]);
     expect(await readdir(db.restaurants)).toEqual(['r-update']);
-    expect(await readFile(path.join(db.restaurants, 'r-update/review.md'), 'utf8')).toContain(
-      'Second visit',
-    );
+    expect(result.details[0]!.reviews.map((r) => r.id)).toEqual([second, first]);
     expect(existsSync(path.join(db.drafts, 'r-update'))).toBe(false);
   });
 });

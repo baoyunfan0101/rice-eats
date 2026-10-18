@@ -2,6 +2,5 @@
   "id": "fixture-food-truck",
   "status": "published",
   "name": "流动餐车（虚构示例）",
-  "cuisines": ["fast-food"],
-  "contributorIds": ["u-001"]
+  "cuisines": ["fast-food"]
 }

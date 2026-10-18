@@ -53,14 +53,20 @@ describe('module boundaries', () => {
 
   it('validates canonical content with the shared schema alone', async () => {
     // shared/ imports nothing from src/ (checked above), so this loads no website code.
-    const { restaurantInfoSchema } = await import('../../shared/content/schema.ts');
+    const { restaurantInfoSchema, reviewSchema } = await import('../../shared/content/schema.ts');
     expect(
       restaurantInfoSchema.safeParse({
         id: 'r-abc123',
         status: 'draft',
         name: 'x',
+        dishes: [{ id: 'd1', name: 'y' }],
+      }).success,
+    ).toBe(true);
+    expect(
+      reviewSchema.safeParse({
+        date: '2026-10-14',
         rating: 2,
-        dishes: [{ name: 'y', verdict: -1 }],
+        dishes: [{ dish: 'd1', verdict: -1 }],
       }).success,
     ).toBe(true);
   });

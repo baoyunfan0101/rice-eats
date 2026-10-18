@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-01",
+  "rating": 4,
+  "images": ["images/01-cover.jpg"],
+  "dishes": [
+    {
+      "dish": "d1",
+      "verdict": 1,
+      "comment": "虚构点评：汤底浓郁。",
+      "images": ["images/03-tonkotsu.jpg"]
+    },
+    {
+      "dish": "d2",
+      "verdict": -1,
+      "comment": "虚构点评：偏油。",
+      "images": ["images/02-gyoza.jpg"]
+    }
+  ]
+}

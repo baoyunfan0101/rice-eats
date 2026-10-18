@@ -276,7 +276,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Editorial content rendered from review.md.
+ * Editorial content rendered from a review's text (reviews/<contributor id>.md).
  */
 .review {
   @apply text-[1.0625rem] leading-8 text-ink;

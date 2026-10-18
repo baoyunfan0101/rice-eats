@@ -32,6 +32,10 @@ const r = (
   cuisines: [],
   tags: tags.map((t) => ({ id: t, label: TAG_LABELS[t] ?? t })),
   links: {},
+  ratingCount: extra.rating !== undefined ? 1 : 0,
+  reviewCount: 1,
+  // Sorting uses the average; here it is the rating itself.
+  ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,
 });
 

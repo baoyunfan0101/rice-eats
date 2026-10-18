@@ -739,12 +739,7 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
 
 export const LOG_FILE = 'tally-log.json';
 /** Editorial status, separate from photo retrieval (see PhotoSummary). */
-/**
- * deferred: kept but not used, because the restaurant already has an
- * accepted contributor (one review per restaurant for now); saved for a
- * future multi-review database.
- */
-export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'deferred', 'rejected'] as const;
+export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'rejected'] as const;
 export type LogStatus = (typeof LOG_STATUSES)[number];
 
 const logSchema = z.record(

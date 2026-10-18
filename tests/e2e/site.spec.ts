@@ -494,10 +494,18 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   const response = await page.goto('/rice-eats/r/fixture-dim-sum-hall/');
   expect(response?.status()).toBe(200);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('点心大堂（虚构示例）');
-  const review = page.getByRole('region', { name: '点评' });
-  await expect(review.locator('figure img')).toHaveCount(3);
-  await expect(review.locator('figcaption').first()).toHaveText('虾饺（示例图注）');
-  await expect(review.getByRole('heading', { level: 2, name: '早茶时间' })).toBeVisible();
+  // The overall rating is the average of every reviewer's rating.
+  await expect(page.getByText('2 人评分')).toBeVisible();
+  // Every review, newest first, each with its reviewer's rating; Markdown headings sit below the section's.
+  const reviews = page.getByRole('region', { name: '点评（2）' });
+  const items = reviews.getByRole('listitem').filter({ has: page.locator('time') });
+  await expect(items).toHaveCount(2);
+  await expect(items.first()).toContainText('另一位示例作者（虚构）');
+  await expect(items.first().locator('time')).toHaveText('2026-09-20');
+  await expect(items.last()).toContainText('🤤 人上人');
+  const review = items.last();
+  await expect(review.getByRole('heading', { level: 3, name: '早茶时间' })).toBeVisible();
+  await expect(review.getByRole('img')).toHaveCount(4);
 
   // Every image of the details loads from the /rice-eats/ base path.
   const images = page.locator('article img');
@@ -506,11 +514,11 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   )) {
     expect(new URL(src).pathname).toMatch(/^\/rice-eats\//);
   }
-  await review.locator('figure img').last().scrollIntoViewIfNeeded();
+  await review.getByRole('img').last().scrollIntoViewIfNeeded();
   await expect
     .poll(() =>
       review
-        .locator('figure img')
+        .getByRole('img')
         .last()
         .evaluate((el) => (el as HTMLImageElement).naturalWidth),
     )
@@ -542,6 +550,17 @@ test('a dish shows all of its photos, and a tag added to the registry filters li
   await page.keyboard.press('ArrowRight');
   await expect(photos.getByRole('button', { name: '查看第 1 张照片' })).toBeFocused();
   await expect(main).toBeVisible();
+  // A dish opens a panel with every reviewer's verdict; its link can be shared.
+  await page.getByRole('button', { name: '查看 1 条评价' }).first().click();
+  const panel = page.getByRole('dialog', { name: '烟熏牛胸（示例）' });
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('示例作者（虚构）');
+  await expect(page).toHaveURL(/#dish-d1$/);
+  await page.reload();
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await expect(page).not.toHaveURL(/#dish-/);
   // A tag that exists only in the registry (content/tags.json), with its label.
   await expect(
     page.getByRole('list', { name: '标签' }).getByText('可带宠物（示例）'),
@@ -561,9 +580,13 @@ test('photo-only restaurants show their photos; same-name restaurants stay separ
   await page.goto('/rice-eats/r/fixture-photo-only/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('只有照片的小店（虚构示例）');
   await expect(
-    page.getByRole('img', { name: '只有照片的小店（虚构示例）', exact: true }),
+    page.getByRole('img', { name: '只有照片的小店（虚构示例）', exact: true }).first(),
   ).toBeVisible(); // cover
-  await expect(page.getByRole('region', { name: '照片' }).getByRole('img')).toHaveCount(2);
+  // A review without a rating still shows its photos; it does not count towards the rating.
+  await expect(page.getByText('暂无评分')).toBeVisible();
+  const review = page.getByRole('region', { name: '点评（1）' });
+  await expect(review.getByText('未评级')).toBeVisible();
+  await expect(review.getByRole('img')).toHaveCount(3);
   await expect(page.getByRole('link', { name: /Google 地图导航/ })).toHaveAttribute(
     'href',
     /google\.com\/maps/,
@@ -1384,7 +1407,7 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
 
 test('a restaurant page passes its restaurant to the form', async ({ page }) => {
   await page.goto('/rice-eats/r/fixture-sichuan-house/');
-  await page.getByRole('link', { name: '补充点评或照片' }).click();
+  await page.getByRole('link', { name: '点评这家餐厅' }).first().click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/\?restaurant=fixture-sichuan-house$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
     '为「蜀味小馆（虚构示例）」投稿',
