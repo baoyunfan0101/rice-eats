@@ -2,9 +2,9 @@
 // (scripts/content) writes these shapes into public/generated/, and the website
 // reads them. Framework-independent; imports nothing from src/ or scripts/.
 
-import type { Rating, Verdict } from './vocabulary';
+import type { PriceRange, Rating, Verdict } from './vocabulary';
 
-export type { Rating, Verdict };
+export type { PriceRange, Rating, Verdict };
 
 export type PublicationStatus = 'draft' | 'published';
 
@@ -30,12 +30,49 @@ export interface Contributor {
   name: string;
 }
 
-export interface Dish {
-  name: string;
+/** One review's word on a dish. */
+export interface DishReview {
+  /** The review it comes from. */
+  reviewId: string;
+  contributor: Contributor;
+  /** The review's submission time (ISO 8601) and its day, YYYY-MM-DD. */
+  submittedAt: string;
+  date: string;
   verdict?: Verdict;
   comment?: string;
-  /** Indexes into RestaurantDetail.images of every photo of this dish, in display order. */
+  /** Indexes into RestaurantDetail.images of this review's photos of the dish. */
   imageIndexes: number[];
+}
+
+export interface Dish {
+  id: string;
+  name: string;
+  /** How many reviews recommend it / warn against it. */
+  recommend: number;
+  avoid: number;
+  /** Indexes into RestaurantDetail.images of every photo of this dish (newest review first). */
+  imageIndexes: number[];
+  /** Every review that mentions the dish, newest first. */
+  reviews: DishReview[];
+}
+
+/** One review of the restaurant (one submission); a contributor may have several. */
+export interface Review {
+  /** The review id (reviews/<id>.json). */
+  id: string;
+  contributor: Contributor;
+  /** When it was submitted (ISO 8601), and its day, YYYY-MM-DD. */
+  submittedAt: string;
+  date: string;
+  rating: Rating;
+  /** The per-person price range it gives, if any. */
+  price?: PriceRange;
+  /** Sanitized HTML of the review text; empty without text. */
+  html: string;
+  /** Indexes into RestaurantDetail.images of the review's photos (not of one dish). */
+  imageIndexes: number[];
+  /** The dishes it rates, in its order. */
+  dishes: { id: string; name: string; verdict?: Verdict }[];
 }
 
 /** A tag from the registry (content/tags.json), with its display label. */
@@ -62,8 +99,25 @@ export interface RestaurantSummary {
   tags: Tag[];
   address?: string;
   location?: LatLng;
+  /**
+   * The average rating over contributors: each contributor's latest review
+   * counts once. Rounded to a level; absent without reviews (a draft).
+   */
   rating?: Rating;
+  /** The average itself, one decimal. */
+  ratingAverage?: number;
+  /** How many contributors the rating counts (one latest review each). */
+  raterCount: number;
+  /** How many reviews there are (a contributor may have several). */
+  reviewCount: number;
+  /**
+   * The average per-person price in US dollars over contributors (each
+   * contributor's latest review that gives a price range counts once, as the
+   * range's middle), the range it falls in, and how many contributors it counts.
+   */
   pricePerPerson?: number;
+  priceRange?: PriceRange;
+  priceCount: number;
   /** The first image of the restaurant, if any. */
   cover?: ImageAsset;
   links: MapLinks;
@@ -73,10 +127,9 @@ export interface RestaurantDetail extends RestaurantSummary {
   /** Every image of the restaurant in its stored order; images[0] is the cover. */
   images: ImageAsset[];
   dishes: Dish[];
-  /** Sanitized HTML rendered from review.md. Empty when there is no review. */
-  reviewHtml: string;
-  /** Indexes into `images` of the photos placed in review.md (each listed once). */
-  reviewImageIndexes: number[];
+  /** Every review, newest first. */
+  reviews: Review[];
+  /** The people who wrote them, each once. */
   contributors: Contributor[];
 }
 

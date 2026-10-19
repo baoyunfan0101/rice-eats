@@ -61,7 +61,7 @@ export const PRIVACY_FIX =
 
 /**
  * Obvious contact details and private links in text that is about to become
- * public (review.md, dish comments, names): email addresses, phone numbers,
+ * public (review text, dish comments, names): email addresses, phone numbers,
  * Tally file links (which carry access tokens), and social-media handles.
  * A heuristic for the reviewer, not a guarantee; each finding names its kind
  * and a short excerpt.

@@ -276,7 +276,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Editorial content rendered from review.md.
+ * Editorial content rendered from a review's text (reviews/<contributor id>.md).
  */
 .review {
   @apply text-[1.0625rem] leading-8 text-ink;
@@ -402,6 +402,13 @@
 .map-pin:hover .pin-fill,
 .map-pin:focus-visible .pin-fill {
   fill: var(--color-chili-700);
+}
+.map-pin.is-listed .pin-fill {
+  fill: var(--color-basil-600);
+}
+.map-pin.is-listed:hover .pin-fill,
+.map-pin.is-listed:focus-visible .pin-fill {
+  fill: var(--color-ink);
 }
 .map-pin.is-selected .pin-fill {
   fill: var(--color-gold-300);

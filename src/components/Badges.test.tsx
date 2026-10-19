@@ -34,9 +34,7 @@ describe('RatingBadge', () => {
 
   it('lists all five levels from highest to lowest in the hint', () => {
     expect(RATINGS).toEqual([5, 4, 3, 2, 1]);
-    expect(RATING_HINT).toBe(
-      '个人评级，从高到低：🥵 夯 > 😘 顶级 > 🤤 人上人 > 🫤 NPC > 🤮 拉完了',
-    );
+    expect(RATING_HINT).toBe('评级，从高到低：🥵 夯 > 😘 顶级 > 🤤 人上人 > 🫤 NPC > 🤮 拉完了');
   });
 });
 

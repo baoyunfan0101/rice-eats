@@ -2,10 +2,9 @@
   "id": "fixture-coffee-lab",
   "status": "published",
   "name": "实验室咖啡（虚构示例）",
-  "cuisines": ["coffee", "dessert"],
   "location": {
     "lat": 29.7079,
     "lng": -95.4013
   },
-  "contributorIds": ["u-001"]
+  "cuisines": ["coffee", "dessert"]
 }

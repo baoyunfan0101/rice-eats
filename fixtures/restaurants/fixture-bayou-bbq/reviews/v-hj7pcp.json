@@ -1,0 +1,21 @@
+{
+  "contributor": "u-001",
+  "submittedAt": "2026-09-01T12:00:00Z",
+  "rating": 5,
+  "price": "20-30",
+  "images": ["images/01-cover.jpg"],
+  "dishes": [
+    {
+      "dish": "d1",
+      "verdict": 1,
+      "images": [
+        "images/02-brisket.jpg",
+        "images/03-brisket-sliced.jpg",
+        "images/04-brisket-bark.jpg"
+      ]
+    },
+    {
+      "dish": "d2"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import type { RestaurantSummary } from '../../shared/content/model';
 import { RATINGS, type Rating } from '../../shared/content/vocabulary';
-import { cuisineLabel, RATING_LABELS } from './labels';
+import { cuisineLabel, PRICE_RANGE_LABELS, RATING_LABELS } from './labels';
 
 export { RATING_LABELS };
 
@@ -13,18 +13,16 @@ export const RATING_STYLES: Record<Rating, string> = {
   1: 'bg-sand text-muted',
 };
 
-export const RATING_HINT = `个人评级，从高到低：${RATINGS.map((r) => RATING_LABELS[r]).join(' > ')}`;
+export const RATING_HINT = `评级，从高到低：${RATINGS.map((r) => RATING_LABELS[r]).join(' > ')}`;
 
-export function priceText(price: number | undefined): string | undefined {
-  if (price === undefined) return undefined;
-  return `人均 $${Number.isInteger(price) ? price : price.toFixed(1)}`;
+/** "人均 $10–20": the price range the reviews' average falls in, or undefined. */
+export function priceText(r: Pick<RestaurantSummary, 'priceRange'>): string | undefined {
+  return r.priceRange && `人均 ${PRICE_RANGE_LABELS[r.priceRange]}`;
 }
 
-/** "日本菜 / 拉面 · 人均 $18" */
+/** "日本菜 / 拉面 · 人均 $10–20" */
 export function metaLine(r: RestaurantSummary): string {
-  return [r.cuisines.map(cuisineLabel).join(' / '), priceText(r.pricePerPerson)]
-    .filter(Boolean)
-    .join(' · ');
+  return [r.cuisines.map(cuisineLabel).join(' / '), priceText(r)].filter(Boolean).join(' · ');
 }
 
 /** Other names, shown under the main name. */

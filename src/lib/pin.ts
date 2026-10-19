@@ -36,11 +36,14 @@ export const PIN_SVG =
   `<g class="pin-dot">${pixelRects(GRID, '.')}</g>` +
   `</svg>`;
 
-/** Leaflet DivIcon options for a pin: the box is the pin, anchored at its tip. */
-export function pinIconOptions(selected: boolean, extraHtml = '') {
+/**
+ * Leaflet DivIcon options for a pin: the box is the pin, anchored at its tip.
+ * `listed` marks a restaurant already on Rice Eats (another color).
+ */
+export function pinIconOptions(selected: boolean, extraHtml = '', listed = false) {
   const { w, h } = pinSize(selected);
   return {
-    className: `map-pin${selected ? ' is-selected' : ''}`,
+    className: `map-pin${selected ? ' is-selected' : ''}${listed ? ' is-listed' : ''}`,
     html: PIN_SVG + extraHtml,
     iconSize: [w, h] as [number, number],
     iconAnchor: [w / 2, h] as [number, number],

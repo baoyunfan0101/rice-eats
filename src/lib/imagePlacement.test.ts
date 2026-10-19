@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Dish, ImageAsset } from '../../shared/content/model';
-import { placeImages } from './imagePlacement';
+import type { Dish, ImageAsset, Review } from '../../shared/content/model';
+import { imagesAt, placeImages } from './imagePlacement';
 
 const img = (n: number): ImageAsset => ({
   src: `/${n}.webp`,
@@ -11,87 +11,51 @@ const img = (n: number): ImageAsset => ({
 });
 const images = (count: number) => Array.from({ length: count }, (_, i) => img(i));
 const src = (list: (ImageAsset | undefined)[]) => list.map((i) => i?.src);
-const dish = (name: string, imageIndexes: number[] = [], extra: Partial<Dish> = {}): Dish => ({
+const dish = (name: string, imageIndexes: number[]): Dish => ({
+  id: name,
   name,
+  recommend: 0,
+  avoid: 0,
   imageIndexes,
-  ...extra,
+  reviews: [],
+});
+const review = (imageIndexes: number[]): Review => ({
+  id: 'u-001',
+  contributor: { id: 'u-001', name: 'A' },
+  submittedAt: '2026-10-01T12:00:00Z',
+  date: '2026-10-01',
+  rating: 4,
+  html: '',
+  imageIndexes,
+  dishes: [],
 });
 
 describe('image placement', () => {
-  it('shows a cover that the review also places only in the review', () => {
-    const p = placeImages({ images: images(2), dishes: [], reviewImageIndexes: [0] });
-    expect(p.hero).toBeUndefined();
-    expect(src(p.gallery)).toEqual(['/1.webp']);
+  it('uses the first photo as the cover and keeps photos no review uses for the gallery', () => {
+    const p = placeImages({
+      images: images(6),
+      dishes: [dish('小笼包', [1, 2])],
+      reviews: [review([3])],
+    });
+    expect(src([p.hero])).toEqual(['/0.webp']);
+    expect(src(p.gallery)).toEqual(['/4.webp', '/5.webp']);
   });
 
-  it('shows every photo of a dish in its card, in order, with numbered alt text', () => {
-    const dishes = [dish('小笼包', [1, 2, 3], { verdict: 1 }), dish('红烧肉', [4, 5])];
-    const p = placeImages({ images: images(6), dishes, reviewImageIndexes: [] });
-    expect(p.dishImages.map(src)).toEqual([
-      ['/1.webp', '/2.webp', '/3.webp'],
-      ['/4.webp', '/5.webp'],
+  it('has no cover and no gallery without photos', () => {
+    expect(placeImages({ images: [], dishes: [], reviews: [] })).toEqual({
+      hero: undefined,
+      gallery: [],
+    });
+  });
+
+  it("names a dish's photos with their position, each once and in order", () => {
+    const r = { images: images(4) };
+    expect(imagesAt(r, [3, 1, 3, 9], '小笼包').map((i) => [i.src, i.alt])).toEqual([
+      ['/3.webp', '小笼包（1/2）'],
+      ['/1.webp', '小笼包（2/2）'],
     ]);
-    expect(p.dishImages[0]!.map((i) => i.alt)).toEqual([
-      '小笼包（1/3）',
-      '小笼包（2/3）',
-      '小笼包（3/3）',
-    ]);
-    expect(p.dishImages[1]!.map((i) => i.alt)).toEqual(['红烧肉（1/2）', '红烧肉（2/2）']);
-    expect(src([p.hero])).toEqual(['/0.webp']);
-    expect(p.gallery).toEqual([]);
-  });
-
-  it('never hides a dish photo, even when it is the cover or in the review', () => {
-    const dishes = [dish('Noodles', [0, 1])];
-    const p = placeImages({ images: images(3), dishes, reviewImageIndexes: [1] });
-    expect(src([p.hero])).toEqual(['/0.webp']);
-    expect(p.dishImages.map(src)).toEqual([['/0.webp', '/1.webp']]);
-    expect(p.dishImages[0]![0]!.alt).toBe('Noodles（1/2）');
-    // The gallery only has what is shown nowhere else.
-    expect(src(p.gallery)).toEqual(['/2.webp']);
-  });
-
-  it('describes a single dish photo by the dish name', () => {
-    const p = placeImages({
-      images: images(2),
-      dishes: [dish('Tea', [1])],
-      reviewImageIndexes: [],
-    });
-    expect(p.dishImages[0]!.map((i) => i.alt)).toEqual(['Tea']);
-  });
-
-  it('handles photos used only in the review, only in dishes, or nowhere', () => {
-    const p = placeImages({
-      images: images(5),
-      dishes: [dish('Dish', [2])],
-      reviewImageIndexes: [3, 1],
-    });
-    expect(src([p.hero])).toEqual(['/0.webp']);
-    expect(p.dishImages.map(src)).toEqual([['/2.webp']]);
-    expect(src(p.gallery)).toEqual(['/4.webp']); // remaining photos in stored order
-  });
-
-  it('shows every photo of an image-only restaurant: cover first, the rest in order', () => {
-    const p = placeImages({ images: images(3), dishes: [], reviewImageIndexes: [] });
-    expect(src([p.hero, ...p.gallery])).toEqual(['/0.webp', '/1.webp', '/2.webp']);
-  });
-
-  it('ignores repeated or unknown indexes', () => {
-    const p = placeImages({
-      images: images(2),
-      dishes: [dish('x', [1, 1, 7])],
-      reviewImageIndexes: [],
-    });
-    expect(p.dishImages.map(src)).toEqual([['/1.webp']]);
-  });
-
-  it('handles restaurants without photos', () => {
-    const p = placeImages({ images: [], dishes: [dish('Tea')], reviewImageIndexes: [] });
-    expect(p).toEqual({ hero: undefined, dishImages: [[]], gallery: [] });
-  });
-
-  it('is deterministic', () => {
-    const r = { images: images(4), dishes: [dish('x', [2, 3])], reviewImageIndexes: [1] };
-    expect(placeImages(r)).toEqual(placeImages(r));
+    expect(imagesAt(r, [2], '红烧肉').map((i) => i.alt)).toEqual(['红烧肉']);
+    // Without a name the stored alt text stays.
+    expect(imagesAt(r, [2]).map((i) => i.alt)).toEqual(['photo 2']);
   });
 });

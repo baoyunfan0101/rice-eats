@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RestaurantSummary } from '../../shared/content/model';
+import { priceRangeOf } from '../../shared/content/vocabulary';
 import {
   clearFilters,
   DEFAULT_STATE,
@@ -32,6 +33,13 @@ const r = (
   cuisines: [],
   tags: tags.map((t) => ({ id: t, label: TAG_LABELS[t] ?? t })),
   links: {},
+  raterCount: 1,
+  reviewCount: 1,
+  // The average price is given directly; its range and count follow from it.
+  priceCount: extra.pricePerPerson !== undefined ? 1 : 0,
+  ...(extra.pricePerPerson !== undefined ? { priceRange: priceRangeOf(extra.pricePerPerson) } : {}),
+  // Sorting uses the average; here it is the rating itself.
+  ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,
 });
 
@@ -212,27 +220,7 @@ describe('URL state', () => {
     expect(parseBrowseState(new URLSearchParams('sort=distance')).sort).toBe('rating');
   });
 
-  it('opens older links: view modes, single-value filters, price buckets, price sort', () => {
-    for (const view of ['list', 'grid', 'map']) {
-      expect(parseBrowseState(new URLSearchParams(`view=${view}`))).toEqual(DEFAULT_STATE);
-    }
-    expect(
-      parseBrowseState(
-        new URLSearchParams('view=map&cuisine=bbq&tag=date&rating=5&price=2&sort=price&id=a'),
-      ),
-    ).toEqual({
-      ...DEFAULT_STATE,
-      cuisines: ['bbq'],
-      tags: ['date'],
-      ratings: [5],
-      priceMin: 15,
-      priceMax: 30,
-      sort: 'price-asc',
-      selected: 'a',
-    });
-    expect(parseBrowseState(new URLSearchParams('price=1'))).toMatchObject({ priceMax: 15 });
-    expect(parseBrowseState(new URLSearchParams('price=4'))).toMatchObject({ priceMin: 60 });
-    expect(parseBrowseState(new URLSearchParams('price=4')).priceMax).toBeUndefined();
+  it('reads single and repeated filter keys', () => {
     // Repeated keys work too.
     expect(parseBrowseState(new URLSearchParams('tag=date&tag=group')).tags).toEqual([
       'date',

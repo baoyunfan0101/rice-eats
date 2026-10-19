@@ -80,34 +80,27 @@ test('the price range and the sort work together without changing the map', asyn
   await page.getByRole('button', { name: /^人均/ }).click();
   // Both handles move with the keyboard; their values ride on them.
   await page.getByRole('slider', { name: '最低人均' }).focus();
-  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
-  await expect(page).toHaveURL(/\?min=15$/);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+  await expect(page).toHaveURL(/\?min=20$/);
   await page.getByRole('slider', { name: '最高人均' }).focus();
-  for (let i = 0; i < 14; i++) await page.keyboard.press('ArrowLeft');
-  await expect(page).toHaveURL(/\?min=15&max=30$/);
-  // Close values share one tag.
-  await expect(page.locator('#filter-panel').getByText('$15–30')).toBeVisible();
-  // Unknown prices are not in a range.
-  expect(await listNames(page)).toEqual([
-    '河湾烤肉（虚构示例）',
-    '蜀味小馆（虚构示例）',
-    '灯笼拉面（虚构示例）',
-  ]);
+  for (let i = 0; i < 12; i++) await page.keyboard.press('ArrowLeft');
+  await expect(page).toHaveURL(/\?min=20&max=40$/);
+  // The filter uses each restaurant's average of its reviews' price ranges
+  // ($20–30 counts as 25, $30–50 as 40); unknown prices are not in a range.
+  expect((await listNames(page)).sort()).toEqual(
+    ['河湾烤肉（虚构示例）', '蜀味小馆（虚构示例）', '点心大堂（虚构示例）'].sort(),
+  );
   await page.locator('#filter-panel').getByRole('button', { name: '完成' }).click();
-  await expect(page.getByRole('button', { name: /^\$15–30/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^\$20–40/ })).toBeVisible();
 
   // Sorting reorders the list but leaves the map exactly where it was.
   await page.waitForTimeout(600);
   const before = await mapOffset(page);
   await page.getByLabel('排序').selectOption('price-desc');
   await expect(page).toHaveURL(/sort=price-desc/);
-  expect(await listNames(page)).toEqual([
-    '河湾烤肉（虚构示例）',
-    '蜀味小馆（虚构示例）',
-    '灯笼拉面（虚构示例）',
-  ]);
+  expect((await listNames(page))[0]).toBe('点心大堂（虚构示例）');
   await page.getByLabel('排序').selectOption('price-asc');
-  expect((await listNames(page))[0]).toBe('灯笼拉面（虚构示例）');
+  expect((await listNames(page)).at(-1)).toBe('点心大堂（虚构示例）');
   await page.waitForTimeout(600);
   expect(await mapOffset(page)).toBe(before);
   await expect(markers(page)).toHaveCount(3);
@@ -494,10 +487,26 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   const response = await page.goto('/rice-eats/r/fixture-dim-sum-hall/');
   expect(response?.status()).toBe(200);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('点心大堂（虚构示例）');
-  const review = page.getByRole('region', { name: '点评' });
-  await expect(review.locator('figure img')).toHaveCount(3);
-  await expect(review.locator('figcaption').first()).toHaveText('虾饺（示例图注）');
-  await expect(review.getByRole('heading', { level: 2, name: '早茶时间' })).toBeVisible();
+  // The overall rating counts each reviewer once, with their latest review
+  // (示例作者 reviewed twice: 3, then 4; the other reviewer 4).
+  await expect(page.getByText('4.0', { exact: true })).toBeVisible();
+  await expect(page.getByText('2 人评分')).toBeVisible();
+  // The per-person price: the range of the reviews' average, and how many gave one.
+  await expect(page.getByText('$30–50（2 人）')).toBeVisible();
+  // Every review, newest first, each with its reviewer's rating; Markdown headings sit below the section's.
+  const reviews = page.getByRole('region', { name: '点评（3）' });
+  const items = reviews.getByRole('listitem').filter({ has: page.locator('time') });
+  await expect(items).toHaveCount(3);
+  await expect(items.first()).toContainText('示例作者（虚构）');
+  await expect(items.first()).toContainText('同一位作者第二次来');
+  await expect(items.first().locator('time')).toHaveText('2026-10-05');
+  await expect(items.nth(1)).toContainText('另一位示例作者（虚构）');
+  await expect(items.nth(1).locator('time')).toHaveText('2026-09-20');
+  await expect(items.last()).toContainText('🤤 人上人');
+  await expect(page.getByText('点评作者：示例作者（虚构）、另一位示例作者（虚构）')).toBeVisible();
+  const review = items.last();
+  await expect(review.getByRole('heading', { level: 3, name: '早茶时间' })).toBeVisible();
+  await expect(review.getByRole('img')).toHaveCount(4);
 
   // Every image of the details loads from the /rice-eats/ base path.
   const images = page.locator('article img');
@@ -506,11 +515,11 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   )) {
     expect(new URL(src).pathname).toMatch(/^\/rice-eats\//);
   }
-  await review.locator('figure img').last().scrollIntoViewIfNeeded();
+  await review.getByRole('img').last().scrollIntoViewIfNeeded();
   await expect
     .poll(() =>
       review
-        .locator('figure img')
+        .getByRole('img')
         .last()
         .evaluate((el) => (el as HTMLImageElement).naturalWidth),
     )
@@ -542,6 +551,17 @@ test('a dish shows all of its photos, and a tag added to the registry filters li
   await page.keyboard.press('ArrowRight');
   await expect(photos.getByRole('button', { name: '查看第 1 张照片' })).toBeFocused();
   await expect(main).toBeVisible();
+  // A dish opens a panel with every reviewer's verdict; its link can be shared.
+  await page.getByRole('button', { name: '查看 1 条评价' }).first().click();
+  const panel = page.getByRole('dialog', { name: '烟熏牛胸（示例）' });
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('示例作者（虚构）');
+  await expect(page).toHaveURL(/#dish-d1$/);
+  await page.reload();
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await expect(page).not.toHaveURL(/#dish-/);
   // A tag that exists only in the registry (content/tags.json), with its label.
   await expect(
     page.getByRole('list', { name: '标签' }).getByText('可带宠物（示例）'),
@@ -561,9 +581,13 @@ test('photo-only restaurants show their photos; same-name restaurants stay separ
   await page.goto('/rice-eats/r/fixture-photo-only/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('只有照片的小店（虚构示例）');
   await expect(
-    page.getByRole('img', { name: '只有照片的小店（虚构示例）', exact: true }),
+    page.getByRole('img', { name: '只有照片的小店（虚构示例）', exact: true }).first(),
   ).toBeVisible(); // cover
-  await expect(page.getByRole('region', { name: '照片' }).getByRole('img')).toHaveCount(2);
+  // A review without text or dishes: its rating and its photos.
+  await expect(page.getByText('1 人评分')).toBeVisible();
+  const review = page.getByRole('region', { name: '点评（1）' });
+  await expect(review.getByText('🤤 人上人')).toBeVisible();
+  await expect(review.getByRole('img')).toHaveCount(3);
   await expect(page.getByRole('link', { name: /Google 地图导航/ })).toHaveAttribute(
     'href',
     /google\.com\/maps/,
@@ -593,13 +617,7 @@ test('unknown pages and drafts are not found', async ({ page }) => {
 });
 
 test('layout fits the viewport without horizontal scrolling', async ({ page }) => {
-  for (const url of [
-    '/rice-eats/',
-    '/rice-eats/?view=grid',
-    '/rice-eats/?view=map',
-    '/rice-eats/r/fixture-sichuan-house/',
-    '/rice-eats/submit/',
-  ]) {
+  for (const url of ['/rice-eats/', '/rice-eats/r/fixture-sichuan-house/', '/rice-eats/submit/']) {
     await page.goto(url);
     await expect(page.getByRole('main')).not.toBeEmpty();
     await page.waitForLoadState('networkidle');
@@ -690,9 +708,6 @@ async function fakePlaces(page: Page, fixtures = FAKE_PLACES) {
 }
 
 const NEXT = '下一步：填写点评 →';
-/** Step 2 asks for optional keywords first; skipping them opens the form. */
-const skipKeywords = (page: Page) =>
-  page.getByRole('button', { name: '跳过，填写点评表单 →' }).click();
 const pin = (page: Page, name: string) => page.locator(`.leaflet-marker-icon[title="${name}"]`);
 
 const formQuery = (page: Page) =>
@@ -710,7 +725,10 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   await expect(page.getByRole('button', { name: '搜索地图中心附近' })).toHaveCount(0);
 
   // Restaurants around Rice load as pins without any action.
-  await expect(page.getByText('地图上有 1 家餐厅，点图钉选择。')).toBeVisible();
+  // One place from the map data, and the fixture restaurants on Rice Eats in view (their own pins).
+  await expect(page.getByText(/地图上有 \d+ 家餐厅，点图钉选择。/)).toBeVisible();
+  const listed = await page.locator('.map-pin.is-listed').count();
+  await expect(page.getByText(`地图上有 ${1 + listed} 家餐厅，点图钉选择。`)).toBeVisible();
   const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
   expect(rects.length).toBeGreaterThan(0);
   expect(rects[0]!.searchParams.get('categories')).toContain('catering.restaurant');
@@ -726,7 +744,6 @@ test('visitors pick a restaurant from the map around Rice before the form loads'
   await expect(selected).toContainText('1 Fake St');
   await expect(page.getByRole('button', { name: '确认餐厅' })).toHaveCount(0);
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   await expect(page.locator('[aria-current="step"]')).toContainText('填写点评');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('为「Fake Noodle Bar」投稿');
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
@@ -793,12 +810,16 @@ test('pin names stay readable, inside the map, and follow the map', async ({ pag
   // Every restaurant in view can be read and chosen from the list.
   await page.getByRole('button', { name: /^列表查看地图范围内的 \d+ 家餐厅/ }).click();
   const list = page.getByRole('list', { name: '地图上的餐厅' });
-  await expect(list.getByRole('button')).toHaveCount(13);
+  // 13 from the map data, and the fixture restaurants on Rice Eats in view.
+  await expect(list.getByRole('button')).toHaveCount(
+    13 + (await page.locator('.map-pin.is-listed').count()),
+  );
   await list.getByRole('button', { name: /川味小馆 7号店/ }).click();
   const selectedPin = pin(page, '川味小馆 7号店');
   await expect(selectedPin).toHaveClass(/is-selected/);
   // The selected name is always shown, whatever crowds it.
   await expect(selectedPin.locator('.poi-label')).toHaveText('川味小馆 7号店');
+  await page.waitForTimeout(500); // the map pans to the selection; names follow when it stops
   await check();
 
   // After zooming out and panning, the layout follows the map.
@@ -822,16 +843,40 @@ test('pin names stay readable, inside the map, and follow the map', async ({ pag
   expect(labels.some((l) => l.selected && l.name === '川味小馆 7号店')).toBe(true);
 });
 
-test('visitors locate the search area by preset or address before choosing', async ({ page }) => {
+test('restaurants already on Rice Eats have their own pins and are chosen as existing', async ({
+  page,
+}) => {
+  await fakePlaces(page);
+  await page.goto('/rice-eats/submit/');
+  // Found by name wherever it is, and chosen directly from the results.
+  const search = page.getByRole('searchbox', { name: '搜索餐厅名称或地址' });
+  await search.fill('蜀味');
+  await search.press('Enter');
+  await page
+    .getByRole('list', { name: '餐厅' })
+    .getByRole('button', { name: /蜀味小馆.*已收录/ })
+    .click();
+  await expect(page.getByRole('region', { name: '已选餐厅' })).toContainText('蜀味小馆');
+  // The map shows it with its own (listed) pin, selected.
+  const listed = pin(page, '蜀味小馆（虚构示例）（已收录）');
+  await expect(listed).toHaveClass(/is-listed/);
+  await expect(listed).toHaveClass(/is-selected/);
+  await page.getByRole('button', { name: NEXT }).click();
+  const query = formQuery(page);
+  await expect(query).toContainText('restaurant_id=fixture-sichuan-house');
+  await expect(query).toContainText('selection_method=existing&source=site');
+  await expect(query).not.toContainText('poi_id');
+});
+
+test('visitors move the map by shortcut or address before choosing', async ({ page }) => {
   const places = await fakePlaces(page);
   await page.goto('/rice-eats/submit/');
-  const area = page.getByRole('region', { name: '选择查找区域' });
-  await expect(area.getByText('当前查找区域：Rice University 周边')).toBeVisible();
+  const box = page.getByRole('region', { name: '选择餐厅' });
+  await expect(page.getByRole('region', { name: '选择查找区域' })).toHaveCount(0);
   await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
 
   // Chinatown: the map moves to Bellaire Blvd and looks for restaurants there.
-  await area.getByRole('button', { name: 'Chinatown 周边' }).click();
-  await expect(area.getByText('当前查找区域：Chinatown 周边')).toBeVisible();
+  await box.getByRole('button', { name: 'Chinatown 周边' }).click();
   await expect
     .poll(() =>
       places.some((u) => {
@@ -843,11 +888,20 @@ test('visitors locate the search area by preset or address before choosing', asy
     .toBe(true);
   await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
 
-  // An address: searched on Enter, the map moves there, nothing is selected.
-  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
-  await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
-  await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
-  await expect(area.getByText('当前查找区域：2111 Norfolk St')).toBeVisible();
+  // An address: searched on Enter, listed as a place, the map moves there, nothing is selected.
+  const search = box.getByRole('searchbox', { name: '搜索餐厅名称或地址' });
+  await search.fill('2111 Norfolk');
+  await search.press('Enter');
+  await expect(box.getByRole('list', { name: '地址或地点' })).toContainText('2111 Norfolk St');
+  await expect
+    .poll(() =>
+      places.some((u) => {
+        const filter = u.searchParams.get('filter') ?? '';
+        const west = Number(filter.slice(5).split(',')[0]);
+        return filter.startsWith('rect:') && west < -95.41 && west > -95.43;
+      }),
+    )
+    .toBe(true);
   await expect(page.getByRole('region', { name: '已选餐厅' })).toHaveCount(0);
 });
 
@@ -895,25 +949,20 @@ test('late address and location answers never override the latest choice', async
   });
 
   await page.goto('/rice-eats/submit/');
-  const area = page.getByRole('region', { name: '选择查找区域' });
-  const status = area.getByText(/^当前查找区域：/);
-  await expect(status).toHaveText('当前查找区域：Rice University 周边');
+  const area = page.getByRole('region', { name: '选择餐厅' });
 
   // Address search pending, location pending, then Chinatown.
-  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
-  await area.getByRole('searchbox', { name: '输入地址或地点' }).fill('2111 Norfolk');
-  await area.getByRole('searchbox', { name: '输入地址或地点' }).press('Enter');
-  await expect(area.getByText('正在搜索地点…')).toBeVisible();
+  await area.getByRole('searchbox', { name: '搜索餐厅名称或地址' }).fill('2111 Norfolk');
+  await area.getByRole('searchbox', { name: '搜索餐厅名称或地址' }).press('Enter');
+  await expect(area.getByText('正在搜索…')).toBeVisible();
   await area.getByRole('button', { name: '使用当前位置' }).click();
   await area.getByRole('button', { name: 'Chinatown 周边' }).click();
-  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
 
   // The late answers arrive out of order: the location, then the address.
   await page.evaluate(() => (window as unknown as { __locate: () => void }).__locate());
   release();
   await page.waitForTimeout(1500);
-  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
-  await expect(area.getByRole('list', { name: '地点搜索结果' })).toHaveCount(0);
+  await expect(area.getByRole('list', { name: '地址或地点' })).toHaveCount(0);
   // The map really stayed at Chinatown: the last restaurant tiles requested are there.
   const west = (u: URL) => Number(u.searchParams.get('filter')!.slice(5).split(',')[0]);
   const rects = places.filter((u) => u.searchParams.get('filter')!.startsWith('rect:'));
@@ -946,10 +995,8 @@ test('dragging or zooming the map by hand wins over a late address', async ({ pa
       .catch(() => {});
   });
   await page.goto('/rice-eats/submit/');
-  const area = page.getByRole('region', { name: '选择查找区域' });
-  const status = area.getByText(/^当前查找区域：/);
-  await area.getByRole('button', { name: '或者：输入地址或地点' }).click();
-  const search = area.getByRole('searchbox', { name: '输入地址或地点' });
+  const area = page.getByRole('region', { name: '选择餐厅' });
+  const search = area.getByRole('searchbox', { name: '搜索餐厅名称或地址' });
   const map = page.getByRole('region', { name: '附近餐厅地图' });
   await expect(page.getByText(/地图上有 \d+ 家餐厅/)).toBeVisible();
   const west = (u: URL) => Number(u.searchParams.get('filter')!.slice(5).split(',')[0]);
@@ -996,24 +1043,21 @@ test('dragging or zooming the map by hand wins over a late address', async ({ pa
   for (const [name, gesture] of gestures) {
     await search.fill(`Late ${name}`);
     await search.press('Enter');
-    await expect(area.getByText('正在搜索地点…')).toBeVisible();
+    await expect(area.getByText('正在搜索…')).toBeVisible();
     await gesture();
     // The gesture ends the pending search at once.
-    await expect(area.getByText('正在搜索地点…'), name).toHaveCount(0);
+    await expect(area.getByText('正在搜索…'), name).toHaveCount(0);
     release();
     await settle();
     // The late answer did not move the map to Sugar Land.
-    await expect(status, name).not.toContainText(`Late ${name}`);
     expect(lastTileWest(), name).toBeGreaterThan(-95.5);
   }
 
   // Programmatic moves still apply and are not taken for gestures.
   await search.fill('Slow Place');
   await search.press('Enter');
-  await expect(status).toHaveText('当前查找区域：Slow Place');
   await expect.poll(lastTileWest).toBeLessThan(-95.6);
   await area.getByRole('button', { name: 'Chinatown 周边' }).click();
-  await expect(status).toHaveText('当前查找区域：Chinatown 周边');
   await expect.poll(lastTileWest).toBeGreaterThan(-95.58);
 });
 
@@ -1028,7 +1072,6 @@ test('the current location moves the map and the pins follow', async ({ page, co
   await expect(pin(page, 'Fake Noodle Bar')).toHaveCount(0);
   await pin(page, 'Fake Taco Stop').click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_lat=29.735200');
   // The device position itself is never submitted.
@@ -1045,9 +1088,8 @@ test('visitors without location permission can still explore the map or search b
   await expect(page.getByText(/没有获得定位权限|暂时无法获取当前位置/)).toBeVisible();
   await expect(pin(page, 'Fake Noodle Bar')).toBeVisible();
 
-  // The name search (a fallback) narrows the restaurants in view.
-  await page.getByRole('button', { name: '或者：在当前区域搜索餐厅' }).click();
-  await page.getByRole('searchbox', { name: '在当前区域搜索餐厅' }).fill('noodle');
+  // Typing a name narrows the restaurants in view.
+  await page.getByRole('searchbox', { name: '搜索餐厅名称或地址' }).fill('noodle');
   const result = page
     .getByRole('list', { name: '地图上的餐厅' })
     .getByRole('button', { name: /Fake Noodle Bar/ });
@@ -1081,7 +1123,6 @@ test('the map falls back to OpenStreetMap when Geoapify is out of credits', asyn
   await page.goto('/rice-eats/submit/');
   await pin(page, 'Fake Noodle Bar').click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = formQuery(page);
   await expect(query).toContainText('restaurant_name=Fake+Noodle+Bar');
   await expect(query).toContainText('poi_provider=osm&poi_id=node%2F500');
@@ -1254,7 +1295,6 @@ test('the manual pin tip marks exactly the clicked point, through zooms, pans, a
   await page.mouse.click(start.x + start.width / 2, start.y + start.height / 2);
   await page.getByRole('button', { name: '下一步', exact: true }).click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = new URLSearchParams((await formQuery(page).textContent()) ?? '');
   expect(Math.abs(Number(query.get('restaurant_lat')) - 29.7174)).toBeLessThan(0.00003);
   expect(Math.abs(Number(query.get('restaurant_lng')) - -95.4018)).toBeLessThan(0.00003);
@@ -1339,7 +1379,6 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   await expect(page.getByText('已标出位置，可以再点一下修改。')).toBeVisible();
   await page.getByRole('button', { name: '下一步' }).click();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   const query = formQuery(page);
   await expect(query).toContainText(
     'restaurant_name=%E6%96%B0%E5%BC%80%E7%9A%84%E9%9D%A2%E9%A6%86',
@@ -1356,7 +1395,6 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
   await page.getByRole('button', { name: '下一步' }).click();
   await expect(page.getByText(/没有位置信息/)).toBeVisible();
   await page.getByRole('button', { name: NEXT }).click();
-  await skipKeywords(page);
   await expect(query).toContainText(
     'restaurant_name=Mystery+Diner&selection_method=manual&source=site',
   );
@@ -1364,13 +1402,13 @@ test('visitors can add a restaurant by hand when search fails', async ({ page })
 
 test('a restaurant page passes its restaurant to the form', async ({ page }) => {
   await page.goto('/rice-eats/r/fixture-sichuan-house/');
-  await page.getByRole('link', { name: '补充点评或照片' }).click();
+  await page.getByRole('link', { name: '点评这家餐厅' }).first().click();
   await expect(page).toHaveURL(/\/rice-eats\/submit\/\?restaurant=fixture-sichuan-house$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
     '为「蜀味小馆（虚构示例）」投稿',
   );
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await skipKeywords(page);
+  // The form comes right away: keywords are one of its questions, not a step of their own.
+  await expect(page.getByText(/关键词/)).toHaveCount(0);
   const query = formQuery(page);
   await expect(
     page.frameLocator('iframe[title="Rice Eats 投稿表单"]').getByText('Stub Tally form'),
@@ -1391,51 +1429,6 @@ test('a restaurant page passes its restaurant to the form', async ({ page }) => 
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 
-test('contributors add keywords before the form, which receives them as tags_raw', async ({
-  page,
-}) => {
-  await page.goto('/rice-eats/submit/?restaurant=fixture-sichuan-house');
-  const field = page.getByLabel('用几个关键词描述这家店（选填）');
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await field.fill('适合约会');
-  await field.press('Enter');
-  // Enter adds a chip; it never submits anything or loads the form.
-  await expect(page.getByRole('list', { name: '已添加的关键词' })).toContainText('适合约会');
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await field.fill('适合约会');
-  await field.press('Enter');
-  await expect(page.getByText('已经添加过「适合约会」')).toBeVisible();
-  // An input method's Enter confirms characters only (keyCode 229 while composing).
-  await field.pressSequentially('hen');
-  await field.evaluate((el) => {
-    el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-    el.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Enter',
-        keyCode: 229,
-        bubbles: true,
-        isComposing: true,
-      }),
-    );
-    el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
-  });
-  await expect(
-    page.getByRole('list', { name: '已添加的关键词' }).getByRole('listitem'),
-  ).toHaveCount(1);
-  // Typed text becomes a keyword when the field loses focus.
-  await field.fill('很安静');
-  await page.getByRole('button', { name: '删除关键词「适合约会」' }).click();
-  await field.fill('份量大');
-  await page.getByRole('button', { name: '下一步：填写点评表单 →' }).click();
-  const query = formQuery(page);
-  await expect(query).toContainText(
-    `tags_raw=${encodeURIComponent('["很安静","份量大"]').replace(/%20/g, '+')}`,
-  );
-  await expect(page.getByRole('region', { name: '关键词' })).toContainText(
-    '关键词：很安静、份量大',
-  );
-});
-
 test('the form offers recovery when Tally does not load', async ({ page }) => {
   // Tally answers with a page that never reports a loaded form (like its
   // error page): the iframe still fires its load event.
@@ -1447,9 +1440,6 @@ test('the form offers recovery when Tally does not load', async ({ page }) => {
   );
   await page.clock.install();
   await page.goto('/rice-eats/submit/?restaurant=fixture-sichuan-house');
-  await page.getByLabel('用几个关键词描述这家店（选填）').fill('适合约会');
-  await page.keyboard.press('Enter');
-  await page.getByRole('button', { name: '下一步：填写点评表单 →' }).click();
   await expect(page.getByText('正在加载投稿表单…')).toBeVisible();
   await expect(page.getByText(/在新窗口打开投稿表单/)).toHaveCount(0);
   await page.clock.fastForward(11000);
@@ -1459,7 +1449,6 @@ test('the form offers recovery when Tally does not load', async ({ page }) => {
   expect(direct.pathname).toBe('/r/e2eForm');
   expect(direct.searchParams.get('restaurant_id')).toBe('fixture-sichuan-house');
   expect(direct.searchParams.get('source')).toBe('restaurant-page');
-  expect(direct.searchParams.get('tags_raw')).toBe('["适合约会"]');
   expect(direct.searchParams.has('hideTitle')).toBe(false);
 
   // Once Tally works again, reloading shows the form and clears the notice.

@@ -1,5 +1,7 @@
 // The canonical database formats:
-//   content/restaurants/<id>/info.json   restaurant metadata (restaurantInfoSchema)
+//   content/restaurants/<id>/info.json   restaurant facts and its dishes (restaurantInfoSchema)
+//   content/restaurants/<id>/reviews/<contributor id>.json (+ .md)
+//                                        one contributor's review (reviewSchema)
 //   content/contributors.json            public contributor identities
 //   content/tags.json                    the public tag registry
 //   private/contributors.json            pending contributors and contact details (git-ignored)
@@ -8,7 +10,7 @@
 // contract: imports nothing from src/ or scripts/.
 
 import { z } from 'zod';
-import { CUISINE_IDS, VERDICTS, type Rating } from './vocabulary';
+import { CUISINE_IDS, PRICE_RANGE_IDS, VERDICTS, type Rating } from './vocabulary';
 
 const text = z.string().trim().min(1, 'must not be empty');
 
@@ -19,6 +21,9 @@ const text = z.string().trim().min(1, 'must not be empty');
 export const idSchema = z
   .string()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be lowercase letters, digits, and single hyphens');
+
+/** Dish ids are short slugs, unique within a restaurant, e.g. "d1". */
+export const dishIdSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be a slug such as "d1"');
 
 /** Contributor ids look like "u-001". */
 export const contributorIdSchema = z.string().regex(/^u-\d{3,}$/, 'must look like "u-001"');
@@ -122,28 +127,18 @@ export const restaurantInfoSchema = z
   cuisines: z.array(controlled(CUISINE_IDS, 'cuisine')).refine(unique, 'must not repeat').optional(),
   /** Ids from the tag registry (content/tags.json); checked against it by the pipeline. */
   tags: z.array(tagIdSchema).refine(unique, 'must not repeat').optional(),
-  rating: z
-    .number()
-    .int('must be a whole number from 1 (lowest) to 5 (highest)')
-    .min(1, 'must be a whole number from 1 (lowest) to 5 (highest)')
-    .max(5, 'must be a whole number from 1 (lowest) to 5 (highest)')
-    .transform((value) => value as Rating)
-    .optional(),
-  pricePerPerson: z.number().positive().max(1000).optional(),
+  /** The restaurant's dishes; reviews give their verdicts, comments, and photos. */
   dishes: z
     .array(
       z.strictObject({
+        /** Stable within the restaurant (e.g. "d1"); reviews refer to it. */
+        id: dishIdSchema,
         name: text,
-        verdict: z
-          .literal(VERDICTS, {
-            message: 'must be 1 (recommended) or -1 (not recommended); leave it out for no opinion',
-          })
-          .optional(),
-        comment: text.optional(),
-        /** Every photo of this dish, in display order (zero, one, or more). */
-        images: z.array(imagePathSchema).min(1, 'leave "images" out when the dish has no photo').refine(unique, 'must not repeat').optional(),
+        /** Other names contributors used for this dish; matched like tag aliases. */
+        altNames: z.array(text).optional(),
       }),
     )
+    .refine((list) => unique(list.map((d) => d.id)), 'dish ids must be unique')
     .optional(),
   links: z
     .strictObject({
@@ -152,10 +147,112 @@ export const restaurantInfoSchema = z
       website: httpUrl.optional(),
     })
     .optional(),
-  contributorIds: z.array(contributorIdSchema).refine(unique, 'must not repeat').optional(),
 });
 
 export type RestaurantInfo = z.infer<typeof restaurantInfoSchema>;
+
+const rating = z
+  .number()
+  .int('must be a whole number from 1 (lowest) to 5 (highest)')
+  .min(1, 'must be a whole number from 1 (lowest) to 5 (highest)')
+  .max(5, 'must be a whole number from 1 (lowest) to 5 (highest)')
+  .transform((value) => value as Rating);
+
+const images = z
+  .array(imagePathSchema)
+  .min(1, 'leave "images" out when there is no photo')
+  .refine(unique, 'must not repeat');
+
+/** Review ids look like "v-7k3m9q": generated once, never derived from content or contributor. */
+export const reviewIdSchema = z.string().regex(/^v-[a-z0-9]+$/, 'must look like "v-7k3m9q"');
+
+/**
+ * An ISO 8601 time with a zone ("2026-10-14T19:30:00Z",
+ * "2026-10-14T15:30:00.123-05:00"; seconds and fractions optional) as the
+ * same instant in UTC: "2026-10-14T19:30:00Z", fractions kept as given
+ * (without trailing zeros). Undefined for anything else, also for a date or
+ * time that does not exist (February 30, 24:00), which Date.parse would
+ * silently move to another day.
+ */
+export function canonicalInstant(value: string): string | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:(Z)|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!m) return undefined;
+  const [y, mo, d, h, mi, s = 0, oh = 0, om = 0] = [m[1], m[2], m[3], m[4], m[5], m[6], m[10], m[11]].map((v) => (v === undefined ? undefined : Number(v))) as number[];
+  const date = new Date(0);
+  date.setUTCFullYear(y!, mo! - 1, d!);
+  if (date.getUTCMonth() !== mo! - 1 || date.getUTCDate() !== d!) return undefined;
+  if (h! > 23 || mi! > 59 || s > 59 || oh > 23 || om > 59) return undefined;
+  date.setUTCHours(h!, mi! - (m[9] === '-' ? -1 : 1) * (oh * 60 + om), s, 0);
+  // An offset can move the instant out of four-digit years ("+010000-..."): not a supported time.
+  const iso = date.toISOString();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(iso)) return undefined;
+  const fraction = (m[7] ?? '').replace(/0+$/, '');
+  return `${iso.slice(0, 19)}${fraction ? `.${fraction}` : ''}Z`;
+}
+
+/**
+ * Orders two times (canonicalInstant's formats) by their instant, without
+ * losing digits beyond milliseconds: negative when `a` is earlier, 0 for the
+ * same instant (also written with another offset or trailing zeros).
+ * Throws for a value that is not a supported time.
+ */
+export function compareInstants(a: string, b: string): number {
+  const [ca, cb] = [canonicalInstant(a), canonicalInstant(b)];
+  if (ca === undefined || cb === undefined) throw new Error(`not a supported time: "${ca === undefined ? a : b}"`);
+  // "YYYY-MM-DDTHH:MM:SS" sorts as text; the fractions compare digit by digit.
+  const [baseA, fracA = ''] = ca.slice(0, -1).split('.');
+  const [baseB, fracB = ''] = cb.slice(0, -1).split('.');
+  if (baseA !== baseB) return baseA! < baseB! ? -1 : 1;
+  const width = Math.max(fracA.length, fracB.length);
+  const [fa, fb] = [fracA.padEnd(width, '0'), fracB.padEnd(width, '0')];
+  return fa === fb ? 0 : fa < fb ? -1 : 1;
+}
+
+/** An instant with a time zone, e.g. "2026-10-14T19:30:00Z", so reviews of one day still have an order. */
+const timestamp = z
+  .string()
+  .refine((value) => canonicalInstant(value) !== undefined, 'must be a time like "2026-10-14T19:30:00Z"');
+
+/**
+ * content/restaurants/<id>/reviews/<review id>.json: one review of the
+ * restaurant, from one submission. A contributor may have several reviews of
+ * one restaurant; each stands on its own. The review text, if any, is the .md
+ * file with the same name. Photos are stored in the restaurant's images/ and
+ * belong to one review each.
+ */
+export const reviewSchema = z.strictObject({
+  /** Who wrote it (content/contributors.json). */
+  contributor: contributorIdSchema,
+  /** When it was submitted; orders reviews (newest first) and picks a contributor's latest. */
+  submittedAt: timestamp,
+  rating,
+  /** What it cost per person, as one of the price ranges (US dollars; vocabulary.ts). */
+  price: z
+    .enum(PRICE_RANGE_IDS as [string, ...string[]], {
+      message: `must be one of ${PRICE_RANGE_IDS.join(', ')}`,
+    })
+    .optional(),
+  /** Photos of the restaurant (not of one dish), in display order. */
+  images: images.optional(),
+  dishes: z
+    .array(
+      z.strictObject({
+        /** An id from the restaurant's "dishes". */
+        dish: dishIdSchema,
+        verdict: z
+          .literal(VERDICTS, {
+            message: 'must be 1 (recommended) or -1 (not recommended); leave it out for no opinion',
+          })
+          .optional(),
+        comment: text.optional(),
+        /** Every photo of this dish in this review, in display order. */
+        images: images.optional(),
+      }),
+    )
+    .refine((list) => unique(list.map((d) => d.dish)), 'a dish appears once per review')
+    .optional(),
+});
+export type Review = z.infer<typeof reviewSchema>;
 
 const notAnEmail = text.refine((value) => !value.includes('@'), {
   message: 'display names are public; keep email addresses in private/contributors.json',

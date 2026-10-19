@@ -50,17 +50,33 @@ export const validInfo = (id: string, extra: Record<string, unknown> = {}) => ({
   name: `Test ${id}`,
   cuisines: ['japanese'],
   location: { lat: 29.72, lng: -95.4 },
-  contributorIds: ['u-001'],
   ...extra,
 });
 
-/** Writes a restaurant folder named after its id (or `folder`) with extra files. */
+/** A minimal review by u-001 (a published restaurant needs one). */
+export const TEST_REVIEW = {
+  'reviews/v-u001.json': JSON.stringify({
+    contributor: 'u-001',
+    submittedAt: '2026-10-01T12:00:00Z',
+    rating: 4,
+  }),
+};
+
+/**
+ * Writes a restaurant folder named after its id (or `folder`) with extra
+ * files. A published restaurant given without any review gets TEST_REVIEW.
+ */
 export async function writeRestaurant(
   root: string,
   folder: string,
   info: Record<string, unknown> | string,
-  files: Record<string, string> = {},
+  extra: Record<string, string> = {},
 ): Promise<string> {
+  const needsReview =
+    typeof info !== 'string' &&
+    info.status === 'published' &&
+    !Object.keys(extra).some((f) => f.startsWith('reviews/'));
+  const files = needsReview ? { ...TEST_REVIEW, ...extra } : extra;
   const dir = path.join(root, folder);
   await mkdir(dir, { recursive: true });
   await writeFile(

@@ -3,14 +3,11 @@
   "status": "published",
   "name": "点心大堂（虚构示例）",
   "altNames": ["Dim Sum Hall (fictional)"],
-  "cuisines": ["cantonese", "chinese"],
   "address": "500 Example Dr, Houston, TX 77036 (fictional)",
   "location": {
     "lat": 29.7012,
     "lng": -95.5571
   },
-  "rating": 3,
-  "pricePerPerson": 35,
-  "tags": ["group"],
-  "contributorIds": ["u-001", "u-002"]
+  "cuisines": ["cantonese", "chinese"],
+  "tags": ["group"]
 }

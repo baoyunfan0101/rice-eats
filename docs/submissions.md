@@ -18,22 +18,19 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   separate confirmation page. "第二步 · 填写点评" shows the restaurant name
   once in the heading ("为「…」投稿") with "更换餐厅" as a secondary action
   (back to step 1, keeping the selection and restoring the map where the
-  contributor left it), then optional keywords, then the embedded form. The
-  form loads only on that page, and the website never writes to the database.
-- **Keywords** (`src/components/KeywordInput.tsx`): "用几个关键词描述这家店（选填）"
-  takes free-form words ("适合约会", "很安静"). Enter, a comma (`,` `，` `、`),
-  or leaving the field turns the text into a chip with its own delete button;
-  Backspace in the empty field removes the last one; a pasted list is split.
-  While an input method is composing (pinyin), Enter only confirms the
-  characters. Repeats (ignoring width, case, and spacing) are ignored with a
-  note; at most 10 keywords of 20 characters. The keywords are confirmed with
-  "下一步：填写点评表单 →" (or "跳过，填写点评表单 →" without any) before the
-  form loads, because they reach it as the `tags_raw` hidden field, a JSON
-  array (`["适合约会","很安静"]`), in the embedded form and in the
-  new-window link alike. "修改关键词" afterwards warns that the form reloads
-  and loses what was typed in it, and only then reopens the keywords, so the
-  form never reloads by surprise. Keywords are kept per restaurant while the
-  page is open.
+  contributor left it), then the embedded form. The form loads only on that
+  page, and the website never writes to the database.
+- **Keywords** are a question of the form itself (`标签（选填）`, below the
+  review): contributors type free-form words separated by commas (`，` `,`)
+  or `、` ("适合约会，很安静、份量大"). Intake splits the answer
+  (`parseList` in `shared/submission.ts`, which also accepts semicolons
+  and new lines), keeps spaces inside a keyword ("date night"), and drops
+  repeats (ignoring width, case, and spacing).
+- **Restaurant aliases** are another question (`餐厅别名（选填）`, below the
+  tags): other names of the restaurant (an English name, a short name),
+  split the same way. Prepare adds the new ones to the draft's `altNames`
+  (never replacing its name; a rejection takes them out again); they are
+  not used to decide which restaurant a submission is about.
 - **Form loading** (`src/views/SubmitPage.tsx`): the iframe's load event also
   fires for Tally's error pages, so the page waits instead for Tally's own
   `Tally.FormLoaded` message, which embedded forms post to the parent page
@@ -45,42 +42,51 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   "在新窗口打开投稿表单" (the Tally-hosted form with the same hidden fields).
   Neither appears while the form works. Choosing another restaurant starts a
   fresh form and check.
-- **Search area** (`src/views/AreaPicker.tsx`, `src/lib/areas.ts`,
-  `src/lib/geocode.ts`): step 1 starts with "选择查找区域" (A), then the
-  restaurant is chosen (B) on the same page, each in its own box under the
-  page title and the step ("投稿：分享你的用餐体验", then "第一步 · 选择餐厅").
-  One group of controls moves the map: "使用当前位置" first and highlighted
-  (the browser asks only after that click; a denial leaves the other ways),
-  then "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in
-  southwest Houston, between Dun Huang Plaza and Hong Kong City Mall; static
-  coordinates, no request). "或者：输入地址或地点" is a fallback that opens
-  an address, landmark, or place search when clicked (searched only when
-  submitted). A single
-  match moves the map at once; several are listed by name and address to
-  choose from; a failed search offers "重试", and the presets, the current
-  location, the map, and manual entry keep working. The last request wins:
-  each action (a preset, "使用当前位置", a search, choosing a result,
-  choosing a restaurant, placing a manual marker, or dragging or zooming the
-  map by hand) cancels the pending search and makes any older answer, including a late
-  device location or a late error, change nothing, so the map always ends
-  where the contributor last asked for. Hand moves are recognized
-  from their input (`src/views/PickerMap.tsx`: Leaflet's `dragstart`, the
-  wheel, a double click, a two-finger touch, the zoom buttons, and the map's
-  keys), never from `moveend`/`zoomend`, which programmatic `setView` calls
-  (a preset, a search result, a selection, restoring the view) also fire;
-  the area controls and the map share one `LocateIntent`
-  (`src/lib/locateIntent.ts`). "当前查找区域：…" names the area while the map is within about
-  1.2 km of its center, and "地图当前位置附近" once the contributor has moved
-  away. Choosing an area only moves the map: it never selects a restaurant,
-  and the selected restaurant and the area are separate (both are kept when
-  coming back from step 2).
+- **Finding the restaurant** (`src/views/MapSearch.tsx`, `src/lib/areas.ts`,
+  `src/lib/geocode.ts`): step 1 is one box, "选择餐厅", under the page title
+  and the step. At its top are one search box ("搜索餐厅名称或地址") and the
+  map shortcuts: "使用当前位置" first and highlighted (the browser asks only
+  after that click, never on load; a denial leaves the other ways), then
+  "Rice University 周边" and "Chinatown 周边" (Bellaire Blvd in southwest
+  Houston, between Dun Huang Plaza and Hong Kong City Mall; static
+  coordinates, no request), and "上次的位置" when this browser remembers
+  where the contributor last went on to the form (the map view, rounded to
+  about 100 m, in `localStorage` only; never sent anywhere). Typing narrows
+  the pins and the list to the names that match, in view (no request).
+  "搜索" (or Enter) also searches beyond the map and shows two groups:
+  **餐厅**, the matching restaurants on Rice Eats (anywhere) and places to
+  eat found by Geoapify Geocoding (a result of type `amenity` in a
+  `catering` category or with a food amenity), chosen directly with one
+  click; and **地址或地点**, every other result, which only moves the map so
+  the contributor picks from the pins there. A single place moves the map at
+  once; a failed search offers "重试", and the shortcuts, the map, and
+  manual entry keep working. Without a Geoapify key, only restaurants on
+  Rice Eats are found by name. The last request wins: each action (a
+  shortcut, "使用当前位置", a search, choosing a result, choosing a
+  restaurant, placing a manual marker, or dragging or zooming the map by
+  hand) cancels the pending search and makes any older answer, including a
+  late device location or a late error, change nothing. Editing the box is
+  not such an action: it only prepares the next query, so a submitted search
+  still answers (a single place still moves the map), and its results show
+  whenever the box holds the query they were found for. So the map always
+  ends where the contributor last asked for. Hand moves are recognized from
+  their input (`src/views/PickerMap.tsx`: Leaflet's `dragstart`, the wheel, a
+  double click, a two-finger touch, the zoom buttons, and the map's keys),
+  never from `moveend`/`zoomend`, which programmatic `setView` calls (a
+  shortcut, a search result, a selection, restoring the view) also fire; the
+  search, the shortcuts, and the map share one `LocateIntent`
+  (`src/lib/locateIntent.ts`). Moving the map never selects a restaurant.
 - **Restaurant selection** (`src/views/RestaurantSelector.tsx`,
   `src/views/PickerMap.tsx`, `src/lib/poi.ts`) is map-first. The map opens on
-  Rice University and shows the restaurants in view (restaurants, fast food,
-  cafes, food courts from the
-  [Geoapify Places API](https://apidocs.geoapify.com/docs/places/)) as pins
-  labelled with the restaurant name; clicking a pin (or its name) selects that
-  restaurant. Labels (`src/lib/labelLayout.ts`) go on the right of a pin, or
+  Rice University and shows the restaurants in view as pins labelled with the
+  restaurant name: restaurants already on Rice Eats as green pins ("已收录";
+  choosing one is like starting from its restaurant page:
+  `selection_method=existing` with its `restaurant_id`), and restaurants,
+  fast food, cafes, and food courts from the
+  [Geoapify Places API](https://apidocs.geoapify.com/docs/places/) as the
+  usual pins (a place within 100 m of a listed restaurant with the same name
+  or other name shows once, as the listed one). Clicking a pin (or its name)
+  selects that restaurant. Labels (`src/lib/labelLayout.ts`) go on the right of a pin, or
   on the left near the right edge, so they stay inside the map; they never
   overlap each other or cover another pin. The selected restaurant's name is
   always shown (truncated only if neither side has room); the others are
@@ -109,19 +115,19 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
     and "重试" (or moving the map) loads only the failed tiles again (failures
     are not cached). When nothing loads, the previous pins stay with an error
     and "重试". Results for an area the map has already left are ignored.
-  - "或者：在当前区域搜索餐厅" is the fallback to picking on the map, shown
-    the same way as the address search. It narrows the pins and the list to
-    the restaurants in view whose name contains the text (no request), so the
-    list is always the map's area AND the name; it opens by itself while
-    searching. The selected restaurant with "下一步：填写点评 →" closes the
-    page, below the boxes and the data-source line. If the place is missing,
-    "手动添加餐厅" takes the 餐厅名称 and a map marker (drawn like a selected
-    restaurant pin, with the name beside it);
-    a name alone ("我不确定具体位置") is allowed and is marked for location
-    verification. Manual entry has the same area controls but no restaurant
-    pins. The area is never the restaurant's location: only the
-    contributor's marker is, or a searched place after "用这个地点作为餐厅位置"
-    (whose address is then sent; there is no separate address field).
+  - While a name is typed, the list opens by itself and shows the
+    restaurants in view whose name (or other name) contains the text, so the
+    list is always the map's area AND the name. Choosing a restaurant clears
+    the search. The selected restaurant with "下一步：填写点评 →" closes the
+    page, below the box and the data-source line. If the place is missing,
+    "找不到？手动添加餐厅" takes the 餐厅名称 and a map marker (drawn like a
+    selected restaurant pin, with the name beside it); a name alone
+    ("我不确定具体位置") is allowed and is marked for location verification.
+    Manual entry has the same search box (addresses and places only) and
+    shortcuts, but no restaurant pins. A searched or shortcut location is
+    never the restaurant's location: only the contributor's marker is, or a
+    searched place after "用这个地点作为餐厅位置" (whose address is then sent;
+    there is no separate address field).
   - **Free fallback:** when there is no Geoapify key, Geoapify refuses the key
     (credits used up: HTTP 401/403/429, after which Geoapify is skipped for
     the rest of the session), or a Geoapify request fails, the search goes to
@@ -183,48 +189,52 @@ access to them. Menu names may differ slightly in Tally's editor.
    Keep the question titles exactly as written (intake finds answers in the CSV
    export by these titles, defined in `shared/submission.ts`):
 
-   | Block              | Title / name            | Settings                                                                                                    |
-   | ------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------- |
-   | Hidden fields      | `restaurant_id`         | Rice Eats id, only for a restaurant already on the site.                                                    |
-   |                    | `restaurant_name`       | The selected restaurant name.                                                                               |
-   |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                           |
-   |                    | `restaurant_lng`        | Longitude, as above.                                                                                        |
-   |                    | `restaurant_address`    | Address, when known.                                                                                        |
-   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                                 |
-   |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                    |
-   |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                             |
-   |                    | `source`                | `site` or `restaurant-page`.                                                                                |
-   |                    | `tags_raw`              | The contributor's keywords as a JSON array, e.g. `["适合约会","很安静"]`; absent without keywords.          |
-   | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                  |
-   | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
-   | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                               |
-   | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                |
-   | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                            |
-   | Divider            |                         |                                                                                                             |
-   | Heading 2          |                         | "菜品点评（选填）"                                                                                          |
-   | Text               |                         | "如果想单独评价某道菜，可以添加菜品点评，并上传对应照片。"                                                  |
-   | Checkboxes         | `菜品1 添加`            | Optional, one unchecked option `＋ 添加一道菜`. Title cleared in the editor (see below).                    |
-   | Short answer       | `菜品1 名称`            | **Required** (only while shown).                                                                            |
-   | Multiple choice    | `菜品1 评价`            | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.                |
-   | File upload        | `菜品1 照片（选填）`    | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                         |
-   | Short answer       | `菜品1 点评（选填）`    | Optional; one sentence about the dish.                                                                      |
-   | (same five blocks) | `菜品2 …` to `菜品10 …` | Same settings and the same option `＋ 添加一道菜` (step 4).                                                 |
-   | Divider            |                         |                                                                                                             |
-   | Heading 2          |                         | "署名与授权"                                                                                                |
-   | Short answer       | `署名（选填）`          | Optional; intake credits a blank name as 匿名.                                                              |
-   | Text               |                         | Below it: "采用后会显示在网站上；不填则显示为「匿名」。"                                                    |
-   | Email              | `联系邮箱（选填）`      | Optional.                                                                                                   |
-   | Text               |                         | Below it: "只用于和你沟通，不会公开。"                                                                      |
-   | Checkboxes         | `发布授权`              | Required, one unchecked option whose text starts with `我同意` (consent text below).                        |
-   | Conditional logic  |                         | See step 4.                                                                                                 |
-   | reCAPTCHA          |                         | Native spam protection.                                                                                     |
-   | 'Thank you' page   |                         | Confirmation text (step 9).                                                                                 |
+   | Block              | Title / name            | Settings                                                                                                                       |
+   | ------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+   | Hidden fields      | `restaurant_id`         | Rice Eats id, only for a restaurant already on the site.                                                                       |
+   |                    | `restaurant_name`       | The selected restaurant name.                                                                                                  |
+   |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                                              |
+   |                    | `restaurant_lng`        | Longitude, as above.                                                                                                           |
+   |                    | `restaurant_address`    | Address, when known.                                                                                                           |
+   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                                                    |
+   |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                                       |
+   |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                                                |
+   |                    | `source`                | `site` or `restaurant-page`.                                                                                                   |
+   | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                                     |
+   | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`.                    |
+   | Multiple choice    | `人均价格（选填）`      | Optional, nothing preselected. Options exactly: `$10 以下`, `$10–20`, `$20–30`, `$30–50`, `$50–100`, `$100 以上` (US dollars). |
+   | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                                                  |
+   | Short answer       | `标签（选填）`          | Optional. Placeholder: "例如：适合约会，适合聚餐".                                                                             |
+   | Text               |                         | Below it: "用几个词描述这家店，多个标签用逗号（，）或顿号（、）分开。"                                                         |
+   | Short answer       | `餐厅别名（选填）`      | Optional. Placeholder: "例如：英文名、简称".                                                                                   |
+   | Text               |                         | Below it: "这家店的其他名字，多个用逗号（，）或顿号（、）分开。"                                                               |
+   | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                                   |
+   | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                                               |
+   | Divider            |                         |                                                                                                                                |
+   | Heading 2          |                         | "菜品点评（选填）"                                                                                                             |
+   | Text               |                         | "如果想单独评价某道菜，可以添加菜品点评，并上传对应照片。"                                                                     |
+   | Checkboxes         | `菜品1 添加`            | Optional, one unchecked option `＋ 添加一道菜`. Title cleared in the editor (see below).                                       |
+   | Short answer       | `菜品1 名称`            | **Required** (only while shown).                                                                                               |
+   | Multiple choice    | `菜品1 评价`            | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.                                   |
+   | File upload        | `菜品1 照片（选填）`    | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                                            |
+   | Short answer       | `菜品1 点评（选填）`    | Optional; one sentence about the dish.                                                                                         |
+   | (same five blocks) | `菜品2 …` to `菜品10 …` | Same settings and the same option `＋ 添加一道菜` (step 4).                                                                    |
+   | Divider            |                         |                                                                                                                                |
+   | Heading 2          |                         | "署名与授权"                                                                                                                   |
+   | Short answer       | `署名（选填）`          | Optional; intake credits a blank name as 匿名.                                                                                 |
+   | Text               |                         | Below it: "采用后会显示在网站上；不填则显示为「匿名」。"                                                                       |
+   | Email              | `联系邮箱（选填）`      | Optional.                                                                                                                      |
+   | Text               |                         | Below it: "只用于和你沟通，不会公开。"                                                                                         |
+   | Checkboxes         | `发布授权`              | Required, one unchecked option whose text starts with `我同意` (consent text below).                                           |
+   | Conditional logic  |                         | See step 4.                                                                                                                    |
+   | reCAPTCHA          |                         | Native spam protection.                                                                                                        |
+   | 'Thank you' page   |                         | Confirmation text (step 9).                                                                                                    |
 
    Optional questions say so in their own title ("（选填）"); required ones
    use Tally's required setting only. Help text sits directly below the
    question it belongs to and does not repeat "选填". Intake matches titles by
    prefix, so `你的点评（选填）` and `菜品1 照片（选填）` are read like
-   `你的点评` and `菜品1 照片` (exports of the older titles still work).
+   `你的点评` and `菜品1 照片`.
 
    Consent option text (`发布授权`); intake treats an answer starting with
    `我同意` as consent:
@@ -245,12 +255,7 @@ access to them. Menu names may differ slightly in Tally's editor.
 
 3. **Hidden fields.** The names must be exactly as in the table; the website
    passes only the non-empty ones as URL parameters, e.g.
-   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site&tags_raw=...`.
-   For a form created before keywords existed, add the hidden field
-   `tags_raw` (Tally: the "Hidden fields" block, "+ Add field", the exact
-   name `tags_raw`), publish the form, and check one test response: the
-   Submissions tab and the CSV export then have a `tags_raw` column. Older
-   responses without it import with no keywords.
+   `?restaurant_name=...&restaurant_lat=29.717400&restaurant_lng=-95.401800&restaurant_address=...&poi_provider=geoapify&poi_id=...&selection_method=poi&source=site`.
    The form has no name question and does not repeat the name: the restaurant
    is chosen on the website, which shows it above the form (to change it,
    contributors use "更换餐厅" on the website). The
@@ -264,10 +269,9 @@ access to them. Menu names may differ slightly in Tally's editor.
      are hidden, so a dish's name and verdict are required only once the
      contributor adds that dish. Intake also reports dishes without a name or
      verdict, so a gap here never publishes anything.
-   - The overall rating is required and the review text optional, so a
-     submission may carry only a rating (plus consent). Intake accepts that
-     as content; an invalid rating alone is blocked. Older submissions with
-     text and no rating stay valid.
+   - The overall rating is required and everything else optional, so a
+     submission may carry only a rating (plus consent). Intake blocks a
+     submission without a valid rating.
    - Option labels carry the same emoji as the website (`src/lib/labels.ts`);
      intake accepts the answers with or without the emoji.
 5. **Photos.** In each file upload block, allow multiple files, limit the
@@ -416,7 +420,7 @@ whose id is not in `npm run content:submission -- list`; move its email from
    checking restaurant information) and run it for you.
 
 5. Review and approve as usual (`content:promote`, `content:publish`). Then
-   record the outcome (prepare records `drafted` and `deferred` itself):
+   record the outcome (prepare records `drafted` itself):
 
    ```sh
    npm run content:submission -- mark <submission id> --status processed --id <restaurant id>
@@ -434,7 +438,8 @@ into a private draft with no manual field mapping
 (`scripts/content/prepare.ts`). It never promotes, publishes, commits, or
 touches `content/`, and it can be run again at any time.
 
-- **Blocked** (exit code 1, nothing written) without consent, for a rejected
+- **Blocked** (exit code 1, nothing written) without consent or a valid
+  rating, for a rejected
   submission, while photos are unresolved (pending or failed; recover or
   waive them first), when the display name looks like contact details, or
   when the restaurant is uncertain: give `--id <restaurant id>` for an
@@ -447,32 +452,51 @@ touches `content/`, and it can be run again at any time.
   name alone; a submission without an email gets its own contributor (with a
   note when the name is already taken), and anonymous and named submissions
   are never merged.
-- **One contributor per restaurant**: a restaurant's review comes from the
-  first accepted submission only (a public record crediting someone, or
-  another submission that is drafted or processed). Every later submission
-  for it is kept and marked `deferred`, never merged into the existing review
-  and never treated as a duplicate import. A rejected earlier submission does
-  not count, so the next one can be used.
-- **Draft**: rating, review, named dishes with their verdicts, comments, and
-  all their photos (`images`), other photos for the gallery, keywords mapped
-  to tags, restaurant information (below), and the contributor. Photos are
+- **Every submission is a review of its own**: `reviews/<review id>.json`
+  (contributor, submission time, rating, dish verdicts and comments, photos)
+  and `.md` (the text), with only this submission's content. Its review id is
+  generated on the first prepare and kept in `prepare.json`, so a rerun
+  rewrites the same review and never adds a second one; another submission,
+  even by the same contributor with the same words, always gets its own.
+  No review is ever changed by another submission.
+- **Review time** (`submittedAt`): the submission's own time, so reviews of
+  one day still have an order. Tally's "Submitted at" comes as
+  `YYYY-MM-DD HH:MM[:SS]` without a zone and is read as UTC; ISO 8601 with a
+  zone (`2026-10-14T19:30:00.123Z`, `2026-10-14T15:30:00-05:00`) is also
+  accepted. It is stored as the same instant in UTC. Without a time, or with
+  one that is not valid (a date that does not exist, an ISO time without a
+  zone), the review is dated when the submission is first prepared; the
+  report says so (`FALLBACK`), and every later run and `--rebuild` keeps
+  that time (`prepare.json`), so a rerun never makes an old review the
+  contributor's latest. If the submission's own time changes, the review
+  follows it, with a note.
+- **Dishes**: a dish name (or one of its `altNames`, ignoring width, case,
+  and spacing) that the restaurant already has is that dish; any other name
+  becomes a new dish (`d1`, `d2`, …) in `info.json`. To merge two dishes,
+  move one's verdicts to the other's id and add its name to `altNames`.
+- **Draft**: the review, named dishes, keywords mapped to tags, restaurant
+  information (below), and the contributor. Photos are
   standardized in slot order (metadata removed) and imported once each by
   content hash, so a rerun or a recovered photo never creates a second copy.
   Values already in the draft or the public record are never overwritten; a
   different value is reported as a conflict.
+- **Shared restaurant information**: tags, other names, cuisines, facts,
+  and dishes in `info.json` are shared by every review. `prepare.json`
+  records what each run itself added, and when (`owned`), and what the
+  submission gives whoever added it (`claims`); equal values elsewhere are
+  never taken as its own.
 - **Idempotent and recoverable**: progress is kept in `prepare.json` next to
   the submission; an interrupted run continues where it stopped, and a run
   with nothing new reports `unchanged`. A draft edited by hand since the last
-  run is left alone (`--rebuild` starts `info.json` and `review.md` again from
-  the submission). A deleted draft is recreated.
+  run (its review files or photos) is left alone (`--rebuild` builds the
+  contributor's review again from the submission). A deleted draft is recreated.
 - **Photos of a rebuilt draft**: each stored image is linked to its photo
   number and content hash. When a photo no longer belongs to the submission
   (its file changed and was added again, or it was waived), the image an
   earlier run imported for it is removed; a replaced photo keeps its image
   number, so the order and the cover stay. Repeated runs never duplicate an
   image. Images added by hand (`content:add-images`) are never removed: the
-  report lists them, since an image no dish or review uses appears in the
-  gallery.
+  report lists them, since an image no review uses appears in the gallery.
 - **Report**: content and photos, each keyword and its tag, each piece of
   restaurant information with its source, method, and confidence, conflicts,
   privacy and consent findings (contact details in the text are flagged and
@@ -488,25 +512,38 @@ npm run content:submission -- mark <submission id> --status rejected
 
 The raw submission stays in `private/submissions/` (rejection never deletes
 it). Its contribution is taken back out of the draft, using what
-`prepare.json` recorded: the restaurant before the submission (`base`) and
-what prepare wrote. For each field of `info.json` and for `review.md`:
+`prepare.json` recorded: its review id, a fingerprint of the review and
+photos as prepare last wrote them, and what the submission itself added to
+`info.json` (`owned`: each run records only what it added, never what other
+submissions or the maintainer added in between, so preparing it again never
+widens what it owns):
 
-- changed by prepare and not edited since: back to its value before;
-- edited only by the maintainer: kept;
-- lists (`contributorIds`, `tags`, `altNames`, `cuisines`): only the entries
-  the submission added are removed;
-- images the submission brought (recognized by content) are removed;
-  images that were there before or were added by hand stay;
-- a draft folder that prepare created and that holds nothing else is
-  removed; a restaurant's earlier draft (`content:new`, `content:edit`) keeps
+- its own review goes, but only while it is exactly what the submission
+  wrote. Other reviews are never touched, whoever wrote them and whatever
+  they say, and no review is ever put back: when a contributor's latest
+  review goes, their previous one simply counts for the rating again;
+- what it added to `info.json` goes where it is still as written, unless
+  another submission still in the draft added it later (say the maintainer
+  removed a tag after A and B added it again) or gives it too: that one
+  owns it from then on, so rejecting it later takes it out. A dish also
+  stays while another review rates it. A field changed since is a conflict
+  (below);
+- images the submission stored, at the path it stored them and unchanged,
+  are removed, unless another review uses them; images that were there
+  before or were added by hand stay (a copy with the same content is not
+  taken as its own);
+- a draft folder that prepare created (for this or another submission) is
+  removed when nothing else is left in it (no review, no other submission,
+  no other information or photo; for a checked-out restaurant, nothing that
+  differs from the public one); a restaurant's
+  earlier draft (`content:new`, `content:edit`) keeps
   everything that did not come from the submission;
 - tags the submission proposed are withdrawn from `private/tags.json` unless
   another draft uses them. The contributor stays in
   `private/contributors.json` (a record), but no draft credits them.
 
-A rejected submission no longer reserves the restaurant: the command lists
-deferred submissions about it, which can now be prepared. A restaurant that
-was already promoted is not changed; edit it with `content:edit`.
+A restaurant that was already promoted is not changed; edit it with
+`content:edit`.
 
 **The publication block.** The rollback has its own state in `prepare.json`
 (`rejection.status`: `pending` while it runs, `manual` when it needs the
@@ -516,11 +553,24 @@ other status, `prepare` refuses the submission, and `content:check` and
 `content:promote` (also with `--approved`) fail for that restaurant's draft,
 whatever the log says. This happens when:
 
-- a field was edited by hand **and** written by the submission (say the
-  maintainer corrected its review): nothing is changed and the command exits
-  with code 1 listing the fields. Remove the submission's content from them
-  (or put back what was there before) and run it again, or, after checking
-  them, keep their current values with `--resolved`;
+- something the submission wrote was changed since: its review (text, data,
+  or photos) edited by hand; a field of `info.json` it filled (say the maintainer corrected the address it
+  gave); a dish it added; or another review now uses one of its photos.
+  Nothing is changed and the command exits with code 1 listing them. Remove
+  the submission's content from them (or put back what was there before) and
+  run it again, or, after checking them, keep their current content with
+  `--resolved` (a kept review keeps every photo it uses);
+- what the rest of the draft still uses cannot be read, so nothing can be
+  taken out safely: another review of the draft is not a valid review (it
+  may still use dishes and photos), or another submission that the log shows
+  wrote into this draft has a `prepare.json` that is missing, cannot be read,
+  belongs to another restaurant, or records nothing written without a
+  finished rejection (its additions and claims would be unknown). Nothing is
+  changed, the message names each one, and `--resolved` does not apply.
+  Repair the review, or restore that submission's `prepare.json` from the
+  [backup](#retention-and-backup) (or finish its lost-state check below),
+  then run the rejection again. A submission whose rejection finished but
+  whose log update was interrupted is not in the way;
 - the command was interrupted (the state is written before the log): run it
   again, which is always safe;
 - `prepare.json` cannot be read, or is missing although the log shows the
@@ -533,7 +583,7 @@ whatever the log says. This happens when:
   time in the log entry's `audit`:
 
   ```sh
-  npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, photos, and credit"
+  npm run content:submission -- mark <submission id> --status rejected --state-lost "removed its review, dishes, and photos"
   ```
 
 `--resolved` and `--state-lost` are accepted only with `--status rejected`;
@@ -614,19 +664,8 @@ record of who decided what:
 `key` is the listing shown in the report; a decision for another key is
 ignored, and `different-place` keeps a listing out.
 
-`pricePerPerson` is never guessed: it is set only from a reviewed fact, e.g. a
-price the contributor states or a menu with prices:
-
-```json
-{
-  "field": "pricePerPerson",
-  "value": 18,
-  "source": "official website menu",
-  "evidence": "https://example.com/menu: noodles $14-16, drinks $3",
-  "method": "inferred",
-  "confidence": "medium"
-}
-```
+The price per person is never a fact: it comes from the reviews (the form's
+`人均价格（选填）` question; see docs/content.md).
 
 `npm run content:submission -- fetch-page <url>` fetches such a page with the
 same protections as photo downloads (https on the default port, any
@@ -676,10 +715,8 @@ If a link has expired or needs the Tally login, open the submission in the
 Tally dashboard, download the photo, and add it with `add-photo` (it must be
 a JPEG, PNG, WebP, or HEIC image of at most 10 MB; the original file is not
 changed). If the maintainer decides to go ahead without it, use
-`waive-photo`. A photo-only submission without any retrieved photo is
-BLOCKED until a photo is recovered or the submission is rejected; a
-submission with text or some photos can be drafted once the maintainer has
-decided about the missing ones.
+`waive-photo`. A submission can be drafted once the maintainer has decided
+about every missing photo.
 
 **Download security.** Photo links come from untrusted submissions, so every
 request, including each redirect, is checked before it is made: https only,
@@ -707,9 +744,8 @@ enter `content/` or the website build.
 ## Retention and backup
 
 Every submission received is kept in the private database, whatever its
-status (`imported`, `drafted`, `processed`, `deferred`, or `rejected`), so
-later features (for example several reviews per restaurant) can use the
-original material. The status never decides whether it is kept, and no
+status (`imported`, `drafted`, `processed`, or `rejected`), so a review can
+be rebuilt from the original material. The status never decides whether it is kept, and no
 command deletes it:
 
 | Kept                                                    | Where (all in `private/`, git-ignored)                                               |
@@ -761,9 +797,12 @@ checked by hand once the form exists:
    a text-only test response.
 2. Use "使用当前位置" (allow the permission) and check that the map moves and
    the pins update; pan the map elsewhere and check again. Search a
-   restaurant by name and submit a photo-only test response. Then deny the
-   location permission once and check that the message appears and the map
-   still works.
+   restaurant by name with "搜索" (one beyond the map), choose it from the
+   "餐厅" results, and submit a photo-only test response. Search an address
+   and check that it only moves the map. Then deny the location permission
+   once and check that the message appears and the map still works. Reload
+   the page and check that "上次的位置" returns to where the last restaurant
+   was chosen.
 3. Add a restaurant by hand (name and marker) and submit a test response.
 4. On a restaurant page, use "补充点评或照片" and submit a test response.
 5. In Tally, confirm the responses recorded `restaurant_name`,
@@ -771,8 +810,8 @@ checked by hand once the form exists:
    `manual`, `existing`), `poi_provider` / `poi_id` for the first two,
    `restaurant_id` and `source=restaurant-page` for the fourth, and
    `source=site` for the others, and that the page showed the restaurant name above the form.
-   Add two keywords (one typed with a Chinese input method) to one response
-   and check its `tags_raw`; the others have none. Include a dish with a photo
+   Answer `标签（选填）` in one response (see the checklist below); the
+   others leave it empty. Include a dish with a photo
    in one response and check that the import lists the photo under that dish.
 6. Confirm three notification emails arrived at `hello.riceeats@gmail.com`.
 7. Export the CSV, run `npm run content:submission -- import`, and confirm the
@@ -788,25 +827,22 @@ checked by hand once the form exists:
    their folders in `private/` afterwards is an explicit erasure (see
    [Retention](#retention-and-backup)), not a cleanup that happens on its own.
 
-### Keywords (`tags_raw`) in the live form
+### Tags and aliases in the live form
 
-The automated tests use a stub, so they cannot show that the real form
-accepts `tags_raw` and exports it unchanged. Check it once the hidden field
-exists (and after changing it), and record the result; until then it is not
-verified:
+The automated tests use a stub instead of Tally, so check the tag and
+alias questions in the real form once (and after changing it), and record the
+result; until then it is not verified. For each answer, check the CSV
+column `标签（选填）` and the keywords in the report of `import` and
+`prepare`:
 
-| #   | Do                                                                      | Expect in the CSV export / notification, then after `import` and `prepare` |
-| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 1   | Several Chinese keywords (`适合约会`, `很安静`)                         | `tags_raw` is `["适合约会","很安静"]`; the report lists both keywords      |
-| 2   | A keyword typed with a Chinese input method (Enter confirms the pinyin) | the composed characters, no stray Latin letters                            |
-| 3   | English keywords (`date night`)                                         | kept as typed                                                              |
-| 4   | A keyword with spaces inside                                            | spaces kept                                                                |
-| 5   | No keywords ("跳过")                                                    | `tags_raw` empty; no keywords in the report                                |
-| 6   | The same keyword twice (also in another width or case)                  | stored once                                                                |
-| 7   | "在新窗口打开投稿表单" (direct link)                                    | same `tags_raw` and restaurant fields as the embedded form                 |
-| 8   | Import an export from before `tags_raw` existed                         | imports without keywords, no error                                         |
-| 9   | Select a restaurant, add keywords, submit                               | restaurant fields and keywords both present                                |
-| 10  | Type in the form, then "修改关键词"                                     | the warning appears first; cancelling keeps the form as typed              |
+| #   | Answer                                         | Expect                                               |
+| --- | ---------------------------------------------- | ---------------------------------------------------- |
+| 1   | `适合约会，很安静、份量大` (typed with pinyin) | three keywords: `适合约会`, `很安静`, `份量大`       |
+| 2   | `date night, quiet`                            | `date night` (space kept) and `quiet`                |
+| 3   | (empty)                                        | no keywords, no error                                |
+| 4   | `安静，安静、ＱＵＩＥＴ、quiet`                | `安静` and `ＱＵＩＥＴ` once each (repeats dropped)  |
+| 5   | the same answer through "在新窗口打开投稿表单" | the same keywords and restaurant fields as the embed |
+| 6   | `餐厅别名（选填）`: `Example House、小汤包`    | the draft's `altNames` gains both                    |
 
-The hidden field must be named exactly `tags_raw` (`HIDDEN_FIELDS.keywords` in
+The CSV headers must start with `标签` and `餐厅别名` (`TALLY_QUESTIONS` in
 `shared/submission.ts`).

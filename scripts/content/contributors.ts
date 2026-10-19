@@ -128,19 +128,23 @@ export async function resolveContributor(
   const { publicList, privateRecords } = await loadContributors(files);
   const nameOf = (id: string) => publicList.find((c) => c.id === id)?.name ?? privateRecords[id]?.name;
   if (email) {
-    const match = Object.entries(privateRecords).find(([, r]) => r.email?.trim().toLowerCase() === email)?.[0];
+    // The same email may have two identities, one named and one anonymous; reuse the one with the same kind of credit.
+    const byEmail = Object.entries(privateRecords)
+      .filter(([, r]) => r.email?.trim().toLowerCase() === email)
+      .map(([id]) => id);
+    const match = byEmail.find((id) => isAnonymous(name) === isAnonymous(nameOf(id)));
     if (match) {
       const known = nameOf(match);
-      if (isAnonymous(name) !== isAnonymous(known)) {
-        notes.push(
-          `the email matches ${match}, but one of them is anonymous; kept as a separate contributor so the anonymous credit stays anonymous`,
-        );
-      } else {
-        if (known && normalize(known) !== normalize(name)) {
-          notes.push(`${match} now signs as "${name}"; the public name stays "${known}" unless the maintainer changes it`);
-        }
-        return { id: match, created: false, notes };
+      if (known && normalize(known) !== normalize(name)) {
+        notes.push(`${match} now signs as "${name}"; the public name stays "${known}" unless the maintainer changes it`);
       }
+      return { id: match, created: false, notes };
+    }
+    if (byEmail.length) {
+      notes.push(
+        `the email matches ${byEmail.join(', ')}, but ${isAnonymous(name) ? 'this credit is anonymous' : 'this credit is named'} ` +
+          'and that one is not; kept as a separate contributor so an anonymous credit stays anonymous',
+      );
     }
   } else if (!isAnonymous(name)) {
     const same = [...publicList.map((c) => c.id), ...Object.keys(privateRecords)].filter(

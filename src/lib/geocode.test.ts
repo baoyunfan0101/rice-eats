@@ -66,6 +66,50 @@ describe('normalizing results', () => {
     ]);
     expect(normalizeGeoapifyGeocode({})).toEqual([]);
   });
+
+  it('drops results whose coordinates are not numbers, and keeps valid ones', () => {
+    const at = (lat: unknown, lon: unknown) =>
+      normalizeGeoapifyGeocode({ results: [{ place_id: 'p', name: 'Somewhere', lat, lon }] }).map(
+        (p) => p.location,
+      );
+    for (const [lat, lon] of [
+      [null, -95.4],
+      [29.7, null],
+      ['', -95.4],
+      [29.7, '  '],
+      [true, -95.4],
+      [29.7, false],
+      [[29.7], -95.4],
+      [undefined, -95.4],
+      ['29.7N', -95.4],
+      [Number.NaN, -95.4],
+      [91, -95.4],
+      [29.7, -181],
+    ]) {
+      expect(at(lat, lon), `${String(lat)}, ${String(lon)}`).toEqual([]);
+    }
+    expect(at(0, 0)).toEqual([{ lat: 0, lng: 0 }]);
+    expect(at('29.7174', '-95.4018')).toEqual([{ lat: 29.7174, lng: -95.4018 }]);
+    expect(at(-33.9, 151.2)).toEqual([{ lat: -33.9, lng: 151.2 }]);
+  });
+
+  it('marks only clear places to eat as restaurants, with their POI', () => {
+    const result = (extra: object) =>
+      normalizeGeoapifyGeocode({
+        results: [{ place_id: 'p', name: 'Pho Garden', lat: 29.7, lon: -95.5, ...extra }],
+      })[0]!.restaurant;
+    expect(result({ result_type: 'amenity', category: 'catering.restaurant' })).toEqual({
+      provider: 'geoapify',
+      id: 'p',
+    });
+    expect(
+      result({ result_type: 'amenity', datasource: { raw: { amenity: 'fast_food' } } }),
+    ).toEqual({ provider: 'geoapify', id: 'p' });
+    // A shop, a building, or a street is a place, even with a food-sounding name.
+    expect(result({ result_type: 'amenity', category: 'commercial.supermarket' })).toBeUndefined();
+    expect(result({ result_type: 'building', category: 'catering.restaurant' })).toBeUndefined();
+    expect(result({ result_type: 'street' })).toBeUndefined();
+  });
 });
 
 describe('geocode', () => {

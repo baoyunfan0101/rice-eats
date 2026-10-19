@@ -5,7 +5,9 @@
 //     -> resolve the restaurant and the contributor, map keywords to tags,
 //        add restaurant information from the map listing, import every photo
 //        with its dish
-//     -> private/drafts/<restaurant id>/   draft for the maintainer's review
+//     -> private/drafts/<restaurant id>/   draft for the maintainer's review:
+//        the restaurant (info.json) and this submission's own review
+//        (reviews/<review id>.json and .md)
 //     -> private/submissions/tally-<id>/review-report.md
 //
 // Everything with fixed rules is done here, without a language model: field
@@ -16,23 +18,27 @@
 // validated here before anything is used. Nothing is promoted, published, or
 // committed.
 //
-// One accepted contributor per restaurant (for now): the first submission
-// that is drafted for a restaurant provides its rating, review, dishes,
-// photos, and credit. Later submissions about the same restaurant are kept
-// unchanged and marked "deferred"; they never change the restaurant.
+// Every accepted submission is one review of its restaurant, with an id of
+// its own: a submission about a restaurant that already has reviews adds its
+// own, also when the same contributor reviewed it before. No review ever
+// takes anything from another. The restaurant's facts are only ever filled in where they are empty; each
+// dish is matched to the restaurant's dishes by name (or other name), and a
+// new name becomes a new dish.
 //
-// Re-running is safe: the draft id, the contributor, and the photo -> image
-// mapping are stored in prepare.json, so nothing is created twice, and a
-// draft edited by hand since the last run is never overwritten (unless
+// Re-running is safe: the draft id, the review id, the contributor, and the
+// photo -> image mapping are stored in prepare.json, so nothing is created twice, and a
+// review edited by hand since the last run is never overwritten (unless
 // --rebuild). Images an earlier run imported that no longer belong to the
 // submission are removed; images added by hand are kept.
 //
-// Rejecting a submission (rejectSubmission) takes its contribution back out
-// of the draft: prepare.json keeps the restaurant as it was before
-// (base) and as prepare wrote it, so only what this submission added is
-// undone, and the maintainer's own edits are kept. When both changed the
-// same field, nothing is changed and the draft cannot be promoted until the
-// maintainer resolves it. The raw submission is always kept.
+// Rejecting a submission (rejectSubmission) takes its own review back out of
+// the draft with its photos, and undoes what it added to the restaurant:
+// prepare.json records what each run added (owned) and what the submission
+// gives (claims), so the maintainer's and other submissions' additions are
+// kept. Other reviews are never touched and no review is put back. When
+// something it wrote was changed since, nothing is changed and the draft
+// cannot be promoted until the maintainer resolves it. The raw submission is
+// always kept.
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -40,14 +46,20 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import path from 'node:path';
 import { z } from 'zod';
 import {
+  canonicalInstant,
   contributorIdSchema,
+  formatIssues,
   idSchema,
   normalizeKeyword,
   restaurantInfoSchema,
+  reviewIdSchema,
+  reviewSchema,
   tagIdSchema,
   type RestaurantInfo,
+  type Review,
 } from '../../shared/content/schema.ts';
-import { isValidLatLng, ratingFromAnswer, verdictFromAnswer } from '../../shared/submission.ts';
+import type { PriceRange, Rating } from '../../shared/content/vocabulary.ts';
+import { isValidLatLng, priceFromAnswer, ratingFromAnswer, verdictFromAnswer } from '../../shared/submission.ts';
 import { resolveContributor, type ContributorFiles } from './contributors.ts';
 import {
   factSchema,
@@ -58,8 +70,17 @@ import {
   type ListingCheck,
   type PoiDetails,
 } from './enrich.ts';
-import { checkoutRestaurant, createDraft, folderChanges, importImages, IntakeError, newRestaurantId } from './intake.ts';
-import { IMAGES_DIR, INFO_FILE, listImages, REVIEW_FILE, runPipeline } from './pipeline.ts';
+import {
+  checkoutRestaurant,
+  createDraft,
+  folderChanges,
+  importImages,
+  IntakeError,
+  newRestaurantId,
+  newReviewId,
+  takenReviewIds,
+} from './intake.ts';
+import { IMAGES_DIR, INFO_FILE, listImages, REVIEWS_DIR, reviewImages, runPipeline } from './pipeline.ts';
 import { findContactDetails, tagRegistryProblems } from './privacy.ts';
 import {
   loadKnownRestaurants,
@@ -95,32 +116,56 @@ export const PREPARE_STATE_FILE = 'prepare.json';
 export const RESOLUTIONS_FILE = 'resolutions.json';
 export const REVIEW_REPORT_FILE = 'review-report.md';
 
+/**
+ * One piece of the shared info.json: a field ("address", "links.website")
+ * with its value, an entry of a list field ("tags", "altNames", "cuisines"),
+ * or a dish (its id is what identifies it).
+ */
+const infoItemSchema = z.strictObject({
+  kind: z.enum(['field', 'entry', 'dish']),
+  key: z.string(),
+  value: z.unknown(),
+});
+const ownedItemSchema = infoItemSchema.extend({ /** When this submission added it. */ at: z.string() });
+
 /** What prepare remembers between runs (private, next to submission.json). */
 const prepareStateSchema = z.strictObject({
   restaurantId: idSchema,
   /** new: a restaurant created from this submission; existing: one already in the database or a draft. */
   mode: z.enum(['new', 'existing']),
-  /** The restaurant before this submission touched it; drafts are rebuilt from it, and a rejection restores it. */
+  /** The restaurant before this submission touched it (to tell whether a draft it created holds anything else). */
   base: z.strictObject({
     info: z.record(z.string(), z.unknown()),
-    review: z.string().optional(),
     /** Image files the draft had before (never removed by prepare or a rejection). */
     images: z.array(z.string()),
   }),
+  /** This submission's own review: reviews/<reviewId>.json (and .md), the same on every run. */
+  reviewId: reviewIdSchema,
+  /**
+   * The review's time (canonical UTC): the submission's own, or, without a
+   * valid one, the time the submission was first prepared. Kept, so reruns
+   * and rebuilds never move the review in time.
+   */
+  submittedAt: z.strictObject({ at: z.string(), from: z.enum(['submission', 'fallback']) }),
   /** True when prepare created the draft folder (new restaurant, or a checkout of a public one). */
   createdDraft: z.boolean(),
-  contributorId: contributorIdSchema.optional(),
+  contributorId: contributorIdSchema,
   /** Submitted photo slot -> stored image (and the stored file's SHA-256), so photos are imported once. */
   photos: z.array(
     z.strictObject({ slot: z.number().int().min(1), sha256: z.string(), image: z.string(), stored: z.string() }),
   ),
   /** Tags this submission proposed (private/tags.json), withdrawn again if it is rejected. */
   proposedTags: z.array(tagIdSchema),
-  /** Fingerprint of the draft as prepare last wrote it (detects hand edits); absent when nothing of it is in the draft. */
+  /** Fingerprint of this submission's review and photos as prepare last wrote them (detects hand edits); absent when nothing of it is in the draft. */
   written: z.string().optional(),
-  /** info.json and review.md as prepare last wrote them (null: no review.md), for a rejection. */
-  writtenInfo: z.record(z.string(), z.unknown()).optional(),
-  writtenReview: z.string().nullable().optional(),
+  /**
+   * What this submission itself added to the shared info.json, when (over all
+   * its runs; never what others added in between): a rejection takes out only
+   * that, and only where nobody else added it later or still gives it.
+   */
+  owned: z.array(ownedItemSchema).optional(),
+  /** The restaurant information this submission gives now (whoever added it); others' rejections keep it. */
+  claims: z.array(infoItemSchema).optional(),
   /** What happened when the submission was rejected (see rejectSubmission). */
   rejection: z
     .strictObject({
@@ -128,6 +173,11 @@ const prepareStateSchema = z.strictObject({
       status: z.enum(['pending', 'manual', 'done', 'resolved']),
       at: z.string(),
       details: z.array(z.string()),
+      /**
+       * Set when what other submissions or reviews still use cannot be read:
+       * nothing can be taken out safely, and --resolved does not apply.
+       */
+      unsafe: z.literal(true).optional(),
     })
     .optional(),
   preparedAt: z.string(),
@@ -198,10 +248,8 @@ export type PrepareOutcome =
   | 'drafted'
   /** Nothing changed since the last run. */
   | 'unchanged'
-  /** The draft was edited by hand since the last run; left as it is. */
+  /** The review was edited by hand since the last run; left as it is. */
   | 'edited'
-  /** The restaurant already has an accepted contributor; the submission is kept, not used. */
-  | 'deferred'
   /** Cannot be prepared until something is decided or fixed (see blockers). */
   | 'blocked'
   /** Already promoted or processed; nothing to do. */
@@ -220,12 +268,16 @@ export interface PrepareReport {
   restaurantId?: string;
   mode?: 'new' | 'existing';
   identity: string;
-  /** True when this submission is (or becomes) the restaurant's accepted contribution. */
-  firstContributor?: boolean;
+  /** The submission's own review (reviews/<reviewId>.json). */
+  reviewId?: string;
+  /** The review's time, and whether it is the submission's or a fallback. */
+  submittedAt?: PrepareState['submittedAt'];
   draftDir?: string;
   contributor?: { id: string; created: boolean; name: string };
   rating?: number;
-  dishes: { name?: string; verdict?: number; comment: boolean; images: string[] }[];
+  /** The per-person price range the submission gives, if any. */
+  price?: PriceRange;
+  dishes: { name?: string; verdict?: number; comment: boolean; images: string[]; dish?: string; newDish?: boolean }[];
   keywords: KeywordMatch[];
   newTags: string[];
   photos: { total: number; imported: number; waived: number; excluded: number; unresolved: number[] };
@@ -292,11 +344,8 @@ const FIELD_ORDER = [
   'location',
   'cuisines',
   'tags',
-  'rating',
-  'pricePerPerson',
   'dishes',
   'links',
-  'contributorIds',
 ] as const;
 const ordered = (info: Record<string, unknown>) =>
   Object.fromEntries(
@@ -419,6 +468,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
     outcome: 'blocked',
     identity: '',
     rating: ratingFromAnswer(submission.ratingAnswer),
+    price: priceFromAnswer(submission.priceAnswer),
     dishes: [],
     keywords: [],
     newTags: [],
@@ -522,33 +572,17 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   report.restaurantId = restaurantId;
   if (report.blockers.length > 0) return finish('blocked');
 
-  // A restaurant that was already promoted from this submission's draft.
   const draftDir = (rid: string) => path.join(options.draftsDir, rid);
   const publicDir = (rid: string) => path.join(options.restaurantsDir, rid);
-  if (state?.contributorId && !existsSync(draftDir(state.restaurantId))) {
-    const promoted = path.join(publicDir(state.restaurantId), INFO_FILE);
-    if (existsSync(promoted)) {
-      const info = JSON.parse(await readFile(promoted, 'utf8')) as RestaurantInfo;
-      if (info.contributorIds?.includes(state.contributorId)) {
-        report.notes.push(`the draft was promoted to content/restaurants/${state.restaurantId}/; mark the submission processed`);
-        return finish('done');
-      }
+  const reviewFile = (root: string, reviewId: string, ext: 'json' | 'md') =>
+    path.join(root, REVIEWS_DIR, `${reviewId}.${ext}`);
+  // A review that was already promoted from this submission's draft.
+  if (state && !existsSync(draftDir(state.restaurantId))) {
+    if (existsSync(reviewFile(publicDir(state.restaurantId), state.reviewId, 'json'))) {
+      report.notes.push(`the draft was promoted to content/restaurants/${state.restaurantId}/; mark the submission processed`);
+      return finish('done');
     }
   }
-
-  // One accepted contributor per restaurant: is the restaurant already taken?
-  if (mode === 'existing' && restaurantId) {
-    const taken = await acceptedElsewhere(restaurantId, id, state?.contributorId, log, options);
-    if (taken) {
-      report.firstContributor = false;
-      report.notes.push(
-        `${taken}. This submission stays saved (raw files and photos) but is not used: one review per restaurant for now`,
-      );
-      await updateLog(options.submissionsDir, id, (e) => ({ ...e!, status: 'deferred', restaurantId, updatedAt: clock() }));
-      return finish('deferred');
-    }
-  }
-  report.firstContributor = true;
 
   // From here on the draft is ours to build.
   if (!restaurantId) {
@@ -561,6 +595,20 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   }
   const target = draftDir(restaurantId);
   report.draftDir = target;
+
+  // Contributor: found by email, or registered privately.
+  let contributorId = state?.contributorId;
+  if (!contributorId) {
+    const contributor = await resolveContributor(options.contributorFiles, {
+      name: submission.displayName,
+      email: validEmail,
+    });
+    contributorId = contributor.id;
+    report.contributor = { id: contributor.id, created: contributor.created, name: submission.displayName?.trim() || '匿名' };
+    report.notes.push(...contributor.notes);
+  } else {
+    report.contributor = { id: contributorId, created: false, name: submission.displayName?.trim() || '匿名' };
+  }
 
   if (!state) {
     let base: PrepareState['base'];
@@ -575,15 +623,46 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
       base = { info: { id: restaurantId, status: 'draft', name: submission.restaurantName!.trim() }, images: [] };
       createdDraft = true;
     }
-    state = { restaurantId, mode: mode!, base, createdDraft, photos: [], proposedTags: [], preparedAt: clock() };
+    // A review id of its own, never derived from the content or the contributor.
+    const reviewId = newReviewId(await takenReviewIds(target, publicDir(restaurantId)));
+    // Decided once: without a valid submission time, the time it is first prepared.
+    const time = submissionTime(submission.submittedAt);
+    const submittedAt: PrepareState['submittedAt'] =
+      'at' in time ? { at: time.at, from: 'submission' } : { at: canonicalInstant(clock())!, from: 'fallback' };
+    state = { restaurantId, mode: mode!, base, reviewId, submittedAt, createdDraft, contributorId, photos: [], proposedTags: [], preparedAt: clock() };
     await writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
   }
-
-  // Hand edits since the last run are never overwritten (unless --rebuild).
-  if (existsSync(path.join(target, INFO_FILE)) && state.written && !options.rebuild) {
-    if ((await draftFingerprint(target)) !== state.written) {
+  const reviewId = state.reviewId;
+  report.reviewId = reviewId;
+  // The review's time follows the submission's; without a valid one, the kept fallback.
+  const time = submissionTime(submission.submittedAt);
+  if ('at' in time) {
+    // A real time replaces a fallback even at the same instant (its source changes).
+    if (state.submittedAt.at !== time.at || state.submittedAt.from !== 'submission') {
       report.notes.push(
-        'the draft was edited by hand since the last prepare; nothing was changed (use --rebuild to rebuild it ' +
+        state.submittedAt.from === 'submission'
+          ? `the submission time changed from ${state.submittedAt.at} to ${time.at}; the review follows it`
+          : `the submission now has a time (${time.at}); it replaces the fallback ${state.submittedAt.at}`,
+      );
+      state.submittedAt = { at: time.at, from: 'submission' };
+      await writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
+    }
+  } else {
+    report.notes.push(
+      `${time.problem}: the review is dated ${state.submittedAt.at}` +
+        (state.submittedAt.from === 'fallback'
+          ? ', when the submission was first prepared (kept on every run; correct submittedAt in the review if needed)'
+          : ', the submission time read before (kept)'),
+    );
+  }
+  report.submittedAt = state.submittedAt;
+
+  // Hand edits of this review since the last run are never overwritten (unless --rebuild).
+  const own = () => ownFingerprint(target, reviewId, state!.photos.map((m) => m.image));
+  if (existsSync(reviewFile(target, reviewId, 'json')) && state.written && !options.rebuild) {
+    if ((await own()) !== state.written) {
+      report.notes.push(
+        'the review was edited by hand since the last prepare; nothing was changed (use --rebuild to rebuild it ' +
           'from the submission, discarding those edits)',
       );
       await describeDraft(report, target, restaurantId, options);
@@ -600,21 +679,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
       return finish('blocked');
     }
   }
-  const before = await draftFingerprint(target);
-
-  // Contributor: found by email, or registered privately.
-  if (!state.contributorId) {
-    const contributor = await resolveContributor(options.contributorFiles, {
-      name: submission.displayName,
-      email: validEmail,
-    });
-    state.contributorId = contributor.id;
-    report.contributor = { id: contributor.id, created: contributor.created, name: submission.displayName?.trim() || '匿名' };
-    report.notes.push(...contributor.notes);
-    await writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
-  } else {
-    report.contributor = { id: state.contributorId, created: false, name: submission.displayName?.trim() || '匿名' };
-  }
+  const before = `${await own()}|${await readFile(path.join(target, INFO_FILE), 'utf8')}`;
 
   // Photos: every retrieved photo once, in submission order (general photos first,
   // so the cover is a general photo when there is one); each dish keeps its own.
@@ -622,11 +687,27 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   const images = existsSync(imagesDir) ? new Set(await readdir(imagesDir)) : new Set<string>();
   const usable = photoState.filter((p) => (p.status === 'downloaded' || p.status === 'recovered') && p.file && p.sha256);
   const saveState = () => writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
-  /** Removes an image this submission imported, unless another slot still uses it or it was changed by hand. */
+  /**
+   * Removes an image this submission imported, unless another slot still uses
+   * it, it was changed by hand, or another review uses it (the maintainer gave
+   * it to that review; an unreadable review might, so it stays then too).
+   */
   const removeOwnImage = async (mapping: PrepareState['photos'][number]) => {
     const file = path.join(target, mapping.image);
     if (state!.photos.some((m) => m.image === mapping.image)) return false;
     if (!images.has(path.basename(mapping.image)) || (await fileHash(file)) !== mapping.stored) return false;
+    const others = await survivingReviews(target, reviewId);
+    if (others.reviews.some((r) => reviewImages(r).includes(mapping.image))) {
+      report.notes.push(`${mapping.image} is no longer this submission's, but another review uses it: kept`);
+      return false;
+    }
+    if (others.unreadable.length) {
+      report.notes.push(
+        `${mapping.image} is no longer this submission's; kept, since ` +
+          `${others.unreadable.map((u) => `${REVIEWS_DIR}/${u.file}`).join(', ')} cannot be read and may use it`,
+      );
+      return false;
+    }
     await rm(file);
     images.delete(path.basename(mapping.image));
     report.removedImages.push(mapping.image);
@@ -718,8 +799,10 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
     }
   }
 
-  // Build info.json from the base and the submission; existing values are never overwritten.
-  const info: Record<string, unknown> = structuredClone(state.base.info);
+  // The restaurant (info.json) as it is now (other reviews may have added to
+  // it), plus what this submission adds; existing values are never overwritten.
+  const info = JSON.parse(await readFile(path.join(target, INFO_FILE), 'utf8')) as Record<string, unknown>;
+  const infoBefore = structuredClone(info);
   const fill = (field: string, value: unknown) => {
     if (value === undefined) return;
     const current = info[field];
@@ -732,29 +815,45 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   };
   if (!info.address) fill('address', submission.restaurantAddress?.trim() || undefined);
   fill('location', submission.restaurantLocation);
-  fill('rating', report.rating);
+  // Other names the contributor gave: added to altNames (never replacing the name); not used to match restaurants.
+  const knownNames = [info.name, ...((info.altNames as string[] | undefined) ?? [])].map((n) => normalizeKeyword(String(n)));
+  const newNames = submission.restaurantAltNames.filter((n) => !knownNames.includes(normalizeKeyword(n)));
+  if (newNames.length) {
+    info.altNames = [...((info.altNames as string[] | undefined) ?? []), ...newNames];
+    report.filled.push(`altNames (+${newNames.join(', ')}, from the submission)`);
+  }
+  // Dishes: the same name (or other name) is the same dish; a new name is a new dish.
+  const restaurantDishes = ((info.dishes as { id: string; name: string; altNames?: string[] }[] | undefined) ?? []).slice();
+  const dishFor = (name: string) => {
+    const key = normalizeKeyword(name);
+    const found = restaurantDishes.find((d) => [d.name, ...(d.altNames ?? [])].some((n) => normalizeKeyword(n) === key));
+    if (found) return { id: found.id, created: false };
+    const taken = new Set(restaurantDishes.map((d) => d.id));
+    let n = restaurantDishes.length + 1;
+    while (taken.has(`d${n}`)) n++;
+    restaurantDishes.push({ id: `d${n}`, name });
+    return { id: `d${n}`, created: true };
+  };
   const dishes = submission.dishes.map((d, i) => ({
     name: d.name?.trim(),
     verdict: verdictFromAnswer(d.verdictAnswer),
     comment: d.comment?.trim() || undefined,
     images: [...new Set(usable.filter((p) => p.dish === i + 1).map(imageOf).filter((v): v is string => !!v))],
   }));
-  report.dishes = dishes.map((d) => ({ name: d.name, verdict: d.verdict, comment: !!d.comment, images: d.images }));
-  const named = dishes.filter((d) => d.name);
-  if (dishes.some((d) => !d.name && d.images.length)) {
-    report.notes.push('photos of a dish without a name are kept as general photos (gallery)');
-  }
-  fill(
-    'dishes',
-    named.length
-      ? named.map((d) => ({
-          name: d.name,
-          ...(d.verdict !== undefined ? { verdict: d.verdict } : {}),
-          ...(d.comment ? { comment: d.comment } : {}),
-          ...(d.images.length ? { images: d.images } : {}),
-        }))
-      : undefined,
-  );
+  const named = dishes.flatMap((d) => (d.name ? [{ ...d, name: d.name, ...dishFor(d.name) }] : []));
+  report.dishes = dishes.map((d) => {
+    const m = named.find((x) => x.name === d.name);
+    return {
+      name: d.name,
+      verdict: d.verdict,
+      comment: !!d.comment,
+      images: d.images,
+      ...(m ? { dish: m.id, newDish: m.created } : {}),
+    };
+  });
+  if (restaurantDishes.length) info.dishes = restaurantDishes;
+  const nameless = dishes.filter((d) => !d.name).flatMap((d) => d.images);
+  if (nameless.length) report.notes.push('photos of a dish without a name are kept as the review\'s photos');
   const tagIds = matchedTagIds(report.keywords);
   const currentTags = (info.tags as string[] | undefined) ?? [];
   const addedTags = tagIds.filter((t) => !currentTags.includes(t));
@@ -777,32 +876,77 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
       .map((fact): AppliedFact => ({ fact, applied: false, reason: `the map listing is ${report.listing!.verdict}, not verified` })),
     ...applyFacts(info, [...listingFacts, ...decidedFacts], report.filled, report.conflicts, recorded),
   ];
-  const contributors = (info.contributorIds as string[] | undefined) ?? [];
-  if (!contributors.includes(state.contributorId!)) info.contributorIds = [...contributors, state.contributorId!];
-  const reviewText = submission.review?.replace(/\r\n?/g, '\n').trim();
-  let review = state.base.review;
-  if (reviewText) {
-    if (!state.base.review?.trim()) {
-      review = `${reviewText}\n`;
-      report.filled.push(REVIEW_FILE);
-    } else if (state.base.review.trim() !== reviewText) {
-      report.conflicts.push(`${REVIEW_FILE}: the restaurant already has a review; the submitted text was not added`);
-    }
-  }
 
-  const parsed = restaurantInfoSchema.safeParse(ordered(info));
-  if (!parsed.success) {
-    report.blockers.push(...parsed.error.issues.map((i) => `${INFO_FILE}: ${i.path.join('.')}: ${i.message}`));
+  // What the submission gives, wherever it is in the draft now (whoever added it).
+  const claims = submissionClaims(ordered(info), {
+    fields: {
+      address: submission.restaurantAddress?.trim() || undefined,
+      location: submission.restaurantLocation,
+      ...Object.fromEntries(
+        [...listingFacts, ...decidedFacts]
+          .filter((f) => f.confidence !== 'low' && f.field !== 'altNames')
+          .map((f) => [f.field === 'website' ? 'links.website' : f.field, f.value]),
+      ),
+    },
+    entries: {
+      tags: tagIds,
+      altNames: [
+        ...submission.restaurantAltNames,
+        ...[...listingFacts, ...decidedFacts]
+          .filter((f) => f.confidence !== 'low' && f.field === 'altNames')
+          .flatMap((f) => f.value as string[]),
+      ],
+      cuisines: [...listingFacts, ...decidedFacts]
+        .filter((f) => f.confidence !== 'low' && f.field === 'cuisines')
+        .flatMap((f) => f.value as string[]),
+    },
+    dishes: named.map((d) => d.id),
+  });
+
+  // The review: this submission's own rating, dishes, photos, and text, and
+  // nothing from any other review (even by the same contributor).
+  const generalPhotos = [
+    ...usable.filter((p) => !p.dish).map(imageOf),
+    ...nameless,
+  ].filter((v): v is string => !!v);
+  const reviewDishes = named.map((d) => ({
+    dish: d.id,
+    ...(d.verdict !== undefined ? { verdict: d.verdict } : {}),
+    ...(d.comment ? { comment: d.comment } : {}),
+    ...(d.images.length ? { images: d.images } : {}),
+  }));
+  const general = [...new Set(generalPhotos)];
+  const review: Review = {
+    contributor: contributorId,
+    submittedAt: state.submittedAt.at,
+    rating: report.rating as Rating,
+    ...(report.price ? { price: report.price } : {}),
+    ...(general.length ? { images: general } : {}),
+    ...(reviewDishes.length ? { dishes: reviewDishes } : {}),
+  };
+  const reviewText = submission.review?.replace(/\r\n?/g, '\n').trim();
+  const text = reviewText ? `${reviewText}\n` : undefined;
+
+  const parsedInfo = restaurantInfoSchema.safeParse(ordered(info));
+  const parsedReview = reviewSchema.safeParse(review);
+  if (!parsedInfo.success || !parsedReview.success) {
+    for (const [file, result] of [
+      [INFO_FILE, parsedInfo],
+      [`${REVIEWS_DIR}/${reviewId}.json`, parsedReview],
+    ] as const) {
+      if (!result.success) report.blockers.push(...result.error.issues.map((i) => `${file}: ${i.path.join('.')}: ${i.message}`));
+    }
     return finish('blocked');
   }
   await writeAtomic(path.join(target, INFO_FILE), json(ordered(info)));
-  if (review !== undefined) await writeAtomic(path.join(target, REVIEW_FILE), review);
-  else await rm(path.join(target, REVIEW_FILE), { force: true });
+  await writeAtomic(reviewFile(target, reviewId, 'json'), json(review));
+  if (text !== undefined) await writeAtomic(reviewFile(target, reviewId, 'md'), text);
+  else await rm(reviewFile(target, reviewId, 'md'), { force: true });
   await recordDecisions(options.tagFiles, decisions);
 
-  state.written = await draftFingerprint(target);
-  state.writtenInfo = ordered(info);
-  state.writtenReview = review ?? null;
+  state.written = await own();
+  state.owned = addOwned(state.owned, infoBefore, ordered(info), clock());
+  state.claims = claims;
   state.proposedTags = [...new Set([...state.proposedTags, ...report.newTags])];
   delete state.rejection;
   state.preparedAt = clock();
@@ -816,18 +960,46 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   }));
 
   await describeDraft(report, target, restaurantId, options);
-  return finish(state.written === before ? 'unchanged' : 'drafted');
+  const after = `${state.written}|${await readFile(path.join(target, INFO_FILE), 'utf8')}`;
+  return finish(after === before ? 'unchanged' : 'drafted');
 }
 
-/** Restaurant files as they are now (info.json, review.md, and the image file names). */
+/** The restaurant as it is now: info.json and the image file names. */
 async function snapshot(dir: string): Promise<PrepareState['base']> {
-  const info = JSON.parse(await readFile(path.join(dir, INFO_FILE), 'utf8')) as Record<string, unknown>;
-  const reviewFile = path.join(dir, REVIEW_FILE);
   return {
-    info,
-    ...(existsSync(reviewFile) ? { review: await readFile(reviewFile, 'utf8') } : {}),
+    info: JSON.parse(await readFile(path.join(dir, INFO_FILE), 'utf8')) as Record<string, unknown>,
     images: await listImages(dir),
   };
+}
+
+/**
+ * The submission time as a canonical instant (canonicalInstant): Tally's
+ * export "YYYY-MM-DD HH:MM[:SS]" (no zone; read as UTC), or ISO 8601 with a
+ * zone (fractions and offsets kept as the same instant); otherwise why it is unusable.
+ */
+export function submissionTime(value: string | undefined): { at: string } | { problem: string } {
+  const text = value?.trim();
+  if (!text) return { problem: 'no submission time in the export' };
+  const tally = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(text) ? `${text.replace(' ', 'T')}Z` : text;
+  const at = canonicalInstant(tally);
+  return at
+    ? { at }
+    : {
+        problem:
+          `invalid submission time "${text}" (expected Tally's "YYYY-MM-DD HH:MM[:SS]", read as UTC, ` +
+          'or ISO 8601 with a zone)',
+      };
+}
+
+/** Fingerprint of a review's files and the photos its submission imported (detects hand edits). */
+async function ownFingerprint(dir: string, reviewId: string, photos: string[]): Promise<string> {
+  const hash = createHash('sha256');
+  for (const file of [`${REVIEWS_DIR}/${reviewId}.json`, `${REVIEWS_DIR}/${reviewId}.md`, ...[...photos].sort()]) {
+    hash.update(`${file}\0`);
+    if (existsSync(path.join(dir, file))) hash.update(await readFile(path.join(dir, file)));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
 }
 
 async function fileHash(file: string): Promise<string | undefined> {
@@ -852,45 +1024,21 @@ function expectedPlace(base: Record<string, unknown>, submission: Submission): E
   return { names: [...new Set(names)], ...(location ? { location } : {}), ...(address ? { address } : {}) };
 }
 
-/**
- * Why the restaurant cannot take this submission's review, or undefined: it
- * already credits a contributor (public), another submission has a draft for
- * it or was processed, or a draft not made from this submission credits
- * someone. Rejected and deferred submissions never block a later one.
- */
-async function acceptedElsewhere(
-  restaurantId: string,
-  self: string,
-  ownContributor: string | undefined,
-  log: Awaited<ReturnType<typeof readLog>>,
-  options: PrepareOptions,
-): Promise<string | undefined> {
-  for (const [other, e] of Object.entries(log)) {
-    if (other !== self && e.restaurantId === restaurantId && (e.status === 'drafted' || e.status === 'processed')) {
-      return `restaurant ${restaurantId} already has an accepted submission (${other}, ${e.status})`;
-    }
-  }
-  const credits = async (dir: string) => {
-    const file = path.join(dir, INFO_FILE);
-    if (!existsSync(file)) return false;
-    const info = JSON.parse(await readFile(file, 'utf8')) as RestaurantInfo;
-    return (info.contributorIds ?? []).some((c) => c !== ownContributor);
-  };
-  if (await credits(path.join(options.restaurantsDir, restaurantId))) {
-    return `restaurant ${restaurantId} already credits a contributor`;
-  }
-  const own = await readState(submissionDir(options.submissionsDir, self));
-  if (!own && (await credits(path.join(options.draftsDir, restaurantId)))) {
-    return `the draft of ${restaurantId} already credits a contributor`;
-  }
-  return undefined;
-}
-
 /** Adds what would become public, privacy findings, missing fields, and content:check results. */
 async function describeDraft(report: PrepareReport, target: string, restaurantId: string, options: PrepareOptions) {
   const info = JSON.parse(await readFile(path.join(target, INFO_FILE), 'utf8')) as RestaurantInfo;
-  const review = existsSync(path.join(target, REVIEW_FILE)) ? await readFile(path.join(target, REVIEW_FILE), 'utf8') : '';
-  const texts = [review, info.name, ...(info.altNames ?? []), ...(info.dishes ?? []).flatMap((d) => [d.name, d.comment ?? ''])];
+  // The text that becomes public: the restaurant's names and dishes, and this review.
+  const rid = report.reviewId;
+  const read = async (file: string) => (existsSync(file) ? await readFile(file, 'utf8') : '');
+  const text = rid ? await read(path.join(target, REVIEWS_DIR, `${rid}.md`)) : '';
+  const own = rid ? (JSON.parse((await read(path.join(target, REVIEWS_DIR, `${rid}.json`))) || '{}') as Partial<Review>) : {};
+  const texts = [
+    text,
+    info.name,
+    ...(info.altNames ?? []),
+    ...(info.dishes ?? []).flatMap((d) => [d.name, ...(d.altNames ?? [])]),
+    ...(own.dishes ?? []).map((d) => d.comment ?? ''),
+  ];
   report.privacy = [...new Set(texts.flatMap(findContactDetails))];
   const email = report.submission.email?.trim().toLowerCase();
   if (email && texts.some((t) => t.toLowerCase().includes(email))) report.privacy.push("the contributor's contact email");
@@ -898,7 +1046,6 @@ async function describeDraft(report: PrepareReport, target: string, restaurantId
     !info.address && 'address',
     !info.location && 'location (not shown on the map)',
     !info.cuisines?.length && 'cuisines',
-    info.pricePerPerson === undefined && 'pricePerPerson',
     !info.links?.website && 'website',
   ].filter((v): v is string => !!v);
   const publicTarget = path.join(options.restaurantsDir, restaurantId);
@@ -927,7 +1074,11 @@ async function describeDraft(report: PrepareReport, target: string, restaurantId
   const publicIds = existsSync(contributorsFile)
     ? (JSON.parse(await readFile(contributorsFile, 'utf8')) as { id: string }[]).map((c) => c.id)
     : [];
-  for (const c of info.contributorIds ?? []) {
+  const reviewsDir = path.join(target, REVIEWS_DIR);
+  const credited = existsSync(reviewsDir)
+    ? (await readdir(reviewsDir)).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5))
+    : [];
+  for (const c of credited) {
     if (!publicIds.includes(c)) report.publicChanges.push(`added    content/contributors.json: ${c} (display name only)`);
   }
   const result = await runPipeline({
@@ -977,21 +1128,76 @@ export interface RejectResult {
 }
 
 /** Fields that are lists of ids or names: a rejection removes only the entries the submission added. */
-const SET_FIELDS = ['contributorIds', 'tags', 'altNames', 'cuisines'];
+const SET_FIELDS = ['tags', 'altNames', 'cuisines'];
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+type InfoItem = z.infer<typeof infoItemSchema>;
+type OwnedItem = z.infer<typeof ownedItemSchema>;
+type DishEntry = Record<string, unknown> & { id?: unknown };
+
+/** The same piece of info.json: the same field, list entry, or dish id (values are compared separately). */
+const sameItem = (a: InfoItem, b: InfoItem) =>
+  a.kind === b.kind &&
+  a.key === b.key &&
+  (a.kind === 'dish' ? (a.value as DishEntry).id === (b.value as DishEntry).id : a.kind === 'field' || same(a.value, b.value));
+
+/** Every piece of info.json (see infoItemSchema); each link is a field of its own ("links.website"). */
+function infoItems(info: Record<string, unknown>): InfoItem[] {
+  return Object.entries(info).flatMap(([key, value]): InfoItem[] => {
+    if (key === 'dishes') return (value as DishEntry[]).map((d) => ({ kind: 'dish', key, value: d }));
+    if (SET_FIELDS.includes(key)) return (value as unknown[]).map((v) => ({ kind: 'entry', key, value: v }));
+    if (key === 'links' && value && typeof value === 'object') {
+      return Object.entries(value).map(([k, v]): InfoItem => ({ kind: 'field', key: `links.${k}`, value: v }));
+    }
+    return [{ kind: 'field', key, value }];
+  });
+}
+
+/** The piece of `info` that is `item` (the current value of that field, entry, or dish), if any. */
+function currentItem(info: Record<string, unknown>, item: InfoItem): InfoItem | undefined {
+  return infoItems(info).find((x) => sameItem(x, item));
+}
+
 /**
- * Takes a rejected submission's contribution back out of its draft. The raw
- * submission is never touched. Three-way, per field: what the draft had
- * before the submission (base), what prepare wrote, and the draft now. A
- * field prepare changed and nobody edited since goes back to its base value;
- * a field only the maintainer changed keeps their value; list fields
- * (contributors, tags, other names, cuisines) lose only the entries the
- * submission added. Images the submission brought are removed unless the
- * draft still uses them. A folder prepare created that holds nothing else is
- * removed. When a field was changed both by prepare and by hand, nothing is
- * changed: the rejection stays "manual" and the draft cannot be promoted
- * until the maintainer edits those fields back or confirms them (resolved).
+ * Adds what one prepare run added (from `before` to `after`) to what the
+ * submission owns, at `at`. Only additions count: what was already there,
+ * whoever wrote it, is never the submission's.
+ */
+function addOwned(owned: OwnedItem[] | undefined, before: Record<string, unknown>, after: Record<string, unknown>, at: string): OwnedItem[] {
+  const had = infoItems(before);
+  const added = infoItems(after).filter((item) => !had.some((x) => sameItem(x, item)));
+  return [...(owned ?? []).filter((o) => !added.some((x) => sameItem(x, o))), ...added.map((item) => ({ ...item, at }))];
+}
+
+/**
+ * The pieces of `info` this submission gives: its values for fields, its
+ * list entries (names compared loosely), and the dishes it rates.
+ */
+function submissionClaims(
+  info: Record<string, unknown>,
+  given: { fields: Record<string, unknown>; entries: Record<string, unknown[]>; dishes: string[] },
+): InfoItem[] {
+  const loose = (v: unknown) => (typeof v === 'string' ? normalizeKeyword(v) : JSON.stringify(v));
+  return infoItems(info).filter((item) => {
+    if (item.kind === 'dish') return given.dishes.includes(String((item.value as DishEntry).id));
+    if (item.kind === 'entry') return (given.entries[item.key] ?? []).some((v) => loose(v) === loose(item.value));
+    return given.fields[item.key] !== undefined && same(given.fields[item.key], item.value);
+  });
+}
+
+/**
+ * Takes a rejected submission back out of its draft: its own review (and the
+ * photos it stored) and what it added to the shared restaurant information.
+ * Other reviews are never touched, and no review is ever put back. The raw
+ * submission is never touched. Only what the submission itself wrote is taken
+ * out, and only while it is still as written: the review while its
+ * fingerprint matches, and from info.json the fields, list entries, and dishes
+ * it added (state.owned) that no other submission added later or still gives
+ * (that one owns it from then on) and, for a dish, no remaining review rates.
+ * A folder prepare created goes when nothing else is left in it. When
+ * something it wrote was changed since, nothing is changed: the rejection
+ * stays "manual" and the draft cannot be promoted until the maintainer puts
+ * those back or confirms the current content (resolved), which keeps them.
  *
  * Repeatable: a run that was interrupted is finished by the next one, and a
  * finished rejection does nothing.
@@ -1012,20 +1218,19 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   const finish = async (status: 'done' | 'resolved', details: string[]) => {
     state.rejection = { status, at: clock(), details };
     delete state.written;
-    delete state.writtenInfo;
-    delete state.writtenReview;
+    delete state.owned;
+    delete state.claims;
     state.photos = [];
     await saveState();
     await updateLog(options.submissionsDir, id, (e) => ({ ...e!, draftWritten: false }));
     await withdrawProposedTags(state.proposedTags, options);
-    messages.push(...details, ...(await deferredFor(state.restaurantId, id, options.submissionsDir)));
+    messages.push(...details);
     return { status, messages };
   };
+  const rid = state.reviewId;
   const target = path.join(options.draftsDir, state.restaurantId);
   if (!existsSync(path.join(target, INFO_FILE))) {
-    const promoted = path.join(options.restaurantsDir, state.restaurantId, INFO_FILE);
-    const info = existsSync(promoted) ? (JSON.parse(await readFile(promoted, 'utf8')) as RestaurantInfo) : undefined;
-    if (state.contributorId && info?.contributorIds?.includes(state.contributorId)) {
+    if (existsSync(path.join(options.restaurantsDir, state.restaurantId, REVIEWS_DIR, `${rid}.json`))) {
       state.rejection = {
         status: 'manual',
         at: clock(),
@@ -1040,46 +1245,77 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   state.rejection = { status: 'pending', at: clock(), details: [] };
   await saveState();
 
-  const draft = JSON.parse(await readFile(path.join(target, INFO_FILE), 'utf8')) as Record<string, unknown>;
-  const reviewFile = path.join(target, REVIEW_FILE);
-  const draftReview = existsSync(reviewFile) ? await readFile(reviewFile, 'utf8') : null;
-  const written = state.writtenInfo ?? {};
-  const base = state.base.info;
-  const merged: Record<string, unknown> = {};
+  const reviewsDir = path.join(target, REVIEWS_DIR);
+  const own = (ext: 'json' | 'md') => path.join(reviewsDir, `${rid}.${ext}`);
   const conflicts: string[] = [];
-  for (const key of new Set([...Object.keys(draft), ...Object.keys(written), ...Object.keys(base)])) {
-    const [d, w, b] = [draft[key], written[key], base[key]];
-    if (SET_FIELDS.includes(key) && (Array.isArray(d) || d === undefined)) {
-      const added = new Set(((w as unknown[] | undefined) ?? []).filter((v) => !((b as unknown[] | undefined) ?? []).some((x) => same(x, v))));
-      if (d === undefined) continue;
-      const kept = (d as unknown[]).filter((v) => ![...added].some((x) => same(x, v)));
-      if (kept.length || b !== undefined) merged[key] = kept;
-    } else if (same(d, w)) {
-      if (b !== undefined) merged[key] = b;
-    } else if (same(d, b) || same(w, b)) {
-      if (d !== undefined) merged[key] = d;
-    } else {
-      conflicts.push(`${INFO_FILE} "${key}"`);
-      if (d !== undefined) merged[key] = d;
-    }
-  }
-  const [dr, wr, br] = [draftReview, state.writtenReview ?? null, state.base.review ?? null];
-  let review: string | null = dr;
-  if (same(dr, wr)) review = br;
-  else if (!same(dr, br) && !same(wr, br)) conflicts.push(REVIEW_FILE);
 
-  // Images this submission brought (by content, so a renamed copy counts too).
-  const stored = new Set(state.photos.map((m) => m.stored));
-  const ownImages: string[] = [];
-  for (const image of await listImages(target)) {
-    if (state.base.images.includes(image)) continue;
-    if (stored.has((await fileHash(path.join(target, image)))!)) ownImages.push(image);
+  // Its own review goes while it is exactly what it wrote (with its photos);
+  // edited by hand since, it stays until the maintainer decides. Other
+  // reviews are never touched, and no review is ever put back.
+  const gone = !existsSync(own('json')) && !existsSync(own('md'));
+  const ours = (await ownFingerprint(target, rid, state.photos.map((m) => m.image))) === state.written;
+  const keepReview = !ours && !gone;
+  if (keepReview) conflicts.push(`${REVIEWS_DIR}/${rid}.json (its text or photos) edited by hand since this submission wrote it`);
+
+  // The reviews that stay in the draft (they keep their dishes and photos),
+  // and the other submissions still in it (what they added or give stays).
+  // When any of them cannot be read, what they use is unknown: nothing is
+  // taken out, whatever the maintainer confirms, until it can be read again.
+  const surviving = await survivingReviews(target, keepReview ? undefined : rid);
+  const kept = surviving.reviews;
+  const rated = new Set(kept.flatMap((r) => (r.dishes ?? []).map((d) => d.dish)));
+  const { peers, problems } = await activeSubmissions(options.submissionsDir, id, state.restaurantId);
+  const unsafe = [
+    ...surviving.unreadable.map(({ file, why }) => `${REVIEWS_DIR}/${file} cannot be read (${why}); repair the review`),
+    ...problems,
+  ];
+  if (unsafe.length) {
+    state.rejection = { status: 'manual', at: clock(), details: unsafe, unsafe: true };
+    await saveState();
+    return {
+      status: 'manual',
+      messages: [
+        ...messages,
+        `nothing was taken out of private/drafts/${state.restaurantId}/: it is unknown what these still use: ` +
+          `${unsafe.join('; ')}. --resolved does not apply; fix them and run the rejection again`,
+      ],
+    };
   }
-  const uses = (image: string) =>
-    ((merged.dishes as { images?: string[] }[] | undefined) ?? []).some((d) => d.images?.includes(image)) ||
-    (review ?? '').includes(image);
-  const usedImages = ownImages.filter(uses);
-  conflicts.push(...usedImages.map((image) => `${image} (still used by the draft)`));
+  const handedOver = new Map<string, OwnedItem[]>();
+
+  // info.json: only what this submission added, where it is still as written
+  // and nobody else added it later, gives it, or (a dish) rates it.
+  let info = JSON.parse(await readFile(path.join(target, INFO_FILE), 'utf8')) as Record<string, unknown>;
+  const remove: InfoItem[] = [];
+  for (const item of state.owned ?? []) {
+    const current = currentItem(info, item);
+    if (!current) continue;
+    if (!same(current.value, item.value)) {
+      conflicts.push(item.kind === 'dish' ? `${INFO_FILE} dish "${String((item.value as DishEntry).id)}"` : `${INFO_FILE} "${item.key}"`);
+      continue;
+    }
+    if (peers.some((p) => (p.state.owned ?? []).some((o) => sameItem(o, item)))) continue;
+    const claimant = peers.find((p) => (p.state.claims ?? []).some((c) => sameItem(c, item) && same(c.value, item.value)));
+    if (claimant) {
+      // It is theirs now: rejecting them later takes it out.
+      handedOver.set(claimant.id, [...(handedOver.get(claimant.id) ?? []), { ...item, at: clock() }]);
+      continue;
+    }
+    if (item.kind === 'dish' && rated.has(String((item.value as DishEntry).id))) continue;
+    remove.push(item);
+  }
+  info = withoutItems(info, remove);
+
+  // Images: those this submission stored, where it stored them, unchanged
+  // (equal content elsewhere is never taken as its own); a photo another review uses stays.
+  const usedElsewhere = new Set(kept.flatMap(reviewImages));
+  const ownImages: string[] = [];
+  for (const m of state.photos) {
+    if (state.base.images.includes(m.image) || ownImages.includes(m.image)) continue;
+    if ((await fileHash(path.join(target, m.image))) === m.stored) ownImages.push(m.image);
+  }
+  const usedImages = ownImages.filter((image) => usedElsewhere.has(image));
+  if (!keepReview) conflicts.push(...usedImages.map((image) => `${image} (used by another review)`));
 
   if (conflicts.length && !options.resolved) {
     state.rejection = { status: 'manual', at: clock(), details: conflicts };
@@ -1088,34 +1324,154 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
       status: 'manual',
       messages: [
         ...messages,
-        `private/drafts/${state.restaurantId}/ was edited by hand where this submission also wrote: ${conflicts.join(', ')}. ` +
-          'Nothing was changed; the draft cannot be promoted until you remove the submission\'s content from these ' +
-          '(or put back what was there before) and run the rejection again, or confirm the current values with --resolved',
+        `private/drafts/${state.restaurantId}/ was changed where this submission also wrote: ${conflicts.join(', ')}. ` +
+          "Nothing was changed; the draft cannot be promoted until you remove the submission's content from these " +
+          '(or put back what was there before) and run the rejection again, or confirm the current content with --resolved',
       ],
     };
   }
 
+  for (const [peer, items] of handedOver) {
+    const p = peers.find((x) => x.id === peer)!;
+    p.state.owned = [...(p.state.owned ?? []), ...items];
+    await writeAtomic(path.join(submissionDir(options.submissionsDir, peer), PREPARE_STATE_FILE), json(p.state));
+  }
   const removable = ownImages.filter((image) => !usedImages.includes(image));
-  const others = (await listImages(target)).filter((image) => !removable.includes(image));
+  await writeAtomic(path.join(target, INFO_FILE), json(ordered(info)));
+  if (!keepReview) {
+    await rm(own('json'), { force: true });
+    await rm(own('md'), { force: true });
+  }
+  if (existsSync(reviewsDir) && (await readdir(reviewsDir)).length === 0) await rm(reviewsDir, { recursive: true });
+  for (const image of removable) await rm(path.join(target, image), { force: true });
+  const status = conflicts.length ? 'resolved' : 'done';
   const details: string[] = [];
-  if (state.createdDraft && same(ordered(merged), ordered(base)) && review === br && same(others, state.base.images)) {
-    if (state.mode === 'new' || existsSync(path.join(options.restaurantsDir, state.restaurantId, INFO_FILE))) {
+
+  // A folder prepare created (for this submission or another one) goes when
+  // nothing but the restaurant from before it is left in it.
+  const publicDir = path.join(options.restaurantsDir, state.restaurantId);
+  const creator = state.createdDraft ? state : await draftCreator(options.submissionsDir, state.restaurantId);
+  if (creator && peers.length === 0) {
+    const unchanged =
+      creator.mode === 'new'
+        ? !existsSync(reviewsDir) &&
+          same(ordered(info), ordered(creator.base.info)) &&
+          same(await listImages(target), creator.base.images)
+        : existsSync(path.join(publicDir, INFO_FILE)) &&
+          Object.values(await folderChanges(target, publicDir)).every((list) => list.length === 0);
+    if (unchanged) {
       await rm(target, { recursive: true });
-      details.push(`removed private/drafts/${state.restaurantId}/, which only held this submission's content`);
-      return finish(conflicts.length ? 'resolved' : 'done', details);
+      details.push(`removed private/drafts/${state.restaurantId}/, which held nothing else`);
+      return finish(status, details);
     }
   }
-  await writeAtomic(path.join(target, INFO_FILE), json(ordered(merged)));
-  if (review !== null) await writeAtomic(reviewFile, review);
-  else await rm(reviewFile, { force: true });
-  for (const image of removable) await rm(path.join(target, image), { force: true });
   details.push(
-    `took this submission's content out of private/drafts/${state.restaurantId}/` +
-      (removable.length ? ` (removed ${removable.join(', ')})` : '') +
-      '; the rest of the draft is unchanged',
+    (keepReview
+      ? `kept ${REVIEWS_DIR}/${rid}.json as it is now (confirmed by the maintainer)`
+      : `took review ${rid} out of private/drafts/${state.restaurantId}/`) +
+      (removable.length ? `; removed ${removable.join(', ')}` : '') +
+      '; other reviews and the rest of the draft are unchanged',
   );
+  if (handedOver.size) {
+    details.push(`kept what submission ${[...handedOver.keys()].join(', ')} also gives (now theirs)`);
+  }
   if (conflicts.length) details.push(`kept as confirmed by the maintainer: ${conflicts.join(', ')}`);
-  return finish(conflicts.length ? 'resolved' : 'done', details);
+  return finish(status, details);
+}
+
+/** `info` without these pieces (a list or link group left empty goes too). */
+function withoutItems(info: Record<string, unknown>, items: InfoItem[]): Record<string, unknown> {
+  const result = structuredClone(info);
+  for (const item of items) {
+    if (item.kind === 'dish' || item.kind === 'entry') {
+      const list = (result[item.key] as unknown[]).filter((v) => !sameItem({ ...item, value: v }, item));
+      if (list.length) result[item.key] = list;
+      else delete result[item.key];
+    } else if (item.key.startsWith('links.')) {
+      const links = result.links as Record<string, unknown>;
+      delete links[item.key.slice('links.'.length)];
+      if (Object.keys(links).length === 0) delete result.links;
+    } else {
+      delete result[item.key];
+    }
+  }
+  return result;
+}
+
+/**
+ * The other submissions prepared into this restaurant's draft and not
+ * rejected since (from the log), and why any of them cannot be used: its
+ * prepare.json is missing, unreadable, or about another restaurant, or says
+ * nothing of it is in the draft although no rejection finished. A finished
+ * rejection whose log update was interrupted is simply not in the draft.
+ */
+async function activeSubmissions(submissionsDir: string, id: string, restaurantId: string) {
+  const peers: { id: string; state: PrepareState }[] = [];
+  const problems: string[] = [];
+  const restore = (other: string) =>
+    `restore private/submissions/tally-${other}/${PREPARE_STATE_FILE} from the backup, or check the draft and run ` +
+    `"npm run content:submission -- mark ${other} --status rejected --state-lost <what you checked>"`;
+  for (const [other, entry] of Object.entries(await readLog(submissionsDir)).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (other === id || entry.restaurantId !== restaurantId || !entry.draftWritten) continue;
+    let state: PrepareState | undefined;
+    try {
+      state = await readState(submissionDir(submissionsDir, other));
+    } catch (e) {
+      problems.push(`submission ${other}: ${PREPARE_STATE_FILE} cannot be read (${(e as Error).message.split('\n')[0]}); ${restore(other)}`);
+      continue;
+    }
+    if (!state) {
+      problems.push(`submission ${other}: ${PREPARE_STATE_FILE} is missing although the log shows it wrote into this draft; ${restore(other)}`);
+    } else if (state.restaurantId !== restaurantId) {
+      problems.push(
+        `submission ${other}: ${PREPARE_STATE_FILE} is about ${state.restaurantId}, but the log links it to ${restaurantId}; ` +
+          'check which restaurant it wrote into and correct the log or the state',
+      );
+    } else if (state.written !== undefined) {
+      peers.push({ id: other, state });
+    } else if (state.rejection?.status !== 'done' && state.rejection?.status !== 'resolved') {
+      problems.push(
+        `submission ${other}: the log shows it wrote into this draft, but its ${PREPARE_STATE_FILE} records nothing written ` +
+          `and no finished rejection; prepare it again or ${restore(other)}`,
+      );
+    }
+  }
+  return { peers, problems };
+}
+
+/**
+ * The reviews in a draft other than `except` (a review id), and those that
+ * cannot be read (and why); an unreadable one may still use dishes and photos.
+ */
+async function survivingReviews(target: string, except?: string) {
+  const reviews: Review[] = [];
+  const unreadable: { file: string; why: string }[] = [];
+  const dir = path.join(target, REVIEWS_DIR);
+  if (!existsSync(dir)) return { reviews, unreadable };
+  for (const f of (await readdir(dir)).sort()) {
+    if (!f.endsWith('.json') || f === `${except}.json`) continue;
+    try {
+      reviews.push(reviewSchema.parse(JSON.parse(await readFile(path.join(dir, f), 'utf8'))));
+    } catch (e) {
+      const why = e instanceof z.ZodError ? formatIssues(e).join('; ') : ((e as Error).message.split('\n')[0] ?? 'invalid');
+      unreadable.push({ file: f, why });
+    }
+  }
+  return { reviews, unreadable };
+}
+
+/** The submission whose prepare created this restaurant's draft, if one did (rejected or not). */
+async function draftCreator(submissionsDir: string, restaurantId: string) {
+  for (const [other, entry] of Object.entries(await readLog(submissionsDir))) {
+    if (entry.restaurantId !== restaurantId) continue;
+    try {
+      const state = await readState(submissionDir(submissionsDir, other));
+      if (state?.restaurantId === restaurantId && state.createdDraft) return state;
+    } catch {
+      // Reported by content:check (rejectionProblems).
+    }
+  }
+  return undefined;
 }
 
 /** Removes tags a rejected submission proposed, unless a draft or a public restaurant uses them. */
@@ -1136,16 +1492,6 @@ async function withdrawProposedTags(ids: string[], options: RejectOptions) {
   }
   const unused = new Set(ids.filter((t) => !used.has(t)));
   if (unused.size) await withdrawTags(options.tagFiles, unused);
-}
-
-/** Deferred submissions about the same restaurant, which may now be used. */
-async function deferredFor(restaurantId: string, self: string, submissionsDir: string): Promise<string[]> {
-  const waiting = Object.entries(await readLog(submissionsDir))
-    .filter(([other, e]) => other !== self && e.status === 'deferred' && e.restaurantId === restaurantId)
-    .map(([other]) => other);
-  return waiting.length
-    ? [`deferred submission ${waiting.join(', ')} about this restaurant may now be used: prepare it again`]
-    : [];
 }
 
 /** A rejection that has started and is not finished: pending (interrupted) or manual (needs the maintainer). */
@@ -1269,9 +1615,15 @@ export async function rejectionProblems(submissionsDir: string, restaurantId: st
     }
     if (state?.restaurantId !== restaurantId) continue;
     const open = unfinishedRejection(state);
-    if (open?.status === 'manual') {
+    if (open?.status === 'manual' && open.unsafe) {
       problems.push(
-        `submission ${id} was rejected, but its content is still in the draft: edited by hand where it also wrote ` +
+        `submission ${id} was rejected, but nothing of it was taken out of the draft: it is unknown what other ` +
+          `reviews or submissions still use (${open.details.join('; ')}); fix that and ${again(id)} again ` +
+          '(--resolved does not apply)',
+      );
+    } else if (open?.status === 'manual') {
+      problems.push(
+        `submission ${id} was rejected, but its content is still in the draft: changed (by hand or by a later submission) where it also wrote ` +
           `(${open.details.join(', ')}); remove its content there and ${again(id)} again, or add --resolved after ` +
           'checking those fields',
       );
@@ -1305,8 +1657,7 @@ export function formatPrepareReport(r: PrepareReport, rel: (file: string) => str
   const outcome: Record<PrepareOutcome, string> = {
     drafted: 'draft prepared (private); waiting for the maintainer',
     unchanged: 'draft already up to date (nothing changed)',
-    edited: 'draft edited by hand since the last run; left unchanged',
-    deferred: 'saved, not used: the restaurant already has an accepted contributor',
+    edited: 'review edited by hand since the last run; left unchanged',
     blocked: 'BLOCKED: nothing was drafted',
     done: 'already done',
   };
@@ -1323,8 +1674,12 @@ export function formatPrepareReport(r: PrepareReport, rel: (file: string) => str
         (r.draftDir ? `, draft ${rel(r.draftDir)}/` : ''),
     );
   }
-  if (r.firstContributor !== undefined) {
-    add(`- First accepted contributor: ${r.firstContributor ? 'yes' : 'no (deferred; the restaurant keeps its current review)'}`);
+  if (r.reviewId) add(`- Review: ${REVIEWS_DIR}/${r.reviewId}.json (this submission's own review)`);
+  if (r.submittedAt) {
+    add(
+      `- Review time: ${r.submittedAt.at}` +
+        (r.submittedAt.from === 'fallback' ? ' (FALLBACK: no valid submission time; when it was first prepared)' : ''),
+    );
   }
   add(
     `- Contributor: ${r.contributor ? `${r.contributor.id}${r.contributor.created ? ' (new, private until promotion)' : ''}, credited as "${r.contributor.name}"` : 'not resolved'}` +
@@ -1334,11 +1689,14 @@ export function formatPrepareReport(r: PrepareReport, rel: (file: string) => str
 
   add('## Content', '');
   add(`- Rating: ${r.rating ?? 'none'}`);
+  add(`- Price per person: ${r.price ?? 'none given'}`);
   add(`- Review text: ${s.review?.trim() ? `${s.review.trim().length} characters` : 'none'}`);
   add(`- Dishes: ${r.dishes.length}`);
   for (const [i, d] of r.dishes.entries()) {
     add(
-      `  - ${i + 1}. ${d.name ? `"${d.name}"` : '(no name)'}; verdict ${verdictText(d.verdict)}; ` +
+      `  - ${i + 1}. ${d.name ? `"${d.name}"` : '(no name)'}` +
+        (d.dish ? ` -> dish ${d.dish}${d.newDish ? ' (NEW dish; merge it into another if it is the same)' : ''}` : '') +
+        `; verdict ${verdictText(d.verdict)}; ` +
         `${d.comment ? 'comment' : 'no comment'}; ${d.images.length ? d.images.join(', ') : 'no photo'}`,
     );
   }

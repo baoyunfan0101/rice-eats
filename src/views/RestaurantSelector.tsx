@@ -1,7 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { LatLngValue } from '../../shared/submission';
-import { currentAreaLabel, PRESET_AREAS, type SearchArea } from '../lib/areas';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { isValidLatLng, type LatLngValue } from '../../shared/submission';
+import { PRESET_AREAS, saveLastArea, type SearchArea } from '../lib/areas';
+import { useContentIndex } from '../lib/content';
 import type { Place } from '../lib/geocode';
+import { geocodingAvailable } from '../lib/geocode';
 import { LocateIntent } from '../lib/locateIntent';
 import {
   DISCOVERY_MIN_ZOOM,
@@ -13,9 +15,8 @@ import {
   tilesFor,
   type RestaurantCandidate,
 } from '../lib/poi';
-import { Alternative } from '../components/Alternative';
 import { PixelCheck, PixelChevron, PixelPin } from '../components/PixelIcons';
-import { AreaPicker } from './AreaPicker';
+import { ListedBadge, MapSearch, normalizeName, type ListedRestaurant } from './MapSearch';
 import type { MapArea } from './PickerMap';
 import type { Selection } from './submitTypes';
 
@@ -66,33 +67,65 @@ export function selectionKey(s: Selection): string {
 const FOCUS_ZOOM = 16;
 
 /**
- * Step 1, in two boxes: "选择查找区域" moves the map, then "选择餐厅" picks a
- * restaurant from the map. The map opens on Rice University (or the selected
- * restaurant, or where it was left) and shows the restaurants in view as named
- * pins. Searching by name (a fallback, like the address search above) narrows
- * the map and the list to the restaurants in view whose name matches, so the
- * list is always the map's area AND the name. Choosing a pin or a list entry
+ * Restaurants on Rice Eats: every one is found by name and other names; only
+ * those with a valid location are map pins (none is ever placed elsewhere).
+ */
+function listedCandidates(
+  restaurants: {
+    id: string;
+    name: string;
+    altNames: string[];
+    address?: string;
+    location?: LatLngValue;
+  }[],
+) {
+  return restaurants.map((r) => ({
+    candidate: {
+      key: `existing:${r.id}`,
+      provider: 'existing',
+      poiId: r.id,
+      restaurantId: r.id,
+      name: r.name,
+      ...(r.address ? { address: r.address } : {}),
+      ...(isValidLatLng(r.location) ? { location: r.location } : {}),
+    } satisfies ListedRestaurant,
+    names: [r.name, ...r.altNames].map(normalizeName),
+  }));
+}
+
+const located = <T extends { candidate: ListedRestaurant }>(
+  l: T,
+): l is T & { candidate: RestaurantCandidate } => !!l.candidate.location;
+
+/** A map place this close to a listed restaurant with the same name is that restaurant. */
+const SAME_PLACE_METERS = 100;
+
+/**
+ * Step 1, one box "选择餐厅": a search box for a restaurant's name or an
+ * address, map shortcuts (the current location, Rice University, Chinatown,
+ * and the last location in this browser), and the map. The map opens on Rice
+ * University (or the selected restaurant, or where it was left) and shows the
+ * restaurants in view as named pins: restaurants already on Rice Eats in
+ * their own color, places from the map data otherwise (a place that is a
+ * listed restaurant shows once, as the listed one). Typing narrows the map
+ * and the list to the names that match; searching also finds restaurants and
+ * places beyond the map. Choosing a pin, a list entry, or a restaurant result
  * (or finishing a manual entry) selects it in place: the map focuses on it,
  * and the selected restaurant with "下一步" closes the page.
  */
 export function RestaurantSelector({
   selection,
   startView,
-  startArea,
   onSelect,
   onNext,
   onViewChange,
-  onAreaChange,
 }: {
   selection?: Selection;
   /** Where the map was when the contributor last left this step. */
   startView?: MapView;
-  /** The search area chosen before leaving this step. */
-  startArea?: SearchArea;
   onSelect: (s: Selection) => void;
   onNext: () => void;
   onViewChange?: (v: MapView) => void;
-  onAreaChange?: (a: SearchArea) => void;
 }) {
   // Coming back to this step restores the map where the contributor left it;
   // otherwise the map opens on the selected restaurant (e.g. from a
@@ -103,26 +136,18 @@ export function RestaurantSelector({
       (selection?.location && { center: selection.location, zoom: FOCUS_ZOOM }) ??
       START,
   );
-  // The search area (where to look), separate from the selected restaurant.
-  const [searchArea, setSearchArea] = useState<SearchArea>(
-    () =>
-      startArea ??
-      (!startView && selection?.location
-        ? { label: `「${selection.name}」附近`, center: selection.location, zoom: FOCUS_ZOOM }
-        : PRESET_AREAS.rice),
-  );
-  /** Shared by the area controls and the map: the last thing the contributor did wins. */
+  /** Shared by the map shortcuts, the search, and the map: the last thing the contributor did wins. */
   const [intent] = useState(() => new LocateIntent());
-  const locate = (a: SearchArea) => {
-    setSearchArea(a);
-    onAreaChange?.(a);
-    setView({ center: a.center, zoom: a.zoom });
-  };
+  const locate = (a: SearchArea) => setView({ center: a.center, zoom: a.zoom });
   const [area, setArea] = useState<MapArea>();
   const [stored, setDiscovery] = useState<Discovery>({ status: 'idle' });
   const [query, setQuery] = useState('');
-  /** The name search is a fallback, shown when asked for (or when it has a query). */
-  const [nameOpen, setNameOpen] = useState(false);
+  // Restaurants on Rice Eats: their own pins, found by name wherever they are.
+  const index = useContentIndex(0);
+  const listedAll = useMemo(
+    () => (index.status === 'ready' ? listedCandidates(index.data.restaurants) : []),
+    [index],
+  );
   /** The list of restaurants in view, collapsed unless searching by name. */
   const [listOpen, setListOpen] = useState(false);
   const [manual, setManual] = useState(false);
@@ -195,6 +220,8 @@ export function RestaurantSelector({
     // Choosing a restaurant is the latest intent: no pending area answer may move the map away.
     intent.interrupt();
     onSelect(s);
+    // The search did its job: the map now shows the chosen restaurant among its neighbors.
+    setQuery('');
     if (s.location) {
       setView({ center: s.location, zoom: Math.max(area?.zoom ?? FOCUS_ZOOM, FOCUS_ZOOM) });
     }
@@ -204,7 +231,6 @@ export function RestaurantSelector({
     return (
       <ManualEntry
         start={area ? { center: area.center, zoom: area.zoom } : view}
-        startArea={searchArea}
         onCancel={() => setManual(false)}
         onDone={(s) => {
           setManual(false);
@@ -223,12 +249,34 @@ export function RestaurantSelector({
       c.location.lat <= area.bounds.north &&
       c.location.lng >= area.bounds.west &&
       c.location.lng <= area.bounds.east);
-  const discovered =
-    !tooWide && 'candidates' in discovery ? discovery.candidates.filter(inView) : [];
+  // Listed restaurants show once the map reports what is in view (never off-map pins).
+  const listedInView = area ? listedAll.filter(located).filter((l) => inView(l.candidate)) : [];
+  // A map place that is a listed restaurant shows once, as the listed one.
+  const isListed = (c: RestaurantCandidate) =>
+    listedInView.some(
+      (l) =>
+        l.names.includes(normalizeName(c.name)) &&
+        distanceMeters(l.candidate.location, c.location) <= SAME_PLACE_METERS,
+    );
+  const fromMap = !tooWide && 'candidates' in discovery ? discovery.candidates.filter(inView) : [];
+  const discovered = [
+    ...listedInView.map((l) => l.candidate),
+    ...fromMap.filter((c) => !isListed(c)),
+  ];
+  const matches = (c: RestaurantCandidate) => normalizeName(c.name).includes(name);
   // The map's area AND the name: the same restaurants on the map and in the list.
   const listed = searching
-    ? discovered.filter((c) => normalizeName(c.name).includes(name))
+    ? [
+        ...listedInView
+          .filter((l) => l.names.some((n) => n.includes(name)))
+          .map((l) => l.candidate),
+        ...fromMap.filter((c) => !isListed(c) && matches(c)),
+      ]
     : discovered;
+  // Listed restaurants anywhere, for the search results.
+  const listedMatches = searching
+    ? listedAll.filter((l) => l.names.some((n) => n.includes(name))).map((l) => l.candidate)
+    : [];
   // The selected restaurant always has a pin, even when it came from a manual
   // entry or is out of the listed results.
   const selectedKey = selection ? selectionKey(selection) : undefined;
@@ -239,7 +287,8 @@ export function RestaurantSelector({
           {
             key: selectedKey!,
             provider: selection.poi?.provider ?? selection.method,
-            poiId: selection.poi?.id ?? '',
+            poiId: selection.poi?.id ?? selection.restaurantId ?? '',
+            ...(selection.restaurantId ? { restaurantId: selection.restaurantId } : {}),
             name: selection.name,
             location: selection.location,
             ...(selection.address ? { address: selection.address } : {}),
@@ -263,13 +312,6 @@ export function RestaurantSelector({
 
   return (
     <div className="space-y-4">
-      <AreaPicker
-        description="先将地图定位到餐厅附近，再从地图上选择餐厅。"
-        current={currentAreaLabel(searchArea, area?.center ?? view.center)}
-        near={area?.center ?? view.center}
-        intent={intent}
-        onLocate={locate}
-      />
       <section aria-labelledby="pick-title" className="card space-y-3 p-4">
         <div className="window-bar -mx-4 -mt-4">
           <PixelPin className="size-4 text-chili-600" />
@@ -277,7 +319,20 @@ export function RestaurantSelector({
             选择餐厅
           </h2>
         </div>
-        <p className="text-sm text-muted">点地图上的餐厅图钉或名字来选择。</p>
+        <MapSearch
+          label="搜索餐厅名称或地址"
+          placeholder={geocodingAvailable() ? '搜索餐厅名称或地址' : '搜索餐厅名称'}
+          query={query}
+          onQueryChange={setQuery}
+          near={area?.center ?? view.center}
+          intent={intent}
+          listed={listedMatches}
+          onChooseRestaurant={(c) => choose(fromCandidate(c))}
+          onLocate={locate}
+        />
+        <p className="text-sm text-muted">
+          点地图上的图钉或名字来选择；绿色图钉是 Rice Eats 已收录的餐厅。
+        </p>
         <Suspense fallback={<div className="h-80 border-2 border-ink bg-sand sm:h-[28rem]" />}>
           <PickerMap
             label="附近餐厅地图"
@@ -303,30 +358,7 @@ export function RestaurantSelector({
           onRetry={() => setAttempt((n) => n + 1)}
         />
 
-        <Alternative
-          label="在当前区域搜索餐厅"
-          open={nameOpen || searching}
-          onToggle={() => {
-            if (nameOpen || searching) setQuery('');
-            setNameOpen((o) => !(o || searching));
-          }}
-        >
-          <input
-            type="search"
-            aria-label="在当前区域搜索餐厅"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="输入餐厅名称"
-            // Shown on request, so focus goes straight to it.
-            autoFocus
-            className="field w-full"
-          />
-          <p className="mt-1 text-xs text-muted">
-            只在当前地图范围内查找；拖动或缩放地图后结果会更新。
-          </p>
-        </Alternative>
-
-        {/* While searching by name the list always shows, with an accurate state. */}
+        {/* While a name is typed the list always shows, with an accurate state. */}
         {(discovered.length > 0 || searching) && (
           <div className="border-2 border-ink">
             <button
@@ -342,8 +374,8 @@ export function RestaurantSelector({
                 {!searching
                   ? `列表查看地图范围内的 ${discovered.length} 家餐厅`
                   : nameState === 'results' || nameState === 'none'
-                    ? `名称包含「${query.trim()}」的餐厅：${listed.length} 家`
-                    : `名称包含「${query.trim()}」的餐厅`}
+                    ? `地图范围内名称包含「${query.trim()}」的餐厅：${listed.length} 家`
+                    : `地图范围内名称包含「${query.trim()}」的餐厅`}
               </span>
             </button>
             {showList &&
@@ -358,7 +390,7 @@ export function RestaurantSelector({
                       ? '正在加载地图范围内的餐厅…'
                       : nameState === 'error'
                         ? '地图范围内的餐厅没能加载，暂时无法按名称查找。'
-                        : '当前地图范围内没有这个名字的餐厅。可以换个写法、拖动或缩小地图，或手动添加。'}
+                        : '地图范围内没有这个名字的餐厅。可以按「搜索」在更大范围里找，或手动添加。'}
                   {nameState === 'error' && (
                     <button
                       type="button"
@@ -383,7 +415,7 @@ export function RestaurantSelector({
         )}
 
         <p className="text-sm">
-          还是找不到？
+          找不到？
           <button type="button" onClick={() => setManual(true)} className="text-action ml-1">
             手动添加餐厅
           </button>
@@ -392,16 +424,20 @@ export function RestaurantSelector({
 
       <p className="text-xs leading-5 text-muted">
         餐厅数据：{poiAttribution()}
-        。查找餐厅时会把地图范围发送给这些数据服务；你的设备位置不会随投稿提交。
+        。查找餐厅时会把地图范围和搜索内容发送给这些数据服务；你的设备位置不会随投稿提交。「上次的位置」只保存在这个浏览器里。
       </p>
-      {selection && <SelectedRestaurant selection={selection} onNext={onNext} />}
+      {selection && (
+        <SelectedRestaurant
+          selection={selection}
+          onNext={() => {
+            if (area) saveLastArea(area);
+            onNext();
+          }}
+        />
+      )}
     </div>
   );
 }
-
-/** Names compared loosely: width, case, and spacing do not matter. */
-const normalizeName = (text: string) =>
-  text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
 function DiscoveryStatus({
   discovery,
@@ -459,7 +495,17 @@ function DiscoveryStatus({
 const sameLocation = (a: LatLngValue, b: LatLngValue | undefined) =>
   !!b && a.lat === b.lat && a.lng === b.lng;
 
-function fromCandidate(c: RestaurantCandidate): Selection {
+function fromCandidate(c: ListedRestaurant): Selection {
+  if (c.restaurantId) {
+    // A listed restaurant keeps its id; without a location it has none here either.
+    return {
+      method: 'existing',
+      restaurantId: c.restaurantId,
+      name: c.name,
+      address: c.address,
+      ...(c.location ? { location: c.location } : {}),
+    };
+  }
   return {
     method: 'poi',
     name: c.name,
@@ -536,7 +582,10 @@ function CandidateList({
             className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-gold-100 aria-pressed:bg-gold-300"
           >
             <span className="min-w-0 flex-1">
-              <span className="block font-bold">{c.name}</span>
+              <span className="block font-bold">
+                {c.name}
+                {c.restaurantId && <ListedBadge />}
+              </span>
               {c.address && <span className="block text-sm text-muted">{c.address}</span>}
             </span>
             {c.distance !== undefined && (
@@ -560,12 +609,10 @@ function CandidateList({
  */
 function ManualEntry({
   start,
-  startArea,
   onCancel,
   onDone,
 }: {
   start: { center: LatLngValue; zoom: number };
-  startArea: SearchArea;
   onCancel: () => void;
   onDone: (s: Selection) => void;
 }) {
@@ -575,7 +622,7 @@ function ManualEntry({
   const [noLocation, setNoLocation] = useState(false);
   const [view, setView] = useState(start);
   const [center, setCenter] = useState(start.center);
-  const [searchArea, setSearchArea] = useState(startArea);
+  const [query, setQuery] = useState('');
   /** A searched place the contributor may use as the restaurant's location. */
   const [found, setFound] = useState<Place>();
   const [intent] = useState(() => new LocateIntent());
@@ -597,19 +644,6 @@ function ManualEntry({
           className="field mt-1 w-full"
         />
       </label>
-      {!noLocation && (
-        <AreaPicker
-          description="先将地图定位到餐厅附近，再在地图上点出餐厅的位置。"
-          current={currentAreaLabel(searchArea, center)}
-          near={center}
-          intent={intent}
-          onLocate={(a, place) => {
-            setSearchArea(a);
-            setView({ center: a.center, zoom: a.zoom });
-            setFound(place);
-          }}
-        />
-      )}
       {/* Marking the restaurant is a box like "选择餐厅" on the selection page. */}
       <section aria-labelledby="mark-title" className="card space-y-3 p-4">
         <div className="window-bar -mx-4 -mt-4">
@@ -620,6 +654,18 @@ function ManualEntry({
         </div>
         {!noLocation && (
           <>
+            <MapSearch
+              label="搜索地址或地点"
+              placeholder="例如 2111 Norfolk St"
+              query={query}
+              onQueryChange={setQuery}
+              near={center}
+              intent={intent}
+              onLocate={(a, place) => {
+                setView({ center: a.center, zoom: a.zoom });
+                setFound(place);
+              }}
+            />
             {found && !sameLocation(found.location, marker) && (
               <div className="flex flex-wrap items-center gap-2 border-2 border-ink bg-gold-100 p-3 text-sm">
                 <span>「{found.name}」就是餐厅的位置吗？</span>

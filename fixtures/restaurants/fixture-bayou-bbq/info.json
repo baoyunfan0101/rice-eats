@@ -3,28 +3,21 @@
   "status": "published",
   "name": "河湾烤肉（虚构示例）",
   "altNames": ["Bayou BBQ (fictional)"],
-  "cuisines": ["bbq"],
   "address": "200 Example Ave, Houston, TX 77006 (fictional)",
   "location": {
     "lat": 29.7445,
     "lng": -95.3905
   },
-  "rating": 5,
-  "pricePerPerson": 28,
+  "cuisines": ["bbq"],
   "tags": ["group", "pet-friendly"],
   "dishes": [
     {
-      "name": "烟熏牛胸（示例）",
-      "verdict": 1,
-      "images": [
-        "images/02-brisket.jpg",
-        "images/03-brisket-sliced.jpg",
-        "images/04-brisket-bark.jpg"
-      ]
+      "id": "d1",
+      "name": "烟熏牛胸（示例）"
     },
     {
+      "id": "d2",
       "name": "冰茶（示例）"
     }
-  ],
-  "contributorIds": ["u-001"]
+  ]
 }

@@ -21,7 +21,8 @@ import {
   type ImportOptions,
   type Submission,
 } from '../../scripts/content/submissions.ts';
-import { tempDir, validInfo, writeRestaurant } from './helpers.ts';
+import { priceFromAnswer } from '../../shared/submission.ts';
+import { TEST_REVIEW, tempDir, validInfo, writeRestaurant } from './helpers.ts';
 
 // Synthetic Tally CSV export: the columns Tally writes (Submission ID,
 // Submitted at, question titles, hidden fields). All data is fictional.
@@ -66,6 +67,7 @@ const CONSENT = '我同意：我有权提交这些文字和照片，并授权 Ri
 const ROWS = {
   textOnly: row({
     'Submission ID': 'sub1',
+    总体评级: '🤤 人上人',
     'Submitted at': '2026-10-01 12:00:00',
     restaurant_name: '示例面馆',
     restaurant_lat: '29.730000',
@@ -82,6 +84,7 @@ const ROWS = {
   }),
   photoOnly: row({
     'Submission ID': 'sub2',
+    总体评级: '🤤 人上人',
     restaurant_name: 'Sample Noodles',
     selection_method: 'manual',
     照片: PHOTO,
@@ -110,6 +113,7 @@ const ROWS = {
   }),
   dishes: row({
     'Submission ID': 'sub5',
+    总体评级: '🤤 人上人',
     restaurant_name: '示例面馆',
     照片: PHOTO_C,
     '菜品1 名称': '牛肉面',
@@ -159,7 +163,7 @@ async function setup() {
     restaurantsDir,
     'r-abc234',
     validInfo('r-abc234', { name: '测试餐厅', altNames: ['Test Place'], address: '1 Main St' }),
-    { 'review.md': review },
+    { ...TEST_REVIEW, 'reviews/v-u001.md': review },
   );
   await writeRestaurant(
     restaurantsDir,
@@ -209,6 +213,8 @@ const sub = (extra: Partial<Submission>): Submission => ({
   photoUrls: [],
   dishes: [],
   keywords: [],
+  restaurantAltNames: [],
+  ratingAnswer: '🤤 人上人',
   consent: true,
   ...extra,
 });
@@ -240,7 +246,7 @@ describe('reading Tally exports', () => {
       consent: true,
       source: 'site',
     });
-    expect(text!.ratingAnswer).toBeUndefined();
+    expect(text!.ratingAnswer).toBe('🤤 人上人');
     expect(photo).toMatchObject({
       restaurantName: 'Sample Noodles',
       selectionMethod: 'manual',
@@ -392,6 +398,7 @@ describe('restaurant identity', () => {
     photoUrls: [],
     dishes: [],
     keywords: [],
+    restaurantAltNames: [],
     consent: true,
     ...extra,
   });
@@ -487,7 +494,7 @@ describe('importing submissions', () => {
     expect(reports.map((r) => r.outcome)).toEqual(['new', 'new', 'new']);
     expect(reports.map((r) => r.blockers)).toEqual([[], [], []]);
     expect(reports.map((r) => r.identity.kind)).toEqual(['new', 'new', 'existing']);
-    expect(reports.map((r) => r.rating)).toEqual([undefined, undefined, 4]);
+    expect(reports.map((r) => r.rating)).toEqual([3, 3, 4]);
     expect(reports[1]!.photos).toMatchObject([
       { slot: 1, status: 'downloaded', file: 'photo-01.jpg' },
     ]);
@@ -533,27 +540,47 @@ describe('importing submissions', () => {
     expect(unnamed!.notes.join()).toMatch(/dish 1 has no name/);
   });
 
-  it('notes missing optional rating and contact details without blocking', async () => {
+  it('notes missing contact details without blocking', async () => {
     const { run } = await setup();
     const [report] = await run(submissionsFromCsv(csv(ROWS.photoOnly)));
-    expect(report!.rating).toBeUndefined();
     expect(report!.blockers).toEqual([]);
     expect(report!.notes.join('\n')).toMatch(/no contact email/);
   });
 
-  it('blocks submissions without consent or content, and keeps the consent answer', async () => {
+  it('blocks submissions without consent or a rating, and keeps the consent answer', async () => {
     const { run, dir } = await setup();
     const [noConsent] = await run(submissionsFromCsv(csv(ROWS.noConsent)));
     expect(noConsent!.blockers.join()).toMatch(/no publication consent/);
     const stored = JSON.parse(await readFile(path.join(dir('sub4'), 'submission.json'), 'utf8'));
     expect(stored.consent).toBe(false);
-    const [empty] = await run([sub({ submissionId: 'empty' })]);
-    expect(empty!.blockers.join()).toMatch(
-      /neither a valid rating, review text, dishes, nor photos/,
-    );
+    const [unrated] = await run([sub({ submissionId: 'unrated', ratingAnswer: undefined })]);
+    expect(unrated!.blockers.join()).toMatch(/no overall rating \(the form requires one\)/);
   });
 
-  it('accepts a rating-only submission, but not an invalid rating alone', async () => {
+  it('reads the price range answer, and notes one that is not an option', async () => {
+    const { run } = await setup();
+    const reports = await run([
+      sub({ submissionId: 'p1', priceAnswer: '$10–20' }),
+      sub({ submissionId: 'p2', priceAnswer: ' ＄10 - 20 ' }),
+      sub({ submissionId: 'p3', priceAnswer: '$100 以上' }),
+      sub({ submissionId: 'p4', priceAnswer: '大概 15 刀' }),
+      sub({ submissionId: 'p5' }),
+    ]);
+    expect(reports.map((r) => priceFromAnswer(r.submission.priceAnswer))).toEqual([
+      '10-20',
+      '10-20',
+      '100-plus',
+      undefined,
+      undefined,
+    ]);
+    expect(reports[3]!.notes.join('\n')).toMatch(
+      /price answer "大概 15 刀" is not one of the price ranges; the review gives no price/,
+    );
+    expect(reports.map((r) => r.blockers)).toEqual([[], [], [], [], []]);
+    expect(reports[4]!.notes.join('\n')).not.toMatch(/price/);
+  });
+
+  it('accepts a rating-only submission, but not an invalid rating', async () => {
     const { run } = await setup();
     const [ratingOnly] = await run([
       sub({ submissionId: 'rating-only', ratingAnswer: '🤤 人上人' }),
@@ -564,15 +591,7 @@ describe('importing submissions', () => {
     expect(ratingOnly!.notes.join('\n')).not.toMatch(/review text|no overall rating/);
     const [invalid] = await run([sub({ submissionId: 'bad-rating', ratingAnswer: '还行吧' })]);
     expect(invalid!.rating).toBeUndefined();
-    expect(invalid!.blockers.join()).toMatch(/neither a valid rating/);
-    expect(invalid!.notes.join('\n')).toMatch(/"还行吧" is not one of the five levels/);
-  });
-
-  it('keeps older text-only submissions without a rating', async () => {
-    const { run } = await setup();
-    const [old] = await run(submissionsFromCsv(csv(ROWS.textOnly)));
-    expect(old!.blockers).toEqual([]);
-    expect(old!.notes.join('\n')).toMatch(/no overall rating \(optional in older form versions\)/);
+    expect(invalid!.blockers.join()).toMatch(/"还行吧" is not one of the five levels/);
   });
 
   it('flags promotion, undisclosed ties, and near-identical reviews for the editor', async () => {
@@ -621,7 +640,7 @@ describe('importing submissions', () => {
       ...(await files(id)),
     ];
     const before = { sub1: await stored('sub1'), sub2: await stored('sub2') };
-    for (const status of ['drafted', 'deferred', 'processed', 'rejected', 'imported'] as const) {
+    for (const status of ['drafted', 'processed', 'rejected', 'imported'] as const) {
       await markSubmission(submissionsDir, 'sub1', status, 'r-new111');
       await markSubmission(submissionsDir, 'sub2', status);
       expect(await stored('sub1')).toEqual(before.sub1);
@@ -718,20 +737,22 @@ describe('importing submissions', () => {
     await retryPhotos('sub2', options());
     await submissionStatus('sub3', options());
     expect(await snapshot()).toEqual(before);
-    expect(await readFile(path.join(restaurantsDir, 'r-abc234/review.md'), 'utf8')).toBe(review);
+    expect(await readFile(path.join(restaurantsDir, 'r-abc234/reviews/v-u001.md'), 'utf8')).toBe(
+      review,
+    );
     expect(existsSync(draftsDir)).toBe(false);
   });
 });
 
 describe('photo recovery', () => {
-  it('blocks a photo-only submission whose photos all failed, until a retry succeeds', async () => {
+  it('keeps a photo-only submission incomplete while its photos fail, until a retry succeeds', async () => {
     const { run, net, options, files } = await setup();
     net.down.add('/private/photo-a.jpg');
     const [report] = await run(submissionsFromCsv(csv(ROWS.photoOnly)));
     expect(statuses(report!)).toEqual(['failed']);
     expect(report!.photos[0]!.error).toMatch(/HTTP 403/);
     expect(report!.photos[0]!.error).not.toContain('secret');
-    expect(report!.blockers.join()).toMatch(/photo-only submission without any retrieved photo/);
+    expect(report!.notes.join()).toMatch(/photo intake incomplete \(photo 1 missing\)/);
     expect(report!.entry!.photos).toBe('incomplete');
 
     net.down.clear();

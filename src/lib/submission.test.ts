@@ -3,10 +3,9 @@ import { RATINGS } from '../../shared/content/vocabulary';
 import {
   contextProblem,
   isValidLatLng,
-  parseKeywords,
+  parseList,
   parseTallyForm,
   ratingFromAnswer,
-  serializeKeywords,
   TALLY_RATING_OPTIONS,
   TALLY_VERDICT_OPTIONS,
   tallyUrls,
@@ -90,47 +89,20 @@ describe('Tally links', () => {
         .direct,
     ).toBe('https://tally.so/r/wMq8xY?restaurant_name=Bayou&selection_method=manual&source=site');
   });
-
-  it('passes keywords as one JSON array in tags_raw, in both links', () => {
-    const keywords = ['适合约会', 'a, "b"', '很安静'];
-    const urls = tallyUrls('wMq8xY', {
-      source: 'site',
-      selectionMethod: 'manual',
-      restaurantName: 'Bayou',
-      keywords,
-    });
-    for (const url of [urls.direct, urls.embed]) {
-      const value = new URL(url).searchParams.get('tags_raw')!;
-      expect(JSON.parse(value)).toEqual(keywords);
-      expect(parseKeywords(value)).toEqual(keywords);
-    }
-    const none = tallyUrls('wMq8xY', {
-      source: 'site',
-      selectionMethod: 'manual',
-      restaurantName: 'B',
-      keywords: [],
-    });
-    expect(new URL(none.direct).searchParams.has('tags_raw')).toBe(false);
-  });
 });
 
-describe('keywords (tags_raw)', () => {
-  it('serializes cleaned keywords, or nothing', () => {
-    expect(serializeKeywords([' 适合  约会 ', ''])).toBe('["适合 约会"]');
-    expect(serializeKeywords([])).toBe('');
-    expect(serializeKeywords(undefined)).toBe('');
-  });
-
+describe("keywords (the form's keyword question)", () => {
   it.each([
     ['', []],
     [undefined, []],
-    ['["适合约会","很安静"]', ['适合约会', '很安静']],
-    ['适合约会, 很安静，份量大、 适合约会\n安静', ['适合约会', '很安静', '份量大', '安静']],
-    ['["Quiet","quiet","ＱＵＩＥＴ"]', ['Quiet']],
-    ['[1, "x", null]', ['x']],
-    ['[not json', ['[not json']],
+    [
+      '适合约会, 很安静，份量大、 适合约会\n安静；date  night',
+      ['适合约会', '很安静', '份量大', '安静', 'date night'],
+    ],
+    ['Quiet、quiet、ＱＵＩＥＴ', ['Quiet']],
+    ['，、 ,', []],
   ])('reads %j', (value, expected) => {
-    expect(parseKeywords(value)).toEqual(expected);
+    expect(parseList(value)).toEqual(expected);
   });
 });
 

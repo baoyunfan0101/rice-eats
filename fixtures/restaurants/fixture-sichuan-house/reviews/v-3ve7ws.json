@@ -1,0 +1,19 @@
+{
+  "contributor": "u-001",
+  "submittedAt": "2026-09-01T12:00:00Z",
+  "rating": 5,
+  "price": "20-30",
+  "images": ["images/01-cover.jpg"],
+  "dishes": [
+    {
+      "dish": "d1",
+      "verdict": 1,
+      "comment": "虚构点评：麻辣适中。",
+      "images": ["images/02-mapo-tofu.jpg"]
+    },
+    {
+      "dish": "d2",
+      "verdict": 1
+    }
+  ]
+}

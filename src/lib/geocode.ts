@@ -1,7 +1,8 @@
-// Address and place search ("输入地址或地点") for the submission page: turns
-// what the contributor typed into map locations to move the map to. It only
-// locates the search area (or, when the contributor confirms it, a manually
-// added restaurant); it never selects a restaurant by itself.
+// The search box of the submission page ("搜索餐厅名称或地址"): turns what
+// the contributor typed into places. A result that is clearly a place to eat
+// carries its POI, so the contributor can choose it as the restaurant; any
+// other result only moves the map (or, when the contributor confirms it,
+// marks a manually added restaurant). Nothing is selected by itself.
 //
 // The Geoapify Geocoding API (same key and project as the Places API, whose
 // plan allows browser use with a domain-restricted key) is the only provider.
@@ -26,6 +27,8 @@ export interface Place {
   location: LatLngValue;
   /** Whether the result is a street address (as opposed to an area or landmark). */
   isAddress: boolean;
+  /** Set when the result is a place to eat (Geoapify's catering categories): its POI. */
+  restaurant?: { provider: string; id: string };
 }
 
 export const GEOAPIFY_GEOCODE_ENDPOINT = 'https://api.geoapify.com/v1/geocode/search';
@@ -48,6 +51,18 @@ export function geoapifyGeocodeUrl(query: string, near: LatLngValue, apiKey: str
   return `${GEOAPIFY_GEOCODE_ENDPOINT}?${params}`;
 }
 
+/**
+ * A provider's coordinate as a number: a finite number, or a decimal number
+ * written as text. Anything else (null, "", true, "29.7N") is NaN, so the
+ * result is dropped instead of being placed at 0 or 1.
+ */
+const coordinate = (value: unknown): number =>
+  typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(value)
+      ? Number(value)
+      : Number.NaN;
+
 function place(
   key: string,
   name: string | undefined,
@@ -56,7 +71,7 @@ function place(
   lon: unknown,
   isAddress: boolean,
 ): Place | undefined {
-  const location = { lat: Number(lat), lng: Number(lon) };
+  const location = { lat: coordinate(lat), lng: coordinate(lon) };
   if (!name || !isValidLatLng(location)) return undefined;
   return {
     key,
@@ -79,6 +94,9 @@ const dedupe = (places: (Place | undefined)[]) => {
 };
 
 /** Turns a Geoapify Geocoding response (format=json) into places. */
+/** OSM amenities that are places to eat, for results without a Geoapify category. */
+const FOOD_AMENITIES = ['restaurant', 'fast_food', 'cafe', 'food_court', 'ice_cream', 'pub', 'bar'];
+
 export function normalizeGeoapifyGeocode(body: unknown): Place[] {
   const results = (body as { results?: unknown })?.results;
   if (!Array.isArray(results)) return [];
@@ -87,14 +105,24 @@ export function normalizeGeoapifyGeocode(body: unknown): Place[] {
       const type = text(r.result_type);
       const line1 = text(r.address_line1);
       const line2 = text(r.address_line2);
-      return place(
-        `geoapify:${text(r.place_id) ?? i}`,
+      const id = text(r.place_id);
+      const raw = (r.datasource as { raw?: Record<string, unknown> } | undefined)?.raw;
+      // Only clear places to eat count as restaurants; anything else is a place that moves the map.
+      const food =
+        type === 'amenity' &&
+        (!!text(r.category)?.startsWith('catering') ||
+          FOOD_AMENITIES.includes(text(raw?.amenity) ?? ''));
+      const found = place(
+        `geoapify:${id ?? i}`,
         text(r.name) ?? line1 ?? text(r.formatted),
         text(r.name) ? text(r.formatted) : line2,
         r.lat,
         r.lon,
         type === 'building' || type === 'street' || !!text(r.housenumber),
       );
+      return found && food && id && text(r.name)
+        ? { ...found, restaurant: { provider: 'geoapify', id } }
+        : found;
     }),
   );
 }

@@ -1,6 +1,7 @@
-// Content pipeline: read the canonical database (restaurant folders and the
-// contributor list), validate it, render reviews, process images, and write
-// website-ready data under public/generated/. The database is only read.
+// Content pipeline: read the canonical database (restaurant folders with
+// their reviews, and the contributor list), validate it, render reviews,
+// derive the averages and counts, process images, and write website-ready
+// data under public/generated/. The database is only read.
 
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -12,26 +13,35 @@ import {
   type ContentSource,
   type Contributor,
   type Dish,
+  type DishReview,
   type ImageAsset,
+  type Review as ReviewDetail,
   type RestaurantDetail,
   type RestaurantSummary,
+  type Rating,
   type Tag,
 } from '../../shared/content/model.ts';
 import { canonicalImageProblems, copyRenditions, processImage, type ProcessedImage } from './images.ts';
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
 import { findSensitiveMetadata, PRIVACY_FIX, tagRegistryProblems } from './privacy.ts';
 import {
+  compareInstants,
   formatIssues,
   privateContributorsSchema,
   privateTagsSchema,
   publicContributorsSchema,
+  reviewIdSchema,
   restaurantInfoSchema,
+  reviewSchema,
   tagRegistrySchema,
   type RestaurantInfo,
+  type Review,
 } from '../../shared/content/schema.ts';
+import { priceRangeOf, priceValue, type PriceRange } from '../../shared/content/vocabulary.ts';
 
 export const INFO_FILE = 'info.json';
-export const REVIEW_FILE = 'review.md';
+/** One file pair per review: <review id>.json and an optional <review id>.md. */
+export const REVIEWS_DIR = 'reviews';
 export const IMAGES_DIR = 'images';
 /** Restaurants farther than this from Rice are almost certainly typos or swapped lat/lng. */
 export const MAX_DISTANCE_KM = 100;
@@ -83,10 +93,38 @@ export interface LoadedRestaurant {
   /** "public": tracked in Git. "private": a local, git-ignored draft. */
   visibility: 'public' | 'private';
   info: RestaurantInfo;
-  review?: string;
+  /** Valid reviews (each named by its review id). */
+  reviews: LoadedReview[];
   /** Image paths relative to the folder ("images/01-x.jpg"), in display order. */
   images: string[];
 }
+
+export interface LoadedReview {
+  /** The review id: its file name, reviews/<id>.json. */
+  id: string;
+  review: Review;
+  /** The .md text, when there is one. */
+  text?: string;
+}
+
+/**
+ * Newest first by submission time; reviews submitted at the same instant by
+ * review id, so the order never depends on the file system.
+ */
+export const newestFirst = (a: LoadedReview, b: LoadedReview) =>
+  compareInstants(b.review.submittedAt, a.review.submittedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/** Each contributor's latest review (in newestFirst order): what the restaurant's rating counts. */
+export const latestPerContributor = (reviews: LoadedReview[]) => {
+  const seen = new Set<string>();
+  return [...reviews].sort(newestFirst).filter((r) => !seen.has(r.review.contributor) && seen.add(r.review.contributor));
+};
+
+/** Every photo a review uses: its own, then its dishes'. */
+export const reviewImages = (r: Review) => [
+  ...(r.images ?? []),
+  ...(r.dishes ?? []).flatMap((d) => d.images ?? []),
+];
 
 export interface PipelineResult {
   diagnostics: Diagnostic[];
@@ -221,9 +259,11 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
         }
         continue;
       }
-      const reviewPath = path.join(dir, REVIEW_FILE);
-      const review = existsSync(reviewPath) ? await readFile(reviewPath, 'utf8') : undefined;
-      loaded.push({ folder, dir, visibility, info: parsed.data, review, images: await listImages(dir) });
+      const reviews = await loadReviews(dir, diagnostics, display, {
+        restaurantId: parsed.data.id,
+        draft: isPrivate || parsed.data.status === 'draft',
+      });
+      loaded.push({ folder, dir, visibility, info: parsed.data, reviews, images: await listImages(dir) });
     }
   }
 
@@ -293,12 +333,14 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
       }
     }
 
-    // Contributors are referenced by id; public restaurants may only use public ids.
-    for (const id of info.contributorIds ?? []) {
+    // Each review belongs to a contributor; public restaurants may only use public ids.
+    for (const { id: reviewId, review } of restaurant.reviews) {
+      const file = display(path.join(dir, REVIEWS_DIR, `${reviewId}.json`));
+      const id = review.contributor;
       if (!contributors.has(id)) {
-        error(`contributorIds: "${id}" is not a known contributor (add it with "npm run content:contributor")`);
+        error(`"${id}" is not a known contributor (add it with "npm run content:contributor")`, file);
       } else if (isPublic && !publicContributorIds.has(id)) {
-        error(`contributorIds: "${id}" is not in the public contributor list; promote the restaurant to add it`);
+        error(`"${id}" is not in the public contributor list; promote the restaurant to add it`, file);
       }
     }
     // Tags come from the registry; public restaurants may only use public tags.
@@ -311,14 +353,14 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
         error(`tags: proposed ${unsafeTags.get(id)!.join('; ')}; choose another label in private/tags.json or drop the tag`);
       }
     }
-    if (info.status === 'published' && !info.contributorIds?.length) {
-      error('published restaurants need at least one entry in "contributorIds" (attribution)');
+    if (info.status === 'published' && restaurant.reviews.length === 0) {
+      error(`published restaurants need at least one review in ${REVIEWS_DIR}/ (attribution)`);
     }
 
-    // Only info.json, review.md, and images/ belong in a restaurant folder.
+    // Only info.json, reviews/, and images/ belong in a restaurant folder.
     for (const entry of await readdir(dir)) {
-      if (entry.startsWith('.') || [INFO_FILE, REVIEW_FILE, IMAGES_DIR].includes(entry)) continue;
-      const message = `unexpected file "${entry}"; a restaurant folder holds only ${INFO_FILE}, ${REVIEW_FILE}, and ${IMAGES_DIR}/`;
+      if (entry.startsWith('.') || [INFO_FILE, REVIEWS_DIR, IMAGES_DIR].includes(entry)) continue;
+      const message = `unexpected file "${entry}"; a restaurant folder holds only ${INFO_FILE}, ${REVIEWS_DIR}/, and ${IMAGES_DIR}/`;
       if (isPublic) error(message, display(path.join(dir, entry)), true);
       else warn(message, display(path.join(dir, entry)));
     }
@@ -341,23 +383,34 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
       }
     }
 
-    // References from dishes and review.md must point at stored images.
+    // Reviews refer to the restaurant's dishes and to stored images; each photo
+    // belongs to one review, and review texts carry no images (photos are shown
+    // with their review).
     const known = new Set(restaurant.images);
-    info.dishes?.forEach((dish, i) => {
-      dish.images?.forEach((image, j) => {
-        if (!known.has(image)) error(`dishes.${i}.images.${j}: "${image}" is not in ${IMAGES_DIR}/`);
+    const dishIds = new Set((info.dishes ?? []).map((d) => d.id));
+    const owner = new Map<string, string>();
+    for (const { id, review, text } of restaurant.reviews) {
+      const file = display(path.join(dir, REVIEWS_DIR, `${id}.json`));
+      review.dishes?.forEach((d, i) => {
+        if (!dishIds.has(d.dish)) error(`dishes.${i}.dish: "${d.dish}" is not one of the dishes in ${INFO_FILE}`, file);
       });
-    });
-    if (restaurant.review !== undefined) {
-      const reviewFile = display(path.join(dir, REVIEW_FILE));
-      for (const image of listMarkdownImages(restaurant.review)) {
-        if (/^[a-z]+:/i.test(image.url) || image.url.startsWith('//')) {
-          error(`image "${image.url}" must be a local file in ${IMAGES_DIR}/, not a URL`, reviewFile);
-        } else if (!known.has(image.url)) {
-          error(`image "${image.url}" is not in ${IMAGES_DIR}/`, reviewFile);
-        } else if (!image.alt.trim()) {
-          warn(`image "${image.url}" has no alt text`, reviewFile);
+      for (const image of reviewImages(review)) {
+        if (!known.has(image)) error(`"${image}" is not in ${IMAGES_DIR}/`, file);
+        else if (owner.has(image) && owner.get(image) !== id) {
+          error(`"${image}" is also used by review ${owner.get(image)}; a photo belongs to one review`, file);
         }
+        owner.set(image, id);
+      }
+      if (text && listMarkdownImages(text).length > 0) {
+        error(
+          `the review text may not place images; list photos in the review's "images" instead`,
+          display(path.join(dir, REVIEWS_DIR, `${id}.md`)),
+        );
+      }
+    }
+    for (const dish of info.dishes ?? []) {
+      if (!restaurant.reviews.some((r) => r.review.dishes?.some((d) => d.dish === dish.id))) {
+        warn(`dish "${dish.id}" ("${dish.name}") is in no review; remove it or merge it into another dish`);
       }
     }
   }
@@ -421,6 +474,52 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
   return { diagnostics, restaurants: valid, contributors, tags, index, details, failed: finalFailed };
 }
 
+/** Reads reviews/: each <review id>.json with its optional .md; problems become diagnostics. */
+async function loadReviews(
+  dir: string,
+  diagnostics: Diagnostic[],
+  display: (file: string) => string,
+  about: { restaurantId: string; draft: boolean },
+): Promise<LoadedReview[]> {
+  const reviewsDir = path.join(dir, REVIEWS_DIR);
+  if (!existsSync(reviewsDir)) return [];
+  const report = (file: string, message: string) =>
+    diagnostics.push({ level: 'error', file: display(path.join(reviewsDir, file)), message, ...about });
+  const names = (await readdir(reviewsDir)).filter((n) => !n.startsWith('.')).sort();
+  const reviews: LoadedReview[] = [];
+  for (const file of names) {
+    const match = /^(.+)\.(json|md)$/.exec(file);
+    if (!match || !reviewIdSchema.safeParse(match[1]).success) {
+      report(file, `unexpected file; ${REVIEWS_DIR}/ holds <review id>.json (and .md), e.g. v-7k3m9q.json`);
+      continue;
+    }
+    const [, id, ext] = match as unknown as [string, string, string];
+    if (ext === 'md') {
+      if (!names.includes(`${id}.json`)) report(file, `a review text needs its ${id}.json (contributor, time, rating)`);
+      continue;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await readFile(path.join(reviewsDir, file), 'utf8'));
+    } catch (e) {
+      report(file, `invalid JSON: ${(e as Error).message}`);
+      continue;
+    }
+    const parsed = reviewSchema.safeParse(raw);
+    if (!parsed.success) {
+      for (const message of formatIssues(parsed.error)) report(file, message);
+      continue;
+    }
+    const textFile = path.join(reviewsDir, `${id}.md`);
+    reviews.push({
+      id,
+      review: parsed.data,
+      ...(existsSync(textFile) ? { text: await readFile(textFile, 'utf8') } : {}),
+    });
+  }
+  return reviews;
+}
+
 async function readJson<T>(
   file: string,
   schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false; error: import('zod').ZodError } },
@@ -478,45 +577,86 @@ async function renderRestaurant(
     };
   };
 
-  // Alt text: the restaurant name for the cover, the dish name (numbered when
-  // the dish has several photos) or review alt text where an image is used,
-  // otherwise the name with the photo's position.
-  const reviewImages = restaurant.review?.trim() ? listMarkdownImages(restaurant.review) : [];
   const name = info.name;
-  const dishAlt = (ref: string) => {
-    const dish = info.dishes?.find((d) => d.images?.includes(ref));
-    if (!dish) return undefined;
-    const count = dish.images!.length;
-    return count > 1 ? `${dish.name}（${dish.images!.indexOf(ref) + 1}/${count}）` : dish.name;
-  };
-  const altFor = (ref: string, i: number) =>
-    i === 0
-      ? name
-      : (dishAlt(ref) ??
-        reviewImages.find((img) => img.url === ref && img.alt.trim())?.alt ??
-        `${name} (${i + 1})`);
-  const images: ImageAsset[] = [];
-  for (const [i, ref] of restaurant.images.entries()) images.push(await asset(ref, altFor(ref, i)));
-  const byRef = new Map(restaurant.images.map((ref, i) => [ref, images[i]!]));
-  const indexOf = (ref: string) => restaurant.images.indexOf(ref);
+  const dishById = new Map((info.dishes ?? []).map((d) => [d.id, d]));
+  const people = (id: string) => contributors.get(id)!;
+  const reviews = [...restaurant.reviews].sort(newestFirst);
+  const day = (time: string) => time.slice(0, 10);
 
+  // Alt text: the restaurant name for the cover, the dish name (numbered when
+  // a review has several photos of it), otherwise the name with the photo's position.
+  const dishAlt = new Map<string, string>();
+  for (const { review } of reviews) {
+    for (const d of review.dishes ?? []) {
+      const dishName = dishById.get(d.dish)?.name ?? name;
+      const list = d.images ?? [];
+      list.forEach((ref, i) => dishAlt.set(ref, list.length > 1 ? `${dishName}（${i + 1}/${list.length}）` : dishName));
+    }
+  }
+  const images: ImageAsset[] = [];
+  for (const [i, ref] of restaurant.images.entries()) {
+    images.push(await asset(ref, i === 0 ? name : (dishAlt.get(ref) ?? `${name} (${i + 1})`)));
+  }
+  const indexOf = (ref: string) => restaurant.images.indexOf(ref);
+  const indexes = (refs: string[] | undefined) => (refs ?? []).map(indexOf).filter((i) => i >= 0);
+
+  const reviewDetails: ReviewDetail[] = [];
+  for (const { id, review, text } of reviews) {
+    reviewDetails.push({
+      id,
+      contributor: people(review.contributor),
+      submittedAt: review.submittedAt,
+      date: day(review.submittedAt),
+      rating: review.rating,
+      ...(review.price ? { price: review.price as PriceRange } : {}),
+      html: text?.trim()
+        ? await renderMarkdown(text, (url) => {
+            throw new Error(`${REVIEWS_DIR}/${id}.md: images are not placed in review texts ("${url}")`);
+          })
+        : '',
+      imageIndexes: indexes(review.images),
+      dishes: (review.dishes ?? []).map((d) => ({
+        id: d.dish,
+        name: dishById.get(d.dish)!.name,
+        ...(d.verdict !== undefined ? { verdict: d.verdict } : {}),
+      })),
+    });
+  }
   // Placement is recorded as indexes into `images`, so the website can decide
   // where each photo appears without inspecting HTML.
-  const dishes: Dish[] = (info.dishes ?? []).map((dish) => ({
-    name: dish.name,
-    verdict: dish.verdict,
-    comment: dish.comment,
-    imageIndexes: (dish.images ?? []).map(indexOf).filter((i) => i >= 0),
-  }));
-  const reviewImageIndexes = [...new Set(reviewImages.map((img) => indexOf(img.url)))].filter((i) => i >= 0);
-
-  const reviewHtml = restaurant.review?.trim()
-    ? await renderMarkdown(restaurant.review, (url) => {
-        const found = byRef.get(url);
-        if (!found) throw new Error(`${REVIEW_FILE}: unresolved image "${url}"`);
-        return found;
-      })
-    : '';
+  const dishes: Dish[] = (info.dishes ?? []).map((dish) => {
+    const mentions: DishReview[] = reviews.flatMap(({ id, review }) =>
+      (review.dishes ?? [])
+        .filter((d) => d.dish === dish.id)
+        .map((d) => ({
+          reviewId: id,
+          contributor: people(review.contributor),
+          submittedAt: review.submittedAt,
+          date: day(review.submittedAt),
+          ...(d.verdict !== undefined ? { verdict: d.verdict } : {}),
+          ...(d.comment ? { comment: d.comment } : {}),
+          imageIndexes: indexes(d.images),
+        })),
+    );
+    return {
+      id: dish.id,
+      name: dish.name,
+      recommend: mentions.filter((m) => m.verdict === 1).length,
+      avoid: mentions.filter((m) => m.verdict === -1).length,
+      imageIndexes: mentions.flatMap((m) => m.imageIndexes),
+      reviews: mentions,
+    };
+  });
+  // Each contributor counts once, with their latest review.
+  const counted = latestPerContributor(reviews);
+  const average = counted.length
+    ? counted.reduce((sum, r) => sum + r.review.rating, 0) / counted.length
+    : undefined;
+  // The price the same way, over the reviews that give one: each contributor's latest, as its range's middle.
+  const priced = latestPerContributor(reviews.filter((r) => r.review.price));
+  const price = priced.length
+    ? Math.round((priced.reduce((sum, r) => sum + priceValue(r.review.price as PriceRange), 0) / priced.length) * 10) / 10
+    : undefined;
 
   return {
     id: info.id,
@@ -527,15 +667,19 @@ async function renderRestaurant(
     tags: (info.tags ?? []).map((id) => tags.get(id)!),
     address: info.address,
     location: info.location,
-    rating: info.rating,
-    pricePerPerson: info.pricePerPerson,
+    ...(average !== undefined
+      ? { rating: Math.min(5, Math.max(1, Math.round(average))) as Rating, ratingAverage: Math.round(average * 10) / 10 }
+      : {}),
+    raterCount: counted.length,
+    reviewCount: reviews.length,
+    ...(price !== undefined ? { pricePerPerson: price, priceRange: priceRangeOf(price) } : {}),
+    priceCount: priced.length,
     cover: images[0],
     links: { ...info.links },
     images,
     dishes,
-    reviewHtml,
-    reviewImageIndexes,
-    contributors: (info.contributorIds ?? []).map((id) => contributors.get(id)!),
+    reviews: reviewDetails,
+    contributors: [...new Set(reviews.map((r) => r.review.contributor))].map(people),
   };
 }
 
@@ -550,7 +694,12 @@ function toSummary(detail: RestaurantDetail): RestaurantSummary {
     address: detail.address,
     location: detail.location,
     rating: detail.rating,
+    ratingAverage: detail.ratingAverage,
+    raterCount: detail.raterCount,
+    reviewCount: detail.reviewCount,
     pricePerPerson: detail.pricePerPerson,
+    priceRange: detail.priceRange,
+    priceCount: detail.priceCount,
     cover: detail.cover,
     links: detail.links,
   };

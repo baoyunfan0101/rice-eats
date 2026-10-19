@@ -3,7 +3,7 @@
 // names the website fills in, and the answer values intake understands.
 // Everything here is public; the form URL is not a secret.
 
-import type { Rating, Verdict } from './content/vocabulary';
+import type { PriceRange, Rating, Verdict } from './content/vocabulary';
 
 /**
  * Hidden fields configured in the Tally form, filled in from the URL by the
@@ -20,8 +20,6 @@ export const HIDDEN_FIELDS = {
   poiId: 'poi_id',
   selectionMethod: 'selection_method',
   source: 'source',
-  /** The contributor's own keywords, as a JSON array of strings (see serializeKeywords). */
-  keywords: 'tags_raw',
 } as const;
 
 /** Where a submission was started; sent as the `source` hidden field. */
@@ -51,57 +49,26 @@ export interface SubmissionContext {
   address?: string;
   poiProvider?: string;
   poiId?: string;
-  /** Free-form keywords the contributor typed (not tag ids); sent as tags_raw. */
-  keywords?: string[];
 }
 
-/**
- * Limits of the keyword input. Keywords are free text (not chosen from a
- * list); intake maps them to the tag registry.
- */
-export const KEYWORD_LIMITS = { count: 10, length: 20 } as const;
-
-/** Trims and collapses spaces; the text is otherwise kept exactly as typed. */
-export const cleanKeyword = (text: string) => text.replace(/\s+/g, ' ').trim();
-
-/** Key for "the same keyword": width, case, and spacing do not make a keyword new. */
-export const keywordKey = (text: string) => cleanKeyword(text.normalize('NFKC')).toLowerCase();
+/** Characters that separate items in a list answer (also English commas and new lines). */
+export const LIST_SEPARATORS = /[,，、;；\n]/;
 
 /**
- * Serializes keywords for the tags_raw hidden field: a JSON array, so commas,
- * quotes, spaces, and any language survive the URL and Tally's CSV export.
- * Empty when there are none (the field is then left out).
+ * Reads a list answer (the form's tags and restaurant aliases): items
+ * separated by commas ("，" or ","), "、", semicolons, or new lines; spaces
+ * inside an item are kept ("date night"). Duplicates (ignoring width, case,
+ * and spacing) are dropped and the order is kept. No answer gives [].
  */
-export function serializeKeywords(keywords: readonly string[] | undefined): string {
-  const list = (keywords ?? []).map(cleanKeyword).filter(Boolean);
-  return list.length > 0 ? JSON.stringify(list) : '';
-}
-
-/**
- * Reads a tags_raw value back into keywords. Accepts the JSON array the
- * website writes and, for hand transcriptions, a list separated by commas,
- * "，", "、", or new lines. Missing or empty (older submissions) gives [].
- * Never throws; duplicates are dropped, and order is kept.
- */
-export function parseKeywords(value: string | undefined): string[] {
-  const text = value?.trim();
-  if (!text) return [];
-  let items: unknown[] | undefined;
-  if (text.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      if (Array.isArray(parsed)) items = parsed;
-    } catch {
-      // Not JSON after all: read it as a list below.
-    }
-  }
-  const list = (items ?? text.split(/[,，、\n]/)).filter((v): v is string => typeof v === 'string');
+export function parseList(value: string | undefined): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
-  for (const item of list.map(cleanKeyword)) {
-    if (!item || seen.has(keywordKey(item))) continue;
-    seen.add(keywordKey(item));
-    result.push(item);
+  for (const item of (value ?? '').split(LIST_SEPARATORS)) {
+    const keyword = item.replace(/\s+/g, ' ').trim();
+    const key = keyword.normalize('NFKC').toLowerCase();
+    if (!keyword || seen.has(key)) continue;
+    seen.add(key);
+    result.push(keyword);
   }
   return result;
 }
@@ -134,15 +101,21 @@ export function contextProblem(context: SubmissionContext): string | undefined {
 /**
  * Question titles in the Tally form (docs/submissions.md). Intake finds the
  * answers in a Tally CSV export by these titles (a column whose header starts
- * with the title or one of its English aliases), so keep them when editing the form.
+ * with the title, so "（选填）" may follow), so keep them when editing the form.
  */
 export const TALLY_QUESTIONS = {
-  review: ['你的点评', 'review'],
-  photos: ['照片', 'photos'],
-  rating: ['总体评级', 'overall rating'],
-  displayName: ['署名', 'display name'],
-  email: ['联系邮箱', 'contact email'],
-  consent: ['发布授权', 'publication consent'],
+  review: '你的点评',
+  /** Optional short text "标签（选填）": keywords separated by commas or "、" (see parseList). */
+  keywords: '标签',
+  /** Optional short text "餐厅别名（选填）": other names of the restaurant, separated like tags. */
+  altNames: '餐厅别名',
+  photos: '照片',
+  rating: '总体评级',
+  /** Optional single choice "人均价格（选填）": TALLY_PRICE_OPTIONS. */
+  price: '人均价格',
+  displayName: '署名',
+  email: '联系邮箱',
+  consent: '发布授权',
 } as const;
 
 /**
@@ -180,6 +153,31 @@ export function verdictFromAnswer(answer: string | undefined): Verdict | undefin
   const text = answer && withoutEmoji(answer);
   if (!text) return undefined;
   return Object.entries(TALLY_VERDICT_OPTIONS).find(([label]) => withoutEmoji(label) === text)?.[1];
+}
+
+/** Options of the optional "人均价格" question (US dollars per person), mapped to the stored range. */
+export const TALLY_PRICE_OPTIONS: Record<string, PriceRange> = {
+  '$10 以下': 'under-10',
+  '$10–20': '10-20',
+  '$20–30': '20-30',
+  '$30–50': '30-50',
+  '$50–100': '50-100',
+  '$100 以上': '100-plus',
+};
+
+/**
+ * Maps a price answer to the stored range; undefined unless it is one of the
+ * options (compared without spaces, with any dash and full-width characters).
+ */
+export function priceFromAnswer(answer: string | undefined): PriceRange | undefined {
+  const loose = (text: string) =>
+    text
+      .normalize('NFKC')
+      .replace(/\s+/g, '')
+      .replace(/[-–—~～]/g, '-');
+  const text = answer && loose(answer);
+  if (!text) return undefined;
+  return Object.entries(TALLY_PRICE_OPTIONS).find(([label]) => loose(label) === text)?.[1];
 }
 
 /** The single option of the required consent question. */
@@ -291,7 +289,6 @@ export function tallyUrls(formId: string, context: SubmissionContext): TallyUrls
   set(HIDDEN_FIELDS.poiId, context.poiId);
   set(HIDDEN_FIELDS.selectionMethod, context.selectionMethod);
   set(HIDDEN_FIELDS.source, context.source);
-  set(HIDDEN_FIELDS.keywords, serializeKeywords(context.keywords));
   const id = encodeURIComponent(formId);
   const embedParams = new URLSearchParams({
     alignLeft: '1',

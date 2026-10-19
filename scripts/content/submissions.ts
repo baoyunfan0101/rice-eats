@@ -22,13 +22,14 @@ import {
   SELECTION_METHODS,
   type SelectionMethod,
   type LatLngValue,
-  parseKeywords,
+  parseList,
   TALLY_CONSENT_OPTION,
   TALLY_DISH_GROUPS,
   TALLY_MAX_DISH_PHOTOS,
   TALLY_MAX_GENERAL_PHOTOS,
   TALLY_MAX_PHOTO_BYTES,
   TALLY_QUESTIONS,
+  priceFromAnswer,
   ratingFromAnswer,
   verdictFromAnswer,
 } from '../../shared/submission.ts';
@@ -50,6 +51,8 @@ export const submissionSchema = z
     restaurantId: z.string().optional(),
     /** The selected or manually entered restaurant name (hidden field). */
     restaurantName: z.string().optional(),
+    /** Other names of the restaurant the contributor gave (the form's alias question). */
+    restaurantAltNames: z.array(z.string()).default([]),
     restaurantAddress: z.string().optional(),
     /** The explicitly selected restaurant location, only when the coordinates are valid. */
     restaurantLocation: z.object({ lat: z.number(), lng: z.number() }).strict().optional(),
@@ -62,6 +65,7 @@ export const submissionSchema = z
     review: z.string().optional(),
     /** The answer as submitted; the stored rating is derived with ratingFromAnswer. */
     ratingAnswer: z.string().optional(),
+    priceAnswer: z.string().optional(),
     /** General photos (not tied to a dish). */
     photoUrls: z.array(z.string()).default([]),
     /** Dish groups in form order; each dish's photos show that dish. */
@@ -79,8 +83,8 @@ export const submissionSchema = z
       )
       .default([]),
     /**
-     * The contributor's own keywords (the tags_raw hidden field), exactly as
-     * typed. Empty for older submissions. Mapped to tags by prepare.ts.
+     * The contributor's own keywords (the form's keyword question, split by
+     * parseList), as typed. Mapped to tags by prepare.ts.
      */
     keywords: z.array(z.string()).default([]),
     displayName: z.string().optional(),
@@ -137,8 +141,7 @@ export function submissionsFromCsv(text: string): Submission[] {
   const [header, ...rows] = parseCsv(text);
   if (!header) throw new IntakeError('the CSV file is empty');
   const headers = header.map(normalizeHeader);
-  const columns = (names: readonly string[]) =>
-    headers.flatMap((h, i) => (names.some((name) => h.startsWith(normalizeHeader(name))) ? [i] : []));
+  const columns = (title: string) => headers.flatMap((h, i) => (h.startsWith(normalizeHeader(title)) ? [i] : []));
   const exact = (name: string) => headers.indexOf(normalizeHeader(name));
 
   const idColumn = exact('Submission ID');
@@ -148,15 +151,16 @@ export function submissionsFromCsv(text: string): Submission[] {
   const consentColumns = columns(TALLY_QUESTIONS.consent);
   if (consentColumns.length === 0) {
     throw new IntakeError(
-      `no consent column (a header starting with "${TALLY_QUESTIONS.consent[0]}"); ` +
+      `no consent column (a header starting with "${TALLY_QUESTIONS.consent}"); ` +
         'check the form against docs/submissions.md',
     );
   }
-  const first = (names: readonly string[]) => columns(names)[0];
+  const first = (title: string) => columns(title)[0];
   const picked = {
     review: first(TALLY_QUESTIONS.review),
     photos: columns(TALLY_QUESTIONS.photos),
     rating: first(TALLY_QUESTIONS.rating),
+    price: first(TALLY_QUESTIONS.price),
     displayName: first(TALLY_QUESTIONS.displayName),
     email: first(TALLY_QUESTIONS.email),
     restaurantId: exact(HIDDEN_FIELDS.restaurantId),
@@ -168,15 +172,16 @@ export function submissionsFromCsv(text: string): Submission[] {
     poiId: exact(HIDDEN_FIELDS.poiId),
     selectionMethod: exact(HIDDEN_FIELDS.selectionMethod),
     source: exact(HIDDEN_FIELDS.source),
-    keywords: exact(HIDDEN_FIELDS.keywords),
+    keywords: first(TALLY_QUESTIONS.keywords),
+    altNames: first(TALLY_QUESTIONS.altNames),
     submittedAt: exact('Submitted at'),
   };
 
   const dishColumns = Array.from({ length: TALLY_DISH_GROUPS }, (_, g) => ({
-    name: first([dishQuestion(g + 1, 'name')]),
-    verdict: first([dishQuestion(g + 1, 'verdict')]),
-    comment: first([dishQuestion(g + 1, 'comment')]),
-    photos: columns([dishQuestion(g + 1, 'photos')]),
+    name: first(dishQuestion(g + 1, 'name')),
+    verdict: first(dishQuestion(g + 1, 'verdict')),
+    comment: first(dishQuestion(g + 1, 'comment')),
+    photos: columns(dishQuestion(g + 1, 'photos')),
   }));
 
   return rows.map((row, i) => {
@@ -189,7 +194,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     const agreed = normalizeHeader(TALLY_CONSENT_OPTION);
     const consent = consentColumns.some((c) => {
       const v = normalizeHeader(row[c] ?? '');
-      return YES.has(v) || v.startsWith(agreed) || v.startsWith('i agree');
+      return YES.has(v) || v.startsWith(agreed);
     });
     const linksIn = (cols: number[]) => [
       ...new Set(cols.flatMap((c) => (row[c] ?? '').match(/https?:\/\/[^\s,]+/g) ?? [])),
@@ -208,6 +213,7 @@ export function submissionsFromCsv(text: string): Submission[] {
       source: value(picked.source),
       restaurantId: value(picked.restaurantId),
       restaurantName: value(picked.restaurantName),
+      restaurantAltNames: parseList(value(picked.altNames)),
       restaurantAddress: value(picked.address),
       ...parseLocation(value(picked.lat), value(picked.lng)),
       ...(value(picked.poiProvider) && value(picked.poiId)
@@ -216,10 +222,10 @@ export function submissionsFromCsv(text: string): Submission[] {
       selectionMethod: value(picked.selectionMethod),
       review: value(picked.review),
       ratingAnswer: value(picked.rating),
+      priceAnswer: value(picked.price),
       photoUrls: linksIn(picked.photos),
       dishes,
-      // A missing column (older form) or an empty value gives no keywords.
-      keywords: parseKeywords(value(picked.keywords)),
+      keywords: parseList(value(picked.keywords)),
       displayName: value(picked.displayName),
       email: value(picked.email),
       consent,
@@ -668,16 +674,7 @@ export interface Readiness {
 export function readiness(submission: Submission, state: PhotoState[]): Readiness {
   const blockers: string[] = [];
   const notes: string[] = [];
-  const hasText =
-    Boolean(submission.review?.trim()) ||
-    submission.dishes.some((d) => d.name?.trim() || d.comment?.trim());
-  // A valid overall rating is content on its own: the form requires the
-  // rating and makes the review text optional, so a rating-only submission
-  // is complete (older form versions required the text instead).
-  const rating = ratingFromAnswer(submission.ratingAnswer);
-  const hasRating = rating !== undefined;
-  const links = photoLinks(submission).length;
-  const usable = state.filter((p) => USABLE.includes(p.status)).length;
+  // The form requires the rating, so every review has one; text, dishes, and photos are optional.
   const unresolved = state.filter((p) => UNRESOLVED.includes(p.status)).map((p) => p.slot);
   if (!submission.consent) {
     blockers.push('no publication consent: do not prepare or publish anything; ask the contributor or reject');
@@ -709,22 +706,21 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
       notes.push(`dish ${i + 1} verdict "${dish.verdictAnswer}" is not 推荐 or 避雷; leave it out`);
     }
   }
-  if (!hasText && !hasRating && links === 0) {
-    blockers.push('neither a valid rating, review text, dishes, nor photos were submitted');
-  }
-  if (!hasText && !hasRating && links > 0 && usable === 0) {
-    blockers.push('photo-only submission without any retrieved photo: retry, add the photos by hand, or reject');
-  }
   if (unresolved.length > 0) {
     notes.push(
       `photo intake incomplete (photo ${unresolved.join(', ')} missing): run retry-photos, add them with ` +
         'add-photo, or waive them if the maintainer decides to proceed without them',
     );
   }
-  if (submission.ratingAnswer && !hasRating) {
-    notes.push(`rating answer "${submission.ratingAnswer}" is not one of the five levels; leave the rating out`);
-  } else if (!submission.ratingAnswer) {
-    notes.push('no overall rating (optional in older form versions): leave the rating out');
+  if (submission.priceAnswer && priceFromAnswer(submission.priceAnswer) === undefined) {
+    notes.push(`price answer "${submission.priceAnswer}" is not one of the price ranges; the review gives no price`);
+  }
+  if (ratingFromAnswer(submission.ratingAnswer) === undefined) {
+    blockers.push(
+      submission.ratingAnswer
+        ? `rating answer "${submission.ratingAnswer}" is not one of the five levels (the form requires one)`
+        : 'no overall rating (the form requires one)',
+    );
   }
   if (!submission.email) notes.push('no contact email: questions cannot be sent back to the contributor');
   if (!submission.displayName) notes.push('no display name: credit it as 匿名 (the form says so)');
@@ -736,12 +732,7 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
 
 export const LOG_FILE = 'tally-log.json';
 /** Editorial status, separate from photo retrieval (see PhotoSummary). */
-/**
- * deferred: kept but not used, because the restaurant already has an
- * accepted contributor (one review per restaurant for now); saved for a
- * future multi-review database.
- */
-export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'deferred', 'rejected'] as const;
+export const LOG_STATUSES = ['imported', 'drafted', 'processed', 'rejected'] as const;
 export type LogStatus = (typeof LOG_STATUSES)[number];
 
 const logSchema = z.record(
@@ -1042,6 +1033,7 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
     );
   }
   lines.push(`  rating:     ${result.rating ?? 'none'}`);
+  lines.push(`  price:      ${priceFromAnswer(s.priceAnswer) ?? 'none'}`);
   lines.push(
     `  credit:     ${s.displayName ? `display name "${s.displayName}"` : 'no display name (credit as 匿名)'}; ` +
       `${s.email ? 'contact email provided (private)' : 'no contact email'}`,
@@ -1070,6 +1062,7 @@ function describeSelection(s: Submission): string {
   const parts = [
     `method ${s.selectionMethod ?? '(unknown)'}`,
     s.restaurantName?.trim() ? `name "${s.restaurantName.trim()}"` : 'no name',
+    ...(s.restaurantAltNames.length ? [`other names ${s.restaurantAltNames.map((n) => `"${n}"`).join(', ')}`] : []),
     s.restaurantAddress?.trim() ? `address "${s.restaurantAddress.trim()}"` : 'no address',
     s.restaurantLocation
       ? `at ${s.restaurantLocation.lat.toFixed(6)},${s.restaurantLocation.lng.toFixed(6)}`

@@ -1,10 +1,9 @@
-// Search areas for the submission page: where the map looks for restaurants
+// Map shortcuts for the submission page: where the map looks for restaurants
 // (or where a manually added restaurant is placed). An area is a map center
 // and zoom with a readable name; it is never a restaurant's location.
 
 import { RICE_CENTER } from '../../shared/content/model';
-import type { LatLngValue } from '../../shared/submission';
-import { distanceMeters } from './poi';
+import { isValidLatLng, type LatLngValue } from '../../shared/submission';
 
 export interface SearchArea {
   label: string;
@@ -23,15 +22,40 @@ export const PRESET_AREAS = {
 /** Zoom used for the current location and for searched places. */
 export const PLACE_ZOOM = 16;
 
-/**
- * How far (meters) the map center may move from an area's center and still
- * count as that area; beyond it, the page calls it the map's current position.
- */
-export const AREA_RADIUS = 1200;
+/** Where the contributor last found a restaurant, kept only in this browser. */
+const LAST_AREA_KEY = 'rice-eats:last-area';
 
-/** The name of the area the map is showing: the chosen area while the map is still near it. */
-export function currentAreaLabel(area: SearchArea | undefined, mapCenter: LatLngValue): string {
-  return area && distanceMeters(area.center, mapCenter) <= AREA_RADIUS
-    ? area.label
-    : '地图当前位置附近';
+/**
+ * The "上次的位置" area: the map view when the contributor last went on to
+ * the form, stored only in this browser's localStorage (never sent
+ * anywhere), rounded to about 100 m. Undefined when there is none or storage
+ * is unavailable.
+ */
+export function loadLastArea(): SearchArea | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAST_AREA_KEY) ?? 'null') as Partial<
+      LatLngValue & { zoom: number }
+    > | null;
+    const center = v && { lat: Number(v.lat), lng: Number(v.lng) };
+    if (!center || !isValidLatLng(center) || typeof v.zoom !== 'number') return undefined;
+    return { label: '上次的位置', center, zoom: v.zoom };
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveLastArea(view: { center: LatLngValue; zoom: number }) {
+  try {
+    const round = (n: number) => Math.round(n * 1000) / 1000;
+    localStorage.setItem(
+      LAST_AREA_KEY,
+      JSON.stringify({
+        lat: round(view.center.lat),
+        lng: round(view.center.lng),
+        zoom: Math.round(view.zoom),
+      }),
+    );
+  } catch {
+    // Storage unavailable (private window, blocked): nothing is remembered.
+  }
 }
