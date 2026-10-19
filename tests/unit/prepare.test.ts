@@ -1615,3 +1615,167 @@ describe('every submission is an independent review', () => {
     expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
   });
 });
+
+describe('review times', () => {
+  type T = Awaited<ReturnType<typeof setup>>;
+  const NO_PHOTOS = { '照片（选填）': '', '菜品1 照片（选填）': '', '菜品2 照片（选填）': '' };
+  const at = (time: string) => () => time;
+  /** A submission by 小明 (u-002) about the same restaurant, prepared with the given clock. */
+  async function submit(
+    t: T,
+    submissionId: string,
+    values: Record<string, string>,
+    extra: Partial<PrepareOptions> = {},
+  ) {
+    await t.importCsv(
+      csv(row({ ...NEW_RESTAURANT, ...NO_PHOTOS, 'Submission ID': submissionId, ...values })),
+    );
+    return t.prepare(submissionId, { offline: true, ...extra });
+  }
+  const detailOf = async (t: T, id: string) =>
+    (await validate(t)).details.find((d) => d.id === id)!;
+
+  for (const rebuild of [false, true]) {
+    it(`keeps an undated review's time when it is prepared again${rebuild ? ' (rebuild)' : ''}`, async () => {
+      const t = await setup();
+      const a = await submit(
+        t,
+        'subA',
+        { 'Submitted at': '', 总体评级: '🫤 NPC' },
+        { now: at('2026-10-14T10:00:00.000Z') },
+      );
+      const id = a.restaurantId!;
+      expect(a.submittedAt).toEqual({ at: '2026-10-14T10:00:00Z', from: 'fallback' });
+      expect(a.notes.join('\n')).toMatch(
+        /no submission time in the export: the review is dated 2026-10-14T10:00:00Z, when the submission was first prepared/,
+      );
+      await submit(
+        t,
+        'subB',
+        { 'Submitted at': '2026-10-15 09:00:00', 总体评级: '🥵 夯' },
+        { restaurantId: id, now: at('2026-10-15T09:05:00.000Z') },
+      );
+      const fileA = await t.review('subA');
+      const before = await readFile(fileA, 'utf8');
+      expect(JSON.parse(before)).toMatchObject({ submittedAt: '2026-10-14T10:00:00Z', rating: 2 });
+      expect(await detailOf(t, id)).toMatchObject({
+        ratingAverage: 5,
+        raterCount: 1,
+        reviewCount: 2,
+      });
+
+      const again = await t.prepare('subA', {
+        offline: true,
+        rebuild,
+        now: at('2026-10-20T00:00:00.000Z'),
+      });
+      expect(again.reviewId).toBe(a.reviewId);
+      expect(again.submittedAt).toEqual({ at: '2026-10-14T10:00:00Z', from: 'fallback' });
+      expect(await t.review('subA')).toBe(fileA);
+      expect(await readFile(fileA, 'utf8')).toBe(before);
+      const detail = await detailOf(t, id);
+      // B is still 小明's latest review, so it alone gives the rating.
+      expect(detail).toMatchObject({ ratingAverage: 5, raterCount: 1, reviewCount: 2 });
+      expect(detail.reviews.map((r) => r.id)).toEqual([
+        (await t.prepare('subB', { offline: true })).reviewId,
+        a.reviewId,
+      ]);
+    });
+  }
+
+  it('keeps the instant of an ISO time with fractional seconds', async () => {
+    const t = await setup();
+    const a = await submit(
+      t,
+      'subA',
+      { 'Submitted at': '2026-10-14T19:30:00.123Z' },
+      {
+        now: at('2026-10-20T00:00:00.000Z'),
+      },
+    );
+    expect(a.submittedAt).toEqual({ at: '2026-10-14T19:30:00.123Z', from: 'submission' });
+    expect(await t.readJson(await t.review('subA'))).toMatchObject({
+      submittedAt: '2026-10-14T19:30:00.123Z',
+    });
+    expect((await detailOf(t, a.restaurantId!)).reviews[0]!.submittedAt).toBe(
+      '2026-10-14T19:30:00.123Z',
+    );
+  });
+
+  it('reads Tally times as UTC and ISO times with any offset, in their real order', async () => {
+    const t = await setup();
+    // 20:00Z, 20:30Z (15:30 in Houston), and 20:15:00.5Z; all 小明's.
+    const a = await submit(t, 'subA', { 'Submitted at': '2026-10-14 20:00', 总体评级: '🫤 NPC' });
+    const id = a.restaurantId!;
+    const b = await submit(
+      t,
+      'subB',
+      { 'Submitted at': '2026-10-14T15:30:00-05:00', 总体评级: '🥵 夯' },
+      { restaurantId: id },
+    );
+    const c = await submit(
+      t,
+      'subC',
+      { 'Submitted at': '2026-10-14T21:15:00.50+01:00', 总体评级: '🤤 人上人' },
+      { restaurantId: id },
+    );
+    const stored = async (s: string) => (await t.readJson(await t.review(s))).submittedAt;
+    expect([await stored('subA'), await stored('subB'), await stored('subC')]).toEqual([
+      '2026-10-14T20:00:00Z',
+      '2026-10-14T20:30:00Z',
+      '2026-10-14T20:15:00.5Z',
+    ]);
+    const detail = await detailOf(t, id);
+    expect(detail.reviews.map((r) => r.id)).toEqual([b.reviewId, c.reviewId, a.reviewId]);
+    // The latest (15:30 in Houston = 20:30Z) gives 小明's rating.
+    expect(detail).toMatchObject({ ratingAverage: 5, raterCount: 1, reviewCount: 3 });
+  });
+
+  it('reports a missing or invalid time, keeps its fallback, and changes nothing else', async () => {
+    const t = await setup();
+    const a = await submit(t, 'subA', { 'Submitted at': '2026-10-14 19:30:00' });
+    const id = a.restaurantId!;
+    const draft = t.p('private/drafts', id);
+    const reviewA = await readFile(await t.review('subA'), 'utf8');
+    for (const [submissionId, value, message] of [
+      ['subB', '', /^no submission time in the export: the review is dated 2026-10-16T08:00:00Z/],
+      ['subC', '2026-02-30 12:00', /^invalid submission time "2026-02-30 12:00" \(expected/],
+      ['subD', '2026-10-14T19:30:00', /^invalid submission time "2026-10-14T19:30:00"/],
+    ] as const) {
+      const r = await submit(
+        t,
+        submissionId,
+        { 'Submitted at': value, '联系邮箱（选填）': `${submissionId}@example.com` },
+        { restaurantId: id, now: at('2026-10-16T08:00:00.000Z') },
+      );
+      expect(r.outcome).toBe('drafted');
+      expect(r.notes.some((n) => message.test(n))).toBe(true);
+      expect(r.submittedAt).toEqual({ at: '2026-10-16T08:00:00Z', from: 'fallback' });
+      const text = await readFile(
+        path.join(t.options.submissionsDir, `tally-${submissionId}`, 'review-report.md'),
+        'utf8',
+      );
+      expect(text).toContain('Review time: 2026-10-16T08:00:00Z (FALLBACK');
+      // Stable: a later run keeps it.
+      const again = await t.prepare(submissionId, {
+        offline: true,
+        now: at('2026-11-01T00:00:00.000Z'),
+      });
+      expect(again.submittedAt).toEqual(r.submittedAt);
+      expect((await t.readJson(await t.review(submissionId))).submittedAt).toBe(
+        '2026-10-16T08:00:00Z',
+      );
+    }
+    // A's review, id, and contributor never changed.
+    expect(await readFile(await t.review('subA'), 'utf8')).toBe(reviewA);
+    expect(JSON.parse(reviewA)).toMatchObject({
+      contributor: 'u-002',
+      submittedAt: '2026-10-14T19:30:00Z',
+    });
+    expect(
+      (await readdir(path.join(draft, 'reviews'))).filter((f) => f.endsWith('.json')),
+    ).toHaveLength(4);
+    const detail = await detailOf(t, id);
+    expect(detail).toMatchObject({ raterCount: 4, reviewCount: 4 });
+  });
+});

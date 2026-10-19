@@ -49,6 +49,7 @@ import {
   contributorIdSchema,
   idSchema,
   normalizeKeyword,
+  canonicalInstant,
   restaurantInfoSchema,
   reviewIdSchema,
   reviewSchema,
@@ -139,6 +140,12 @@ const prepareStateSchema = z.strictObject({
   }),
   /** This submission's own review: reviews/<reviewId>.json (and .md), the same on every run. */
   reviewId: reviewIdSchema,
+  /**
+   * The review's time (canonical UTC): the submission's own, or, without a
+   * valid one, the time the submission was first prepared. Kept, so reruns
+   * and rebuilds never move the review in time.
+   */
+  submittedAt: z.strictObject({ at: z.string(), from: z.enum(['submission', 'fallback']) }),
   /** True when prepare created the draft folder (new restaurant, or a checkout of a public one). */
   createdDraft: z.boolean(),
   contributorId: contributorIdSchema,
@@ -257,6 +264,8 @@ export interface PrepareReport {
   identity: string;
   /** The submission's own review (reviews/<reviewId>.json). */
   reviewId?: string;
+  /** The review's time, and whether it is the submission's or a fallback. */
+  submittedAt?: PrepareState['submittedAt'];
   draftDir?: string;
   contributor?: { id: string; created: boolean; name: string };
   rating?: number;
@@ -608,11 +617,36 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
     }
     // A review id of its own, never derived from the content or the contributor.
     const reviewId = newReviewId(await takenReviewIds(target, publicDir(restaurantId)));
-    state = { restaurantId, mode: mode!, base, reviewId, createdDraft, contributorId, photos: [], proposedTags: [], preparedAt: clock() };
+    // Decided once: without a valid submission time, the time it is first prepared.
+    const time = submissionTime(submission.submittedAt);
+    const submittedAt: PrepareState['submittedAt'] =
+      'at' in time ? { at: time.at, from: 'submission' } : { at: canonicalInstant(clock())!, from: 'fallback' };
+    state = { restaurantId, mode: mode!, base, reviewId, submittedAt, createdDraft, contributorId, photos: [], proposedTags: [], preparedAt: clock() };
     await writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
   }
   const reviewId = state.reviewId;
   report.reviewId = reviewId;
+  // The review's time follows the submission's; without a valid one, the kept fallback.
+  const time = submissionTime(submission.submittedAt);
+  if ('at' in time) {
+    if (state.submittedAt.at !== time.at) {
+      report.notes.push(
+        state.submittedAt.from === 'submission'
+          ? `the submission time changed from ${state.submittedAt.at} to ${time.at}; the review follows it`
+          : `the submission now has a time (${time.at}); it replaces the fallback ${state.submittedAt.at}`,
+      );
+      state.submittedAt = { at: time.at, from: 'submission' };
+      await writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
+    }
+  } else {
+    report.notes.push(
+      `${time.problem}: the review is dated ${state.submittedAt.at}` +
+        (state.submittedAt.from === 'fallback'
+          ? ', when the submission was first prepared (kept on every run; correct submittedAt in the review if needed)'
+          : ', the submission time read before (kept)'),
+    );
+  }
+  report.submittedAt = state.submittedAt;
 
   // Hand edits of this review since the last run are never overwritten (unless --rebuild).
   const own = () => ownFingerprint(target, reviewId, state!.photos.map((m) => m.image));
@@ -859,7 +893,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   const general = [...new Set(generalPhotos)];
   const review: Review = {
     contributor: contributorId,
-    submittedAt: submittedAt(submission.submittedAt) ?? clock(),
+    submittedAt: state.submittedAt.at,
     rating: report.rating as Rating,
     ...(general.length ? { images: general } : {}),
     ...(reviewDishes.length ? { dishes: reviewDishes } : {}),
@@ -913,12 +947,22 @@ async function snapshot(dir: string): Promise<PrepareState['base']> {
 }
 
 /**
- * The submission time as an instant. Tally's export gives "YYYY-MM-DD HH:MM:SS"
- * in UTC; undefined when the export has none.
+ * The submission time as a canonical instant (canonicalInstant): Tally's
+ * export "YYYY-MM-DD HH:MM[:SS]" (no zone; read as UTC), or ISO 8601 with a
+ * zone (fractions and offsets kept as the same instant); otherwise why it is unusable.
  */
-function submittedAt(value: string | undefined): string | undefined {
-  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)(Z|[+-]\d{2}:\d{2})?$/.exec(value?.trim() ?? '');
-  return m ? `${m[1]}T${m[2]}${m[3] ?? 'Z'}` : undefined;
+export function submissionTime(value: string | undefined): { at: string } | { problem: string } {
+  const text = value?.trim();
+  if (!text) return { problem: 'no submission time in the export' };
+  const tally = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(text) ? `${text.replace(' ', 'T')}Z` : text;
+  const at = canonicalInstant(tally);
+  return at
+    ? { at }
+    : {
+        problem:
+          `invalid submission time "${text}" (expected Tally's "YYYY-MM-DD HH:MM[:SS]", read as UTC, ` +
+          'or ISO 8601 with a zone)',
+      };
 }
 
 /** Fingerprint of a review's files and the photos its submission imported (detects hand edits). */
@@ -1550,6 +1594,12 @@ export function formatPrepareReport(r: PrepareReport, rel: (file: string) => str
     );
   }
   if (r.reviewId) add(`- Review: ${REVIEWS_DIR}/${r.reviewId}.json (this submission's own review)`);
+  if (r.submittedAt) {
+    add(
+      `- Review time: ${r.submittedAt.at}` +
+        (r.submittedAt.from === 'fallback' ? ' (FALLBACK: no valid submission time; when it was first prepared)' : ''),
+    );
+  }
   add(
     `- Contributor: ${r.contributor ? `${r.contributor.id}${r.contributor.created ? ' (new, private until promotion)' : ''}, credited as "${r.contributor.name}"` : 'not resolved'}` +
       `; contact email ${s.email ? 'provided (private)' : 'not provided'}`,

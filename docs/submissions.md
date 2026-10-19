@@ -454,8 +454,18 @@ touches `content/`, and it can be run again at any time.
   generated on the first prepare and kept in `prepare.json`, so a rerun
   rewrites the same review and never adds a second one; another submission,
   even by the same contributor with the same words, always gets its own.
-  No review is ever changed by another submission. The submission time is
-  Tally's "Submitted at" (UTC), so reviews of one day still have an order.
+  No review is ever changed by another submission.
+- **Review time** (`submittedAt`): the submission's own time, so reviews of
+  one day still have an order. Tally's "Submitted at" comes as
+  `YYYY-MM-DD HH:MM[:SS]` without a zone and is read as UTC; ISO 8601 with a
+  zone (`2026-10-14T19:30:00.123Z`, `2026-10-14T15:30:00-05:00`) is also
+  accepted. It is stored as the same instant in UTC. Without a time, or with
+  one that is not valid (a date that does not exist, an ISO time without a
+  zone), the review is dated when the submission is first prepared; the
+  report says so (`FALLBACK`), and every later run and `--rebuild` keeps
+  that time (`prepare.json`), so a rerun never makes an old review the
+  contributor's latest. If the submission's own time changes, the review
+  follows it, with a note.
 - **Dishes**: a dish name (or one of its `altNames`, ignoring width, case,
   and spacing) that the restaurant already has is that dish; any other name
   becomes a new dish (`d1`, `d2`, …) in `info.json`. To merge two dishes,

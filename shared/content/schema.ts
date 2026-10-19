@@ -167,14 +167,31 @@ const images = z
 /** Review ids look like "v-7k3m9q": generated once, never derived from content or contributor. */
 export const reviewIdSchema = z.string().regex(/^v-[a-z0-9]+$/, 'must look like "v-7k3m9q"');
 
+/**
+ * An ISO 8601 time with a zone ("2026-10-14T19:30:00Z",
+ * "2026-10-14T15:30:00.123-05:00"; seconds and fractions optional) as the
+ * same instant in UTC: "2026-10-14T19:30:00Z", fractions kept as given
+ * (without trailing zeros). Undefined for anything else, also for a date or
+ * time that does not exist (February 30, 24:00), which Date.parse would
+ * silently move to another day.
+ */
+export function canonicalInstant(value: string): string | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:(Z)|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!m) return undefined;
+  const [y, mo, d, h, mi, s = 0, oh = 0, om = 0] = [m[1], m[2], m[3], m[4], m[5], m[6], m[10], m[11]].map((v) => (v === undefined ? undefined : Number(v))) as number[];
+  const date = new Date(0);
+  date.setUTCFullYear(y!, mo! - 1, d!);
+  if (date.getUTCMonth() !== mo! - 1 || date.getUTCDate() !== d!) return undefined;
+  if (h! > 23 || mi! > 59 || s > 59 || oh > 23 || om > 59) return undefined;
+  date.setUTCHours(h!, mi! - (m[9] === '-' ? -1 : 1) * (oh * 60 + om), s, 0);
+  const fraction = (m[7] ?? '').replace(/0+$/, '');
+  return `${date.toISOString().slice(0, 19)}${fraction ? `.${fraction}` : ''}Z`;
+}
+
 /** An instant with a time zone, e.g. "2026-10-14T19:30:00Z", so reviews of one day still have an order. */
 const timestamp = z
   .string()
-  .regex(
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/,
-    'must be a time like "2026-10-14T19:30:00Z"',
-  )
-  .refine((value) => !Number.isNaN(Date.parse(value)), 'must be a valid time');
+  .refine((value) => canonicalInstant(value) !== undefined, 'must be a time like "2026-10-14T19:30:00Z"');
 
 /**
  * content/restaurants/<id>/reviews/<review id>.json: one review of the

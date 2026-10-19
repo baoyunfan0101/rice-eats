@@ -150,13 +150,13 @@ public names come from `content/contributors.json`. A published restaurant
 needs at least one review. Start one by hand with
 `npm run content:review -- <id> --contributor <u-NNN> --rating <1-5>`.
 
-| Field         | Type / values                                            | Notes                                                                                                                         |
-| ------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `contributor` | e.g. `"u-001"`                                           | Required. Who wrote it.                                                                                                       |
-| `submittedAt` | ISO 8601 time with a zone, e.g. `"2026-10-14T19:30:00Z"` | Required. When it was submitted; reviews are shown newest first (the same instant: by review id). The page shows its day.     |
-| `rating`      | integer `1`-`5`                                          | Required. This review's rating (labels above).                                                                                |
-| `images`      | `["images/<file>", ...]`                                 | Photos of the restaurant (not of one dish), in display order.                                                                 |
-| `dishes`      | `{ dish, verdict?, comment?, images? }[]`                | `dish`: an id from `info.json` `dishes` (each at most once). `verdict`: `1` 推荐, `-1` 避雷, absent = no opinion. Its photos. |
+| Field         | Type / values                                            | Notes                                                                                                                                                                                                                             |
+| ------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contributor` | e.g. `"u-001"`                                           | Required. Who wrote it.                                                                                                                                                                                                           |
+| `submittedAt` | ISO 8601 time with a zone, e.g. `"2026-10-14T19:30:00Z"` | Required. When it was submitted; reviews are shown newest first (the same instant: by review id). Seconds, fractions, and offsets (`-05:00`) are allowed; a date or time that does not exist is an error. The page shows its day. |
+| `rating`      | integer `1`-`5`                                          | Required. This review's rating (labels above).                                                                                                                                                                                    |
+| `images`      | `["images/<file>", ...]`                                 | Photos of the restaurant (not of one dish), in display order.                                                                                                                                                                     |
+| `dishes`      | `{ dish, verdict?, comment?, images? }[]`                | `dish`: an id from `info.json` `dishes` (each at most once). `verdict`: `1` 推荐, `-1` 避雷, absent = no opinion. Its photos.                                                                                                     |
 
 ```json
 {

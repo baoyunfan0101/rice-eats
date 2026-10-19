@@ -384,6 +384,14 @@ describe('content pipeline', () => {
       expect(detail).toMatchObject({ ratingAverage: 4.5, raterCount: 2, reviewCount: 4 });
       expect(detail.contributors.map((c) => c.id)).toEqual(['u-001', 'u-002']);
     }
+    // A time that does not exist is an error, not another day.
+    const bad = await tempDir();
+    await writeRestaurant(bad, 'x', validInfo('x'), {
+      'reviews/v-x.json': at('u-001', '2026-02-30T12:00:00Z', 3),
+    });
+    expect(errors(await pipeline(bad)).join('\n')).toMatch(
+      /v-x.json: submittedAt: must be a time like/,
+    );
   });
 
   it('counts dish verdicts 1 and -1 (none is no opinion) and rejects other values', async () => {
