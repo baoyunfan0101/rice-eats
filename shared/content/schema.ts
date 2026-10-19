@@ -10,7 +10,7 @@
 // contract: imports nothing from src/ or scripts/.
 
 import { z } from 'zod';
-import { CUISINE_IDS, VERDICTS, type Rating } from './vocabulary';
+import { CUISINE_IDS, PRICE_RANGE_IDS, VERDICTS, type Rating } from './vocabulary';
 
 const text = z.string().trim().min(1, 'must not be empty');
 
@@ -127,7 +127,6 @@ export const restaurantInfoSchema = z
   cuisines: z.array(controlled(CUISINE_IDS, 'cuisine')).refine(unique, 'must not repeat').optional(),
   /** Ids from the tag registry (content/tags.json); checked against it by the pipeline. */
   tags: z.array(tagIdSchema).refine(unique, 'must not repeat').optional(),
-  pricePerPerson: z.number().positive().max(1000).optional(),
   /** The restaurant's dishes; reviews give their verdicts, comments, and photos. */
   dishes: z
     .array(
@@ -206,6 +205,12 @@ export const reviewSchema = z.strictObject({
   /** When it was submitted; orders reviews (newest first) and picks a contributor's latest. */
   submittedAt: timestamp,
   rating,
+  /** What it cost per person, as one of the price ranges (US dollars; vocabulary.ts). */
+  price: z
+    .enum(PRICE_RANGE_IDS as [string, ...string[]], {
+      message: `must be one of ${PRICE_RANGE_IDS.join(', ')}`,
+    })
+    .optional(),
   /** Photos of the restaurant (not of one dish), in display order. */
   images: images.optional(),
   dishes: z

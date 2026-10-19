@@ -7,6 +7,5 @@
     "lng": -95.4161
   },
   "cuisines": ["mexican"],
-  "tags": ["quick", "budget"],
-  "pricePerPerson": 11
+  "tags": ["quick", "budget"]
 }

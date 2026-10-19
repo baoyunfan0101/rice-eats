@@ -3,7 +3,7 @@
 // names the website fills in, and the answer values intake understands.
 // Everything here is public; the form URL is not a secret.
 
-import type { Rating, Verdict } from './content/vocabulary';
+import type { PriceRange, Rating, Verdict } from './content/vocabulary';
 
 /**
  * Hidden fields configured in the Tally form, filled in from the URL by the
@@ -111,6 +111,8 @@ export const TALLY_QUESTIONS = {
   altNames: '餐厅别名',
   photos: '照片',
   rating: '总体评级',
+  /** Optional single choice "人均价格（选填）": TALLY_PRICE_OPTIONS. */
+  price: '人均价格',
   displayName: '署名',
   email: '联系邮箱',
   consent: '发布授权',
@@ -151,6 +153,31 @@ export function verdictFromAnswer(answer: string | undefined): Verdict | undefin
   const text = answer && withoutEmoji(answer);
   if (!text) return undefined;
   return Object.entries(TALLY_VERDICT_OPTIONS).find(([label]) => withoutEmoji(label) === text)?.[1];
+}
+
+/** Options of the optional "人均价格" question (US dollars per person), mapped to the stored range. */
+export const TALLY_PRICE_OPTIONS: Record<string, PriceRange> = {
+  '$10 以下': 'under-10',
+  '$10–20': '10-20',
+  '$20–30': '20-30',
+  '$30–50': '30-50',
+  '$50–100': '50-100',
+  '$100 以上': '100-plus',
+};
+
+/**
+ * Maps a price answer to the stored range; undefined unless it is one of the
+ * options (compared without spaces, with any dash and full-width characters).
+ */
+export function priceFromAnswer(answer: string | undefined): PriceRange | undefined {
+  const loose = (text: string) =>
+    text
+      .normalize('NFKC')
+      .replace(/\s+/g, '')
+      .replace(/[-–—~～]/g, '-');
+  const text = answer && loose(answer);
+  if (!text) return undefined;
+  return Object.entries(TALLY_PRICE_OPTIONS).find(([label]) => loose(label) === text)?.[1];
 }
 
 /** The single option of the required consent question. */

@@ -4,7 +4,7 @@
 // Tag labels are not here: tags come from the tag registry (content/tags.json)
 // and reach the website with their labels in the generated data.
 
-import type { CuisineId, Rating, Verdict } from '../../shared/content/vocabulary';
+import type { CuisineId, PriceRange, Rating, Verdict } from '../../shared/content/vocabulary';
 
 export const CUISINE_LABELS: Record<CuisineId, string> = {
   american: '美式',
@@ -35,6 +35,16 @@ export const RATING_LABELS: Record<Rating, string> = {
 };
 
 export const VERDICT_LABELS: Record<Verdict, string> = { 1: '🔥 推荐', [-1]: '💣 避雷' };
+
+/** Per-person price ranges (US dollars), as the form shows them. */
+export const PRICE_RANGE_LABELS: Record<PriceRange, string> = {
+  'under-10': '$10 以下',
+  '10-20': '$10–20',
+  '20-30': '$20–30',
+  '30-50': '$30–50',
+  '50-100': '$50–100',
+  '100-plus': '$100 以上',
+};
 
 /** Label for a stored cuisine key; unknown keys (none pass validation) fall back to the key. */
 export const cuisineLabel = (id: string) => CUISINE_LABELS[id as CuisineId] ?? id;

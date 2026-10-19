@@ -2,9 +2,9 @@
 // (scripts/content) writes these shapes into public/generated/, and the website
 // reads them. Framework-independent; imports nothing from src/ or scripts/.
 
-import type { Rating, Verdict } from './vocabulary';
+import type { PriceRange, Rating, Verdict } from './vocabulary';
 
-export type { Rating, Verdict };
+export type { PriceRange, Rating, Verdict };
 
 export type PublicationStatus = 'draft' | 'published';
 
@@ -65,6 +65,8 @@ export interface Review {
   submittedAt: string;
   date: string;
   rating: Rating;
+  /** The per-person price range it gives, if any. */
+  price?: PriceRange;
   /** Sanitized HTML of the review text; empty without text. */
   html: string;
   /** Indexes into RestaurantDetail.images of the review's photos (not of one dish). */
@@ -108,7 +110,14 @@ export interface RestaurantSummary {
   raterCount: number;
   /** How many reviews there are (a contributor may have several). */
   reviewCount: number;
+  /**
+   * The average per-person price in US dollars over contributors (each
+   * contributor's latest review that gives a price range counts once, as the
+   * range's middle), the range it falls in, and how many contributors it counts.
+   */
   pricePerPerson?: number;
+  priceRange?: PriceRange;
+  priceCount: number;
   /** The first image of the restaurant, if any. */
   cover?: ImageAsset;
   links: MapLinks;

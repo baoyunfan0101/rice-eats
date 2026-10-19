@@ -17,6 +17,7 @@ const r = (id: string, lat: number, lng: number): RestaurantSummary => ({
   links: {},
   raterCount: 0,
   reviewCount: 0,
+  priceCount: 0,
   location: { lat, lng },
 });
 const A = r('a', 29.72, -95.4);

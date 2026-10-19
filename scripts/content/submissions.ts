@@ -29,6 +29,7 @@ import {
   TALLY_MAX_GENERAL_PHOTOS,
   TALLY_MAX_PHOTO_BYTES,
   TALLY_QUESTIONS,
+  priceFromAnswer,
   ratingFromAnswer,
   verdictFromAnswer,
 } from '../../shared/submission.ts';
@@ -64,6 +65,7 @@ export const submissionSchema = z
     review: z.string().optional(),
     /** The answer as submitted; the stored rating is derived with ratingFromAnswer. */
     ratingAnswer: z.string().optional(),
+    priceAnswer: z.string().optional(),
     /** General photos (not tied to a dish). */
     photoUrls: z.array(z.string()).default([]),
     /** Dish groups in form order; each dish's photos show that dish. */
@@ -158,6 +160,7 @@ export function submissionsFromCsv(text: string): Submission[] {
     review: first(TALLY_QUESTIONS.review),
     photos: columns(TALLY_QUESTIONS.photos),
     rating: first(TALLY_QUESTIONS.rating),
+    price: first(TALLY_QUESTIONS.price),
     displayName: first(TALLY_QUESTIONS.displayName),
     email: first(TALLY_QUESTIONS.email),
     restaurantId: exact(HIDDEN_FIELDS.restaurantId),
@@ -219,6 +222,7 @@ export function submissionsFromCsv(text: string): Submission[] {
       selectionMethod: value(picked.selectionMethod),
       review: value(picked.review),
       ratingAnswer: value(picked.rating),
+      priceAnswer: value(picked.price),
       photoUrls: linksIn(picked.photos),
       dishes,
       keywords: parseList(value(picked.keywords)),
@@ -708,6 +712,9 @@ export function readiness(submission: Submission, state: PhotoState[]): Readines
         'add-photo, or waive them if the maintainer decides to proceed without them',
     );
   }
+  if (submission.priceAnswer && priceFromAnswer(submission.priceAnswer) === undefined) {
+    notes.push(`price answer "${submission.priceAnswer}" is not one of the price ranges; the review gives no price`);
+  }
   if (ratingFromAnswer(submission.ratingAnswer) === undefined) {
     blockers.push(
       submission.ratingAnswer
@@ -1026,6 +1033,7 @@ export function formatReport(result: SubmissionReport, rel: (file: string) => st
     );
   }
   lines.push(`  rating:     ${result.rating ?? 'none'}`);
+  lines.push(`  price:      ${priceFromAnswer(s.priceAnswer) ?? 'none'}`);
   lines.push(
     `  credit:     ${s.displayName ? `display name "${s.displayName}"` : 'no display name (credit as 匿名)'}; ` +
       `${s.email ? 'contact email provided (private)' : 'no contact email'}`,

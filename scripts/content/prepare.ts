@@ -57,8 +57,8 @@ import {
   type RestaurantInfo,
   type Review,
 } from '../../shared/content/schema.ts';
-import type { Rating } from '../../shared/content/vocabulary.ts';
-import { isValidLatLng, ratingFromAnswer, verdictFromAnswer } from '../../shared/submission.ts';
+import type { PriceRange, Rating } from '../../shared/content/vocabulary.ts';
+import { isValidLatLng, priceFromAnswer, ratingFromAnswer, verdictFromAnswer } from '../../shared/submission.ts';
 import { resolveContributor, type ContributorFiles } from './contributors.ts';
 import {
   factSchema,
@@ -269,6 +269,8 @@ export interface PrepareReport {
   draftDir?: string;
   contributor?: { id: string; created: boolean; name: string };
   rating?: number;
+  /** The per-person price range the submission gives, if any. */
+  price?: PriceRange;
   dishes: { name?: string; verdict?: number; comment: boolean; images: string[]; dish?: string; newDish?: boolean }[];
   keywords: KeywordMatch[];
   newTags: string[];
@@ -336,7 +338,6 @@ const FIELD_ORDER = [
   'location',
   'cuisines',
   'tags',
-  'pricePerPerson',
   'dishes',
   'links',
 ] as const;
@@ -461,6 +462,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
     outcome: 'blocked',
     identity: '',
     rating: ratingFromAnswer(submission.ratingAnswer),
+    price: priceFromAnswer(submission.priceAnswer),
     dishes: [],
     keywords: [],
     newTags: [],
@@ -895,6 +897,7 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
     contributor: contributorId,
     submittedAt: state.submittedAt.at,
     rating: report.rating as Rating,
+    ...(report.price ? { price: report.price } : {}),
     ...(general.length ? { images: general } : {}),
     ...(reviewDishes.length ? { dishes: reviewDishes } : {}),
   };
@@ -1020,7 +1023,6 @@ async function describeDraft(report: PrepareReport, target: string, restaurantId
     !info.address && 'address',
     !info.location && 'location (not shown on the map)',
     !info.cuisines?.length && 'cuisines',
-    info.pricePerPerson === undefined && 'pricePerPerson',
     !info.links?.website && 'website',
   ].filter((v): v is string => !!v);
   const publicTarget = path.join(options.restaurantsDir, restaurantId);
@@ -1608,6 +1610,7 @@ export function formatPrepareReport(r: PrepareReport, rel: (file: string) => str
 
   add('## Content', '');
   add(`- Rating: ${r.rating ?? 'none'}`);
+  add(`- Price per person: ${r.price ?? 'none given'}`);
   add(`- Review text: ${s.review?.trim() ? `${s.review.trim().length} characters` : 'none'}`);
   add(`- Dishes: ${r.dishes.length}`);
   for (const [i, d] of r.dishes.entries()) {

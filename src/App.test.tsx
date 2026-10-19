@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { priceRangeOf } from '../shared/content/vocabulary';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -212,6 +213,9 @@ const summary = (
   links: {},
   raterCount: 1,
   reviewCount: 1,
+  // The average price is given directly; its range and count follow from it.
+  priceCount: extra.pricePerPerson !== undefined ? 1 : 0,
+  ...(extra.pricePerPerson !== undefined ? { priceRange: priceRangeOf(extra.pricePerPerson) } : {}),
   ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,
 });
@@ -427,7 +431,7 @@ describe('browsing', () => {
     await screen.findByRole('list', { name: '餐厅列表' });
     expect(names(list())).toEqual(['Bayou BBQ', '河粉花园', 'Food Truck']);
     expect(within(list()).getByText('Pho Garden / PG')).toBeInTheDocument();
-    expect(within(list()).getByText('美式烧烤 · 人均 $28')).toBeInTheDocument();
+    expect(within(list()).getByText('美式烧烤 · 人均 $20–30')).toBeInTheDocument();
     expect(within(list()).getByText('适合聚餐')).toBeInTheDocument();
     expect(screen.getByText('共 3 家')).toBeInTheDocument();
     // No view modes any more; the map shows the restaurants that have a location.
@@ -566,7 +570,7 @@ describe('browsing', () => {
     expect(getCurrentPosition).toHaveBeenCalledTimes(1);
     // Located restaurants first, nearest first; distance in miles.
     expect(names(list())[0]).toBe('Bayou BBQ');
-    expect(within(list()).getByText(/美式烧烤 · 人均 \$28 · 0\.1 mi/)).toBeInTheDocument();
+    expect(within(list()).getByText(/美式烧烤 · 人均 \$20–30 · 0\.1 mi/)).toBeInTheDocument();
     expect(window.location.search).toBe('?sort=name');
     expect(window.location.href).not.toMatch(/29\.741|95\.391/);
   });
@@ -607,7 +611,7 @@ describe('browsing', () => {
       };
     };
     const sortBox = () => screen.getByLabelText('排序');
-    const bayouLine = () => within(list()).getByText(/^美式烧烤 · 人均 \$28/).textContent;
+    const bayouLine = () => within(list()).getByText(/^美式烧烤 · 人均 \$20–30/).textContent;
     // Bayou BBQ is at 29.74, -95.39: 0.1 mi from 29.741, about 4.1 mi from 29.8.
     const NEAR = 29.741;
     const FAR = 29.8;
@@ -624,7 +628,7 @@ describe('browsing', () => {
       expect(sortBox()).toHaveValue('distance');
       location.succeed(0, NEAR);
       expect(names(list())[0]).toBe('Bayou BBQ');
-      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 0.1 mi');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $20–30 · 0.1 mi');
     });
 
     it('keeps a later rating sort when an older location succeeds', async () => {
@@ -634,7 +638,7 @@ describe('browsing', () => {
       await user.selectOptions(sortBox(), 'rating');
       location.succeed(0, NEAR);
       expect(sortBox()).toHaveValue('rating');
-      expect(bayouLine()).toBe('美式烧烤 · 人均 $28');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $20–30');
       expect(window.location.search).toBe('');
     });
 
@@ -660,7 +664,7 @@ describe('browsing', () => {
       expect(screen.queryByText(/没有获得定位权限/)).not.toBeInTheDocument();
       expect(sortBox().querySelector('option[value=distance]')).toHaveTextContent('正在获取位置…');
       location.succeed(1, FAR);
-      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $20–30 · 4.1 mi');
     });
 
     it('uses the newer location whichever answers last', async () => {
@@ -672,7 +676,7 @@ describe('browsing', () => {
       // Older first, then newer.
       location.succeed(0, NEAR);
       location.succeed(1, FAR);
-      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $20–30 · 4.1 mi');
       // Newer first, then older (a third and fourth request).
       await user.selectOptions(sortBox(), 'rating');
       await user.selectOptions(sortBox(), 'distance');
@@ -680,7 +684,7 @@ describe('browsing', () => {
       await user.selectOptions(sortBox(), 'distance');
       location.succeed(3, FAR);
       location.succeed(2, NEAR);
-      expect(bayouLine()).toBe('美式烧烤 · 人均 $28 · 4.1 mi');
+      expect(bayouLine()).toBe('美式烧烤 · 人均 $20–30 · 4.1 mi');
     });
 
     it('returns to the previous sort with a message when the current request fails', async () => {
@@ -845,6 +849,7 @@ describe('restaurant details', () => {
           submittedAt: '2026-10-09T08:00:00Z',
           date: '2026-10-09',
           rating: 4,
+          price: '30-50',
           html: '<p>又来了一次</p>',
           imageIndexes: [],
           dishes: [],
@@ -858,6 +863,12 @@ describe('restaurant details', () => {
     const items = [...region.querySelectorAll('ol > li')];
     expect(items.map((li) => li.id)).toEqual(['review-v-a2', 'review-v-b2', 'review-v-a1']);
     expect(items.filter((li) => li.textContent?.includes('作者甲'))).toHaveLength(2);
+    // A review's own price range shows with it; the restaurant's is the average's range.
+    expect(items[0]).toHaveTextContent('人均 $30–50');
+    expect(screen.getByText('$20–30（1 人）').closest('div')).toHaveAttribute(
+      'title',
+      '点评者给出的人均价格区间的平均（每人只计最近一条给出价格的点评）',
+    );
     // The people who wrote them, each once.
     expect(screen.getByText('点评作者：作者乙、作者甲')).toBeInTheDocument();
   });

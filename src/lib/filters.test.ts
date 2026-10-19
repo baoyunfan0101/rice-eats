@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RestaurantSummary } from '../../shared/content/model';
+import { priceRangeOf } from '../../shared/content/vocabulary';
 import {
   clearFilters,
   DEFAULT_STATE,
@@ -34,6 +35,9 @@ const r = (
   links: {},
   raterCount: 1,
   reviewCount: 1,
+  // The average price is given directly; its range and count follow from it.
+  priceCount: extra.pricePerPerson !== undefined ? 1 : 0,
+  ...(extra.pricePerPerson !== undefined ? { priceRange: priceRangeOf(extra.pricePerPerson) } : {}),
   // Sorting uses the average; here it is the rating itself.
   ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,

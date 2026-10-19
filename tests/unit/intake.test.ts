@@ -200,7 +200,6 @@ describe('agent content workflow (synthetic submissions)', () => {
       status: 'draft',
       name: '晨光面包坊（虚构）',
       cuisines: ['bakery'],
-      pricePerPerson: 15,
       dishes: [
         { id: 'd1', name: '可颂' },
         { id: 'd2', name: '抹茶卷' },

@@ -10,7 +10,6 @@
   },
   "cuisines": ["sichuan", "chinese"],
   "tags": ["spicy", "group"],
-  "pricePerPerson": 25,
   "dishes": [
     {
       "id": "d1",

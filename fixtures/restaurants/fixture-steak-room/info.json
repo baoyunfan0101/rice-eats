@@ -8,6 +8,5 @@
     "lng": -95.4209
   },
   "cuisines": ["american", "steak"],
-  "tags": ["date"],
-  "pricePerPerson": 75
+  "tags": ["date"]
 }

@@ -80,34 +80,27 @@ test('the price range and the sort work together without changing the map', asyn
   await page.getByRole('button', { name: /^人均/ }).click();
   // Both handles move with the keyboard; their values ride on them.
   await page.getByRole('slider', { name: '最低人均' }).focus();
-  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
-  await expect(page).toHaveURL(/\?min=15$/);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+  await expect(page).toHaveURL(/\?min=20$/);
   await page.getByRole('slider', { name: '最高人均' }).focus();
-  for (let i = 0; i < 14; i++) await page.keyboard.press('ArrowLeft');
-  await expect(page).toHaveURL(/\?min=15&max=30$/);
-  // Close values share one tag.
-  await expect(page.locator('#filter-panel').getByText('$15–30')).toBeVisible();
-  // Unknown prices are not in a range.
-  expect(await listNames(page)).toEqual([
-    '河湾烤肉（虚构示例）',
-    '蜀味小馆（虚构示例）',
-    '灯笼拉面（虚构示例）',
-  ]);
+  for (let i = 0; i < 12; i++) await page.keyboard.press('ArrowLeft');
+  await expect(page).toHaveURL(/\?min=20&max=40$/);
+  // The filter uses each restaurant's average of its reviews' price ranges
+  // ($20–30 counts as 25, $30–50 as 40); unknown prices are not in a range.
+  expect((await listNames(page)).sort()).toEqual(
+    ['河湾烤肉（虚构示例）', '蜀味小馆（虚构示例）', '点心大堂（虚构示例）'].sort(),
+  );
   await page.locator('#filter-panel').getByRole('button', { name: '完成' }).click();
-  await expect(page.getByRole('button', { name: /^\$15–30/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^\$20–40/ })).toBeVisible();
 
   // Sorting reorders the list but leaves the map exactly where it was.
   await page.waitForTimeout(600);
   const before = await mapOffset(page);
   await page.getByLabel('排序').selectOption('price-desc');
   await expect(page).toHaveURL(/sort=price-desc/);
-  expect(await listNames(page)).toEqual([
-    '河湾烤肉（虚构示例）',
-    '蜀味小馆（虚构示例）',
-    '灯笼拉面（虚构示例）',
-  ]);
+  expect((await listNames(page))[0]).toBe('点心大堂（虚构示例）');
   await page.getByLabel('排序').selectOption('price-asc');
-  expect((await listNames(page))[0]).toBe('灯笼拉面（虚构示例）');
+  expect((await listNames(page)).at(-1)).toBe('点心大堂（虚构示例）');
   await page.waitForTimeout(600);
   expect(await mapOffset(page)).toBe(before);
   await expect(markers(page)).toHaveCount(3);
@@ -498,6 +491,8 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   // (示例作者 reviewed twice: 3, then 4; the other reviewer 4).
   await expect(page.getByText('4.0', { exact: true })).toBeVisible();
   await expect(page.getByText('2 人评分')).toBeVisible();
+  // The per-person price: the range of the reviews' average, and how many gave one.
+  await expect(page.getByText('$30–50（2 人）')).toBeVisible();
   // Every review, newest first, each with its reviewer's rating; Markdown headings sit below the section's.
   const reviews = page.getByRole('region', { name: '点评（3）' });
   const items = reviews.getByRole('listitem').filter({ has: page.locator('time') });

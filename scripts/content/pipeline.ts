@@ -36,6 +36,7 @@ import {
   type RestaurantInfo,
   type Review,
 } from '../../shared/content/schema.ts';
+import { priceRangeOf, priceValue, type PriceRange } from '../../shared/content/vocabulary.ts';
 
 export const INFO_FILE = 'info.json';
 /** One file pair per review: <review id>.json and an optional <review id>.md. */
@@ -606,6 +607,7 @@ async function renderRestaurant(
       submittedAt: review.submittedAt,
       date: day(review.submittedAt),
       rating: review.rating,
+      ...(review.price ? { price: review.price as PriceRange } : {}),
       html: text?.trim()
         ? await renderMarkdown(text, (url) => {
             throw new Error(`${REVIEWS_DIR}/${id}.md: images are not placed in review texts ("${url}")`);
@@ -649,6 +651,11 @@ async function renderRestaurant(
   const average = counted.length
     ? counted.reduce((sum, r) => sum + r.review.rating, 0) / counted.length
     : undefined;
+  // The price the same way, over the reviews that give one: each contributor's latest, as its range's middle.
+  const priced = latestPerContributor(reviews.filter((r) => r.review.price));
+  const price = priced.length
+    ? Math.round((priced.reduce((sum, r) => sum + priceValue(r.review.price as PriceRange), 0) / priced.length) * 10) / 10
+    : undefined;
 
   return {
     id: info.id,
@@ -664,7 +671,8 @@ async function renderRestaurant(
       : {}),
     raterCount: counted.length,
     reviewCount: reviews.length,
-    pricePerPerson: info.pricePerPerson,
+    ...(price !== undefined ? { pricePerPerson: price, priceRange: priceRangeOf(price) } : {}),
+    priceCount: priced.length,
     cover: images[0],
     links: { ...info.links },
     images,
@@ -689,6 +697,8 @@ function toSummary(detail: RestaurantDetail): RestaurantSummary {
     raterCount: detail.raterCount,
     reviewCount: detail.reviewCount,
     pricePerPerson: detail.pricePerPerson,
+    priceRange: detail.priceRange,
+    priceCount: detail.priceCount,
     cover: detail.cover,
     links: detail.links,
   };

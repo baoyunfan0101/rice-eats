@@ -1,13 +1,19 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import type { Dish, ImageAsset, Rating, RestaurantDetail } from '../../shared/content/model';
+import type {
+  Dish,
+  ImageAsset,
+  PriceRange,
+  Rating,
+  RestaurantDetail,
+} from '../../shared/content/model';
 import { DraftBadge, Tags, RatingBadge, VerdictBadge } from '../components/Badges';
 import { Link } from '../components/Link';
 import { RestaurantImage } from '../components/RestaurantImage';
 import { ErrorState, Loading, Message } from '../components/States';
 import { useRestaurantDetail } from '../lib/content';
-import { cuisineLabel, VERDICT_LABELS } from '../lib/labels';
-import { priceText, RATING_HINT, secondaryNames } from '../lib/format';
+import { cuisineLabel, PRICE_RANGE_LABELS, VERDICT_LABELS } from '../lib/labels';
+import { RATING_HINT, secondaryNames } from '../lib/format';
 import { imagesAt, placeImages } from '../lib/imagePlacement';
 import { appleMapsUrl, googleMapsUrl } from '../lib/maps';
 import { submitHref } from '../lib/router';
@@ -123,10 +129,14 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
           )}
         </div>
 
-        {(r.pricePerPerson !== undefined || r.address) && (
+        {(r.priceRange || r.address) && (
           <dl className="card grid gap-x-6 gap-y-2 p-3 text-sm @md:grid-cols-2">
-            {r.pricePerPerson !== undefined && (
-              <Fact label="人均" value={priceText(r.pricePerPerson)!.replace('人均 ', '')} />
+            {r.priceRange && (
+              <Fact
+                label="人均"
+                value={`${PRICE_RANGE_LABELS[r.priceRange]}（${r.priceCount} 人）`}
+                title="点评者给出的人均价格区间的平均（每人只计最近一条给出价格的点评）"
+              />
             )}
             {r.address && <Fact label="地址" value={r.address} />}
           </dl>
@@ -192,6 +202,7 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
               <li key={review.id} id={`review-${review.id}`} className="card space-y-3 p-4">
                 <ReviewHeader
                   rating={review.rating}
+                  price={review.price}
                   name={review.contributor.name}
                   submittedAt={review.submittedAt}
                   date={review.date}
@@ -309,11 +320,13 @@ function DishCounts({ dish }: { dish: Dish }) {
 
 function ReviewHeader({
   rating,
+  price,
   name,
   submittedAt,
   date,
 }: {
   rating: Rating;
+  price?: PriceRange;
   name: string;
   submittedAt: string;
   date: string;
@@ -321,6 +334,9 @@ function ReviewHeader({
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <RatingBadge rating={rating} />
+      {price && (
+        <span className="text-sm font-bold text-muted">人均 {PRICE_RANGE_LABELS[price]}</span>
+      )}
       <span className="font-bold">{name}</span>
       <time dateTime={submittedAt} className="text-sm text-muted">
         {date}

@@ -9,6 +9,5 @@
     "lng": -95.5571
   },
   "cuisines": ["cantonese", "chinese"],
-  "tags": ["group"],
-  "pricePerPerson": 35
+  "tags": ["group"]
 }

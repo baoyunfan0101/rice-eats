@@ -21,6 +21,7 @@ import {
   type ImportOptions,
   type Submission,
 } from '../../scripts/content/submissions.ts';
+import { priceFromAnswer } from '../../shared/submission.ts';
 import { TEST_REVIEW, tempDir, validInfo, writeRestaurant } from './helpers.ts';
 
 // Synthetic Tally CSV export: the columns Tally writes (Submission ID,
@@ -554,6 +555,29 @@ describe('importing submissions', () => {
     expect(stored.consent).toBe(false);
     const [unrated] = await run([sub({ submissionId: 'unrated', ratingAnswer: undefined })]);
     expect(unrated!.blockers.join()).toMatch(/no overall rating \(the form requires one\)/);
+  });
+
+  it('reads the price range answer, and notes one that is not an option', async () => {
+    const { run } = await setup();
+    const reports = await run([
+      sub({ submissionId: 'p1', priceAnswer: '$10–20' }),
+      sub({ submissionId: 'p2', priceAnswer: ' ＄10 - 20 ' }),
+      sub({ submissionId: 'p3', priceAnswer: '$100 以上' }),
+      sub({ submissionId: 'p4', priceAnswer: '大概 15 刀' }),
+      sub({ submissionId: 'p5' }),
+    ]);
+    expect(reports.map((r) => priceFromAnswer(r.submission.priceAnswer))).toEqual([
+      '10-20',
+      '10-20',
+      '100-plus',
+      undefined,
+      undefined,
+    ]);
+    expect(reports[3]!.notes.join('\n')).toMatch(
+      /price answer "大概 15 刀" is not one of the price ranges; the review gives no price/,
+    );
+    expect(reports.map((r) => r.blockers)).toEqual([[], [], [], [], []]);
+    expect(reports[4]!.notes.join('\n')).not.toMatch(/price/);
   });
 
   it('accepts a rating-only submission, but not an invalid rating', async () => {

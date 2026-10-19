@@ -10,7 +10,6 @@
   },
   "cuisines": ["bbq"],
   "tags": ["group", "pet-friendly"],
-  "pricePerPerson": 28,
   "dishes": [
     {
       "id": "d1",

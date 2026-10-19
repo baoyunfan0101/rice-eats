@@ -10,7 +10,6 @@
   },
   "cuisines": ["japanese", "ramen"],
   "tags": ["solo"],
-  "pricePerPerson": 18,
   "dishes": [
     {
       "id": "d1",

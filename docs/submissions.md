@@ -186,45 +186,46 @@ access to them. Menu names may differ slightly in Tally's editor.
    Keep the question titles exactly as written (intake finds answers in the CSV
    export by these titles, defined in `shared/submission.ts`):
 
-   | Block              | Title / name            | Settings                                                                                                    |
-   | ------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------- |
-   | Hidden fields      | `restaurant_id`         | Rice Eats id, only for a restaurant already on the site.                                                    |
-   |                    | `restaurant_name`       | The selected restaurant name.                                                                               |
-   |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                           |
-   |                    | `restaurant_lng`        | Longitude, as above.                                                                                        |
-   |                    | `restaurant_address`    | Address, when known.                                                                                        |
-   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                                 |
-   |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                    |
-   |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                             |
-   |                    | `source`                | `site` or `restaurant-page`.                                                                                |
-   | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                  |
-   | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`. |
-   | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                               |
-   | Short answer       | `标签（选填）`          | Optional. Placeholder: "例如：适合约会，适合聚餐".                                                          |
-   | Text               |                         | Below it: "用几个词描述这家店，多个标签用逗号（，）或顿号（、）分开。"                                      |
-   | Short answer       | `餐厅别名（选填）`      | Optional. Placeholder: "例如：英文名、简称".                                                                |
-   | Text               |                         | Below it: "这家店的其他名字，多个用逗号（，）或顿号（、）分开。"                                            |
-   | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                |
-   | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                            |
-   | Divider            |                         |                                                                                                             |
-   | Heading 2          |                         | "菜品点评（选填）"                                                                                          |
-   | Text               |                         | "如果想单独评价某道菜，可以添加菜品点评，并上传对应照片。"                                                  |
-   | Checkboxes         | `菜品1 添加`            | Optional, one unchecked option `＋ 添加一道菜`. Title cleared in the editor (see below).                    |
-   | Short answer       | `菜品1 名称`            | **Required** (only while shown).                                                                            |
-   | Multiple choice    | `菜品1 评价`            | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.                |
-   | File upload        | `菜品1 照片（选填）`    | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                         |
-   | Short answer       | `菜品1 点评（选填）`    | Optional; one sentence about the dish.                                                                      |
-   | (same five blocks) | `菜品2 …` to `菜品10 …` | Same settings and the same option `＋ 添加一道菜` (step 4).                                                 |
-   | Divider            |                         |                                                                                                             |
-   | Heading 2          |                         | "署名与授权"                                                                                                |
-   | Short answer       | `署名（选填）`          | Optional; intake credits a blank name as 匿名.                                                              |
-   | Text               |                         | Below it: "采用后会显示在网站上；不填则显示为「匿名」。"                                                    |
-   | Email              | `联系邮箱（选填）`      | Optional.                                                                                                   |
-   | Text               |                         | Below it: "只用于和你沟通，不会公开。"                                                                      |
-   | Checkboxes         | `发布授权`              | Required, one unchecked option whose text starts with `我同意` (consent text below).                        |
-   | Conditional logic  |                         | See step 4.                                                                                                 |
-   | reCAPTCHA          |                         | Native spam protection.                                                                                     |
-   | 'Thank you' page   |                         | Confirmation text (step 9).                                                                                 |
+   | Block              | Title / name            | Settings                                                                                                                       |
+   | ------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+   | Hidden fields      | `restaurant_id`         | Rice Eats id, only for a restaurant already on the site.                                                                       |
+   |                    | `restaurant_name`       | The selected restaurant name.                                                                                                  |
+   |                    | `restaurant_lat`        | Latitude of the chosen place or marker (6 decimals); empty for a name-only entry.                                              |
+   |                    | `restaurant_lng`        | Longitude, as above.                                                                                                           |
+   |                    | `restaurant_address`    | Address, when known.                                                                                                           |
+   |                    | `poi_provider`          | `geoapify` or `osm` (Overpass fallback) for a place from the map or search.                                                    |
+   |                    | `poi_id`                | The provider's place id (private; never a Rice Eats id).                                                                       |
+   |                    | `selection_method`      | `existing`, `poi`, or `manual`.                                                                                                |
+   |                    | `source`                | `site` or `restaurant-page`.                                                                                                   |
+   | Heading 2          |                         | "整体体验" (no intro text and no restaurant name: the website shows both).                                                     |
+   | Multiple choice    | `总体评级`              | **Required**, nothing preselected. Options exactly: `🥵 夯`, `😘 顶级`, `🤤 人上人`, `🫤 NPC`, `🤮 拉完了`.                    |
+   | Multiple choice    | `人均价格（选填）`      | Optional, nothing preselected. Options exactly: `$10 以下`, `$10–20`, `$20–30`, `$30–50`, `$50–100`, `$100 以上` (US dollars). |
+   | Long answer        | `你的点评（选填）`      | Optional. Placeholder: "分享你的整体用餐感受，比如口味、服务、环境或性价比……"                                                  |
+   | Short answer       | `标签（选填）`          | Optional. Placeholder: "例如：适合约会，适合聚餐".                                                                             |
+   | Text               |                         | Below it: "用几个词描述这家店，多个标签用逗号（，）或顿号（、）分开。"                                                         |
+   | Short answer       | `餐厅别名（选填）`      | Optional. Placeholder: "例如：英文名、简称".                                                                                   |
+   | Text               |                         | Below it: "这家店的其他名字，多个用逗号（，）或顿号（、）分开。"                                                               |
+   | File upload        | `照片（选填）`          | Optional; for photos that are not of one dish (room, menu). Multiple, max 10, 10 MB, images.                                   |
+   | Text               |                         | Below the upload: "可上传餐厅环境、菜单等照片。"                                                                               |
+   | Divider            |                         |                                                                                                                                |
+   | Heading 2          |                         | "菜品点评（选填）"                                                                                                             |
+   | Text               |                         | "如果想单独评价某道菜，可以添加菜品点评，并上传对应照片。"                                                                     |
+   | Checkboxes         | `菜品1 添加`            | Optional, one unchecked option `＋ 添加一道菜`. Title cleared in the editor (see below).                                       |
+   | Short answer       | `菜品1 名称`            | **Required** (only while shown).                                                                                               |
+   | Multiple choice    | `菜品1 评价`            | **Required** (only while shown), nothing preselected. Options exactly: `🔥 推荐`, `💣 避雷`.                                   |
+   | File upload        | `菜品1 照片（选填）`    | Optional; photos of this dish only. Multiple, max 3, 10 MB, images.                                                            |
+   | Short answer       | `菜品1 点评（选填）`    | Optional; one sentence about the dish.                                                                                         |
+   | (same five blocks) | `菜品2 …` to `菜品10 …` | Same settings and the same option `＋ 添加一道菜` (step 4).                                                                    |
+   | Divider            |                         |                                                                                                                                |
+   | Heading 2          |                         | "署名与授权"                                                                                                                   |
+   | Short answer       | `署名（选填）`          | Optional; intake credits a blank name as 匿名.                                                                                 |
+   | Text               |                         | Below it: "采用后会显示在网站上；不填则显示为「匿名」。"                                                                       |
+   | Email              | `联系邮箱（选填）`      | Optional.                                                                                                                      |
+   | Text               |                         | Below it: "只用于和你沟通，不会公开。"                                                                                         |
+   | Checkboxes         | `发布授权`              | Required, one unchecked option whose text starts with `我同意` (consent text below).                                           |
+   | Conditional logic  |                         | See step 4.                                                                                                                    |
+   | reCAPTCHA          |                         | Native spam protection.                                                                                                        |
+   | 'Thank you' page   |                         | Confirmation text (step 9).                                                                                                    |
 
    Optional questions say so in their own title ("（选填）"); required ones
    use Tally's required setting only. Help text sits directly below the
@@ -649,19 +650,8 @@ record of who decided what:
 `key` is the listing shown in the report; a decision for another key is
 ignored, and `different-place` keeps a listing out.
 
-`pricePerPerson` is never guessed: it is set only from a reviewed fact, e.g. a
-price the contributor states or a menu with prices:
-
-```json
-{
-  "field": "pricePerPerson",
-  "value": 18,
-  "source": "official website menu",
-  "evidence": "https://example.com/menu: noodles $14-16, drinks $3",
-  "method": "inferred",
-  "confidence": "medium"
-}
-```
+The price per person is never a fact: it comes from the reviews (the form's
+`人均价格（选填）` question; see docs/content.md).
 
 `npm run content:submission -- fetch-page <url>` fetches such a page with the
 same protections as photo downloads (https on the default port, any

@@ -1,7 +1,7 @@
 // Restaurant information from outside the submission (docs/submissions.md,
 // "Restaurant information"). Objective facts only: other names, address,
-// cuisines, the official website, and (from reviewed evidence) a price per
-// person. Every fact records where it came from, how it was obtained, and how
+// cuisines, and the official website (the price per person comes from the
+// reviews, never from here). Every fact records where it came from, how it was obtained, and how
 // sure it is; nothing here guesses, and every source may fail without
 // blocking a draft.
 //
@@ -11,7 +11,7 @@
 // place within a few meters of the selected location, so another branch of a
 // chain is never used). Results are cached in private/cache/ so a POI is
 // fetched once. A listing is used only after verifyListing confirms it is the
-// intended restaurant (the POI id is an unverified form field). Facts that need judgment (a price from a menu, a name from the
+// intended restaurant (the POI id is an unverified form field). Facts that need judgment (a name from the
 // official site) come from the Skill as reviewed decisions (prepare.ts), with
 // pages fetched through fetchEvidencePage.
 
@@ -26,7 +26,7 @@ import { isValidLatLng, type LatLngValue } from '../../shared/submission.ts';
 import { ANY_PUBLIC_HOST, DownloadError, redactUrl, safeFetch, type Lookup } from './safe-fetch.ts';
 import { distanceMeters } from './submissions.ts';
 
-export const ENRICHED_FIELDS = ['altNames', 'address', 'cuisines', 'pricePerPerson', 'website'] as const;
+export const ENRICHED_FIELDS = ['altNames', 'address', 'cuisines', 'website'] as const;
 export type EnrichedField = (typeof ENRICHED_FIELDS)[number];
 
 const httpUrl = z.url({ protocol: /^https?$/ });
@@ -47,7 +47,6 @@ export const factSchema = z.discriminatedUnion('field', [
   z.strictObject({ field: z.literal('altNames'), value: z.array(z.string().trim().min(1).max(80)).min(1), ...provenance }),
   z.strictObject({ field: z.literal('address'), value: z.string().trim().min(1).max(200), ...provenance }),
   z.strictObject({ field: z.literal('cuisines'), value: z.array(z.enum(CUISINE_IDS)).min(1), ...provenance }),
-  z.strictObject({ field: z.literal('pricePerPerson'), value: z.number().positive().max(1000), ...provenance }),
   z.strictObject({ field: z.literal('website'), value: httpUrl, ...provenance }),
 ]);
 export type Fact = z.infer<typeof factSchema>;

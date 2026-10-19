@@ -36,6 +36,7 @@ const COLUMNS = [
   'Respondent ID',
   'Submitted at',
   '总体评级',
+  '人均价格（选填）',
   '你的点评（选填）',
   '照片（选填）',
   '菜品1 名称',
@@ -313,7 +314,8 @@ describe('prepare', () => {
     expect(info.altNames).toEqual(['Example Dumpling House']);
     expect(info.cuisines).toEqual(['chinese']);
     expect(info.links).toEqual({ website: 'https://dumplings.example/' });
-    expect(info.pricePerPerson).toBeUndefined();
+    // The price per person comes from the reviews, never from the listing.
+    expect(info).not.toHaveProperty('pricePerPerson');
     expect(report.facts.every((f) => f.fact.source && f.fact.evidence)).toBe(true);
     expect(report.notes.join('\n')).toMatch(/map cuisine "shanghainese" has no cuisine key/);
 
@@ -404,11 +406,11 @@ describe('prepare', () => {
         ],
         facts: [
           {
-            field: 'pricePerPerson',
-            value: 22,
-            source: 'official menu',
-            evidence: 'https://dumplings.example/menu',
-            method: 'inferred',
+            field: 'altNames',
+            value: ['汤包馆'],
+            source: 'official website',
+            evidence: 'https://dumplings.example/about',
+            method: 'direct',
             confidence: 'medium',
           },
           {
@@ -426,8 +428,8 @@ describe('prepare', () => {
     const id = report.restaurantId!;
     const info = await t.readJson(t.p('private/drafts', id, 'info.json'));
     expect(info.tags).toEqual(['date', 'quiet', 'pet-friendly', 'group']);
-    expect(info.pricePerPerson).toBe(22);
-    expect(info.altNames).toEqual(['Example Dumpling House']); // the low-confidence name is only reported
+    // The checked name is added; the low-confidence one is only reported.
+    expect(info.altNames).toEqual(['Example Dumpling House', '汤包馆']);
     expect(report.newTags).toEqual(['pet-friendly']);
     expect(report.notes.join('\n')).toMatch(
       /"不是我写的词" is not one of the contributor's keywords/,
@@ -490,7 +492,7 @@ describe('prepare', () => {
       submittedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
       rating: 3,
     });
-    expect(report.missing).toEqual(['address', 'cuisines', 'pricePerPerson', 'website']);
+    expect(report.missing).toEqual(['address', 'cuisines', 'website']);
     expect(report.contributor?.name).toBe('匿名');
   });
 
@@ -851,14 +853,14 @@ describe('rejecting a prepared submission', () => {
     const file = t.p('private/drafts', id, 'info.json');
     await writeFile(
       file,
-      JSON.stringify({ ...(await t.readJson(file)), pricePerPerson: 20 }, null, 2),
+      JSON.stringify({ ...(await t.readJson(file)), cuisines: ['chinese'] }, null, 2),
     );
     expect((await t.reject('mAbC12')).status).toBe('done');
     expect(await t.readJson(file)).toEqual({
       id,
       status: 'draft',
       name: '示例汤包馆',
-      pricePerPerson: 20,
+      cuisines: ['chinese'],
     });
     expect(existsSync(t.p('private/drafts', id, 'reviews'))).toBe(false);
     expect(await readdir(t.p('private/drafts', id, 'images'))).toEqual([]);
@@ -1107,7 +1109,7 @@ describe('rejection rollback state', () => {
     const info = path.join(draft, 'info.json');
     await writeFile(
       info,
-      JSON.stringify({ ...(await t.readJson(info)), pricePerPerson: 25 }, null, 2),
+      JSON.stringify({ ...(await t.readJson(info)), cuisines: ['chinese'] }, null, 2),
     );
     // The maintainer puts the submission's address back as it was written, so it can be taken out.
     await editAddress(t, draft, '6100 Main St, Houston');
@@ -1117,7 +1119,7 @@ describe('rejection rollback state', () => {
       id,
       status: 'draft',
       name: '示例汤包馆',
-      pricePerPerson: 25,
+      cuisines: ['chinese'],
     });
     expect(existsSync(path.join(draft, 'reviews'))).toBe(false);
     // Afterwards the status may change again; the finished rollback blocks nothing.
@@ -1594,7 +1596,11 @@ describe('every submission is an independent review', () => {
     const file = path.join(draft, 'info.json');
     await writeFile(
       file,
-      JSON.stringify({ ...(await t.readJson(file)), pricePerPerson: 25, cuisines: ['chinese'] }),
+      JSON.stringify({
+        ...(await t.readJson(file)),
+        links: { website: 'https://hand.example/' },
+        cuisines: ['chinese'],
+      }),
     );
     await t.prepare('mAbC12', { offline: true });
     expect((await t.reject('mAbC12')).status).toBe('done');
@@ -1603,7 +1609,7 @@ describe('every submission is an independent review', () => {
       status: 'draft',
       name: '示例汤包馆',
       cuisines: ['chinese'],
-      pricePerPerson: 25,
+      links: { website: 'https://hand.example/' },
     });
     expect(existsSync(path.join(draft, 'reviews'))).toBe(false);
   });
@@ -1777,5 +1783,63 @@ describe('review times', () => {
     ).toHaveLength(4);
     const detail = await detailOf(t, id);
     expect(detail).toMatchObject({ raterCount: 4, reviewCount: 4 });
+  });
+});
+
+describe('price per person', () => {
+  it('stores the range a submission gives in its own review, and averages them', async () => {
+    const t = await setup();
+    const NO_PHOTOS = { '照片（选填）': '', '菜品1 照片（选填）': '', '菜品2 照片（选填）': '' };
+    await t.importCsv(
+      csv(
+        row({ ...NEW_RESTAURANT, ...NO_PHOTOS, '人均价格（选填）': '$20–30' }),
+        row({
+          ...NEW_RESTAURANT,
+          ...NO_PHOTOS,
+          'Submission ID': 'subB',
+          '署名（选填）': '小红',
+          '联系邮箱（选填）': 'hong@example.com',
+          '人均价格（选填）': '$50–100',
+        }),
+        row({
+          ...NEW_RESTAURANT,
+          ...NO_PHOTOS,
+          'Submission ID': 'subC',
+          '联系邮箱（选填）': 'c@example.com',
+        }),
+        row({
+          ...NEW_RESTAURANT,
+          ...NO_PHOTOS,
+          'Submission ID': 'subD',
+          '联系邮箱（选填）': 'd@example.com',
+          '人均价格（选填）': '挺便宜',
+        }),
+      ),
+    );
+    const a = await t.prepare('mAbC12', { offline: true });
+    const id = a.restaurantId!;
+    expect(a.price).toBe('20-30');
+    for (const s of ['subB', 'subC', 'subD']) {
+      expect((await t.prepare(s, { restaurantId: id, offline: true })).outcome).toBe('drafted');
+    }
+    expect((await t.readJson(await t.review('mAbC12'))).price).toBe('20-30');
+    expect((await t.readJson(await t.review('subB'))).price).toBe('50-100');
+    expect(await t.readJson(await t.review('subC'))).not.toHaveProperty('price');
+    expect(await t.readJson(await t.review('subD'))).not.toHaveProperty('price');
+    expect(await readFile(t.p('private/submissions/tally-subD/review-report.md'), 'utf8')).toMatch(
+      /price answer "挺便宜" is not one of the price ranges/,
+    );
+    const info = await t.readJson(t.p('private/drafts', id, 'info.json'));
+    expect(info).not.toHaveProperty('pricePerPerson');
+    // (25 + 75) / 2 = 50 over the two contributors who gave a price (a boundary goes up).
+    const detail = (await validate(t)).details.find((d) => d.id === id)!;
+    expect(detail).toMatchObject({ pricePerPerson: 50, priceRange: '50-100', priceCount: 2 });
+    // Rejecting B takes its price out of the average with its review.
+    expect((await t.reject('subB')).status).toBe('done');
+    expect((await validate(t)).details.find((d) => d.id === id)).toMatchObject({
+      pricePerPerson: 25,
+      priceRange: '20-30',
+      priceCount: 1,
+    });
   });
 });

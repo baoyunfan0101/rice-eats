@@ -361,6 +361,62 @@ describe('content pipeline', () => {
     expect(detail.reviews.map((r) => r.id)).toEqual(['v-u002', 'v-u003', 'v-u004', 'v-u001']);
   });
 
+  it("averages the price ranges over contributors, as the ranges' middles", async () => {
+    const root = await tempDir();
+    const review = (contributor: string, submittedAt: string, price?: string) =>
+      JSON.stringify({ contributor, submittedAt, rating: 3, ...(price ? { price } : {}) });
+    await writeRestaurant(root, 'r', validInfo('r'), {
+      // u-001: $50+ before, $10–20 (15) later, then a review without a price: 15 counts.
+      'reviews/v-a1.json': review('u-001', '2026-10-01T12:00:00Z', '100-plus'),
+      'reviews/v-a2.json': review('u-001', '2026-10-02T12:00:00Z', '10-20'),
+      'reviews/v-a3.json': review('u-001', '2026-10-03T12:00:00Z'),
+      // u-002: $20–30 (25). u-003 gives no price.
+      'reviews/v-b1.json': review('u-002', '2026-10-01T12:00:00Z', '20-30'),
+      'reviews/v-c1.json': review('u-003', '2026-10-01T12:00:00Z'),
+    });
+    const people = [1, 2, 3].map((n) => ({ id: `u-00${n}`, name: `P${n}` }));
+    const result = await pipeline(root, { contributorsFile: await contributors(people) });
+    expect(errors(result)).toEqual([]);
+    const detail = result.details[0]!;
+    // (15 + 25) / 2 = 20: a boundary belongs to the higher range.
+    expect(detail).toMatchObject({ pricePerPerson: 20, priceRange: '20-30', priceCount: 2 });
+    expect(result.index.restaurants[0]).toMatchObject({
+      pricePerPerson: 20,
+      priceRange: '20-30',
+      priceCount: 2,
+    });
+    expect(detail.reviews.find((r) => r.id === 'v-a2')!.price).toBe('10-20');
+    expect(detail.reviews.find((r) => r.id === 'v-a3')!.price).toBeUndefined();
+
+    // An open-ended range counts as its lower end; without any price there is none.
+    const other = await tempDir();
+    await writeRestaurant(other, 'x', validInfo('x'), {
+      'reviews/v-x.json': review('u-001', '2026-10-01T12:00:00Z', '100-plus'),
+      'reviews/v-x2.json': review('u-002', '2026-10-01T12:00:00Z', '50-100'),
+    });
+    await writeRestaurant(other, 'y', validInfo('y'), {
+      'reviews/v-y.json': review('u-001', '2026-10-01T12:00:00Z'),
+    });
+    const [x, y] = (
+      await pipeline(other, { contributorsFile: await contributors(people) })
+    ).details.sort((a, b) => a.id.localeCompare(b.id));
+    // (100 + 75) / 2 = 87.5.
+    expect(x).toMatchObject({ pricePerPerson: 87.5, priceRange: '50-100', priceCount: 2 });
+    expect(y!.pricePerPerson).toBeUndefined();
+    expect(y).toMatchObject({ priceCount: 0 });
+    // Only the ranges are valid, and info.json has no price of its own.
+    const bad = await tempDir();
+    await writeRestaurant(bad, 'z', validInfo('z'), {
+      'reviews/v-z.json': review('u-001', '2026-10-01T12:00:00Z', '$10-20'),
+    });
+    await writeRestaurant(bad, 'w', validInfo('w', { pricePerPerson: 20 }));
+    const messages = errors(await pipeline(bad)).join('\n');
+    expect(messages).toMatch(
+      /v-z.json: price: must be one of under-10, 10-20, 20-30, 30-50, 50-100, 100-plus/,
+    );
+    expect(messages).toMatch(/Unrecognized key: "pricePerPerson"/);
+  });
+
   it('orders by the instant, not the text or the day, and breaks ties by review id', async () => {
     const root = await tempDir();
     const at = (contributor: string, submittedAt: string, rating: number) =>
