@@ -67,6 +67,32 @@ describe('normalizing results', () => {
     expect(normalizeGeoapifyGeocode({})).toEqual([]);
   });
 
+  it('drops results whose coordinates are not numbers, and keeps valid ones', () => {
+    const at = (lat: unknown, lon: unknown) =>
+      normalizeGeoapifyGeocode({ results: [{ place_id: 'p', name: 'Somewhere', lat, lon }] }).map(
+        (p) => p.location,
+      );
+    for (const [lat, lon] of [
+      [null, -95.4],
+      [29.7, null],
+      ['', -95.4],
+      [29.7, '  '],
+      [true, -95.4],
+      [29.7, false],
+      [[29.7], -95.4],
+      [undefined, -95.4],
+      ['29.7N', -95.4],
+      [Number.NaN, -95.4],
+      [91, -95.4],
+      [29.7, -181],
+    ]) {
+      expect(at(lat, lon), `${String(lat)}, ${String(lon)}`).toEqual([]);
+    }
+    expect(at(0, 0)).toEqual([{ lat: 0, lng: 0 }]);
+    expect(at('29.7174', '-95.4018')).toEqual([{ lat: 29.7174, lng: -95.4018 }]);
+    expect(at(-33.9, 151.2)).toEqual([{ lat: -33.9, lng: 151.2 }]);
+  });
+
   it('marks only clear places to eat as restaurants, with their POI', () => {
     const result = (extra: object) =>
       normalizeGeoapifyGeocode({

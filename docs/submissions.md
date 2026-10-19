@@ -65,7 +65,10 @@ Rice Eats website (step 1: choose restaurant) -> Tally form (step 2) -> Gmail no
   shortcut, "使用当前位置", a search, choosing a result, choosing a
   restaurant, placing a manual marker, or dragging or zooming the map by
   hand) cancels the pending search and makes any older answer, including a
-  late device location or a late error, change nothing, so the map always
+  late device location or a late error, change nothing. Editing the box is
+  not such an action: it only prepares the next query, so a submitted search
+  still answers (a single place still moves the map), and its results show
+  whenever the box holds the query they were found for. So the map always
   ends where the contributor last asked for. Hand moves are recognized from
   their input (`src/views/PickerMap.tsx`: Leaflet's `dragstart`, the wheel, a
   double click, a two-finger touch, the zoom buttons, and the map's keys),
@@ -557,6 +560,17 @@ whatever the log says. This happens when:
   the submission's content from them (or put back what was there before) and
   run it again, or, after checking them, keep their current content with
   `--resolved` (a kept review keeps every photo it uses);
+- what the rest of the draft still uses cannot be read, so nothing can be
+  taken out safely: another review of the draft is not a valid review (it
+  may still use dishes and photos), or another submission that the log shows
+  wrote into this draft has a `prepare.json` that is missing, cannot be read,
+  belongs to another restaurant, or records nothing written without a
+  finished rejection (its additions and claims would be unknown). Nothing is
+  changed, the message names each one, and `--resolved` does not apply.
+  Repair the review, or restore that submission's `prepare.json` from the
+  [backup](#retention-and-backup) (or finish its lost-state check below),
+  then run the rejection again. A submission whose rejection finished but
+  whose log update was interrupted is not in the way;
 - the command was interrupted (the state is written before the log): run it
   again, which is always safe;
 - `prepare.json` cannot be read, or is missing although the log shows the

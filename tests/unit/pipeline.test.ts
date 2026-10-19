@@ -417,6 +417,39 @@ describe('content pipeline', () => {
     expect(messages).toMatch(/Unrecognized key: "pricePerPerson"/);
   });
 
+  it('compares times beyond milliseconds, and the same instant written differently as equal', async () => {
+    const root = await tempDir();
+    const at = (contributor: string, submittedAt: string, rating: number) =>
+      JSON.stringify({ contributor, submittedAt, rating });
+    await writeRestaurant(root, 'r', validInfo('r'), {
+      // u-001: v-z is 0.0008 ms later than v-a, so v-z (5) is the latest, not v-a (2).
+      'reviews/v-a.json': at('u-001', '2026-10-14T19:30:00.1231Z', 2),
+      'reviews/v-z.json': at('u-001', '2026-10-14T19:30:00.1239Z', 5),
+      // u-002: the same instant twice (an offset, trailing zeros): ordered by review id, v-b first.
+      'reviews/v-c.json': at('u-002', '2026-10-14T19:30:00.5Z', 3),
+      'reviews/v-b.json': at('u-002', '2026-10-14T14:30:00.500-05:00', 1),
+    });
+    const people = [
+      { id: 'u-001', name: 'A' },
+      { id: 'u-002', name: 'B' },
+    ];
+    const result = await pipeline(root, { contributorsFile: await contributors(people) });
+    expect(errors(result)).toEqual([]);
+    const detail = result.details[0]!;
+    expect(detail.reviews.map((r) => r.id)).toEqual(['v-b', 'v-c', 'v-z', 'v-a']);
+    // u-001 counts 5 and u-002 counts 1 (v-b): (5 + 1) / 2 = 3.
+    expect(detail).toMatchObject({ ratingAverage: 3, raterCount: 2, reviewCount: 4 });
+
+    // A time an offset moves out of four-digit years is not a supported time.
+    const bad = await tempDir();
+    await writeRestaurant(bad, 'x', validInfo('x'), {
+      'reviews/v-x.json': at('u-001', '9999-12-31T23:30:00-01:00', 3),
+    });
+    expect(errors(await pipeline(bad)).join('\n')).toMatch(
+      /v-x.json: submittedAt: must be a time like/,
+    );
+  });
+
   it('orders by the instant, not the text or the day, and breaks ties by review id', async () => {
     const root = await tempDir();
     const at = (contributor: string, submittedAt: string, rating: number) =>

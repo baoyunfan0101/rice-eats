@@ -51,6 +51,18 @@ export function geoapifyGeocodeUrl(query: string, near: LatLngValue, apiKey: str
   return `${GEOAPIFY_GEOCODE_ENDPOINT}?${params}`;
 }
 
+/**
+ * A provider's coordinate as a number: a finite number, or a decimal number
+ * written as text. Anything else (null, "", true, "29.7N") is NaN, so the
+ * result is dropped instead of being placed at 0 or 1.
+ */
+const coordinate = (value: unknown): number =>
+  typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(value)
+      ? Number(value)
+      : Number.NaN;
+
 function place(
   key: string,
   name: string | undefined,
@@ -59,7 +71,7 @@ function place(
   lon: unknown,
   isAddress: boolean,
 ): Place | undefined {
-  const location = { lat: Number(lat), lng: Number(lon) };
+  const location = { lat: coordinate(lat), lng: coordinate(lon) };
   if (!name || !isValidLatLng(location)) return undefined;
   return {
     key,

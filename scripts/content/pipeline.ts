@@ -25,6 +25,7 @@ import { canonicalImageProblems, copyRenditions, processImage, type ProcessedIma
 import { listMarkdownImages, renderMarkdown } from './markdown.ts';
 import { findSensitiveMetadata, PRIVACY_FIX, tagRegistryProblems } from './privacy.ts';
 import {
+  compareInstants,
   formatIssues,
   privateContributorsSchema,
   privateTagsSchema,
@@ -111,7 +112,7 @@ export interface LoadedReview {
  * review id, so the order never depends on the file system.
  */
 export const newestFirst = (a: LoadedReview, b: LoadedReview) =>
-  Date.parse(b.review.submittedAt) - Date.parse(a.review.submittedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  compareInstants(b.review.submittedAt, a.review.submittedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** Each contributor's latest review (in newestFirst order): what the restaurant's rating counts. */
 export const latestPerContributor = (reviews: LoadedReview[]) => {

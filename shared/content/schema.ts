@@ -183,8 +183,29 @@ export function canonicalInstant(value: string): string | undefined {
   if (date.getUTCMonth() !== mo! - 1 || date.getUTCDate() !== d!) return undefined;
   if (h! > 23 || mi! > 59 || s > 59 || oh > 23 || om > 59) return undefined;
   date.setUTCHours(h!, mi! - (m[9] === '-' ? -1 : 1) * (oh * 60 + om), s, 0);
+  // An offset can move the instant out of four-digit years ("+010000-..."): not a supported time.
+  const iso = date.toISOString();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(iso)) return undefined;
   const fraction = (m[7] ?? '').replace(/0+$/, '');
-  return `${date.toISOString().slice(0, 19)}${fraction ? `.${fraction}` : ''}Z`;
+  return `${iso.slice(0, 19)}${fraction ? `.${fraction}` : ''}Z`;
+}
+
+/**
+ * Orders two times (canonicalInstant's formats) by their instant, without
+ * losing digits beyond milliseconds: negative when `a` is earlier, 0 for the
+ * same instant (also written with another offset or trailing zeros).
+ * Throws for a value that is not a supported time.
+ */
+export function compareInstants(a: string, b: string): number {
+  const [ca, cb] = [canonicalInstant(a), canonicalInstant(b)];
+  if (ca === undefined || cb === undefined) throw new Error(`not a supported time: "${ca === undefined ? a : b}"`);
+  // "YYYY-MM-DDTHH:MM:SS" sorts as text; the fractions compare digit by digit.
+  const [baseA, fracA = ''] = ca.slice(0, -1).split('.');
+  const [baseB, fracB = ''] = cb.slice(0, -1).split('.');
+  if (baseA !== baseB) return baseA! < baseB! ? -1 : 1;
+  const width = Math.max(fracA.length, fracB.length);
+  const [fa, fb] = [fracA.padEnd(width, '0'), fracB.padEnd(width, '0')];
+  return fa === fb ? 0 : fa < fb ? -1 : 1;
 }
 
 /** An instant with a time zone, e.g. "2026-10-14T19:30:00Z", so reviews of one day still have an order. */

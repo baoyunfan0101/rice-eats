@@ -253,7 +253,11 @@ review text). For a submission about an **existing restaurant**, show the
 maintainer what it adds or updates next to the current content. Record outcomes with
 `npm run content:submission -- mark <submission id> --status processed|rejected [--id <restaurant id>]`
 (rules in `docs/submissions.md#rejecting-a-submission`). Report what a
-rejection prints (fields to resolve). Never try to lift a rejection block by changing the status or by
+rejection prints (fields to resolve). When it says nothing was taken out
+because another review or another submission's `prepare.json` cannot be
+read, report which one: the maintainer repairs the review or restores the
+file (or completes that submission's `--state-lost` check), and `--resolved`
+does not apply. Never try to lift a rejection block by changing the status or by
 editing `prepare.json` or `tally-log.json`, and never pass `--resolved` or
 `--state-lost` on your own: both record the maintainer's own check.
 

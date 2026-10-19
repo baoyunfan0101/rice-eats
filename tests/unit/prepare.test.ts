@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
@@ -551,6 +551,36 @@ describe('prepare', () => {
     expect(named.contributor).toMatchObject({ id: 'u-002', created: false });
   });
 
+  for (const first of ['named', 'anonymous'] as const) {
+    it(`reuses the named and the anonymous identity of one email separately (${first} first)`, async () => {
+      const t = await setup();
+      const { resolveContributor } = await import('../../scripts/content/contributors.ts');
+      const named = { name: '小明', email: 'Ming@Example.com' };
+      const anonymous = { email: 'ming@example.com ' };
+      const order =
+        first === 'named'
+          ? [named, anonymous, named, anonymous, anonymous, named]
+          : [anonymous, named, anonymous, named, named, anonymous];
+      const results: { id: string; created: boolean; notes: string[] }[] = [];
+      for (const details of order) {
+        results.push(await resolveContributor(t.options.contributorFiles, details));
+      }
+      // Two identities, each created once and then reused for its kind of credit.
+      expect(results.filter((r) => r.created)).toHaveLength(2);
+      const idOf = (details: object) => results[order.indexOf(details as typeof named)]!.id;
+      expect(idOf(named)).not.toBe(idOf(anonymous));
+      expect(results.map((r) => r.id)).toEqual(order.map((d) => idOf(d)));
+      expect(results[1]!.notes.join('\n')).toMatch(/kept as a separate contributor/);
+      const records = await t.readJson(t.options.contributorFiles.privateFile);
+      expect(Object.keys(records)).toHaveLength(2);
+      expect(records[idOf(anonymous)]).toMatchObject({ name: '匿名' });
+      expect(records[idOf(named)]).toMatchObject({ name: '小明' });
+      // A name alone still identifies no one.
+      const stranger = await resolveContributor(t.options.contributorFiles, { name: '小明' });
+      expect(stranger.created).toBe(true);
+    });
+  }
+
   it('flags contact details in the text that would become public', async () => {
     const t = await setup();
     await t.importCsv(
@@ -1081,15 +1111,12 @@ describe('rejection rollback state', () => {
     await mkdir(t.p('content/restaurants'), { recursive: true });
     await cp(t.p('contributors.json'), t.p('content/contributors.json'));
     await cp(t.p('tags.json'), t.p('content/tags.json'));
+    // Node with tsx's import hook: no tsx CLI (and its IPC server) needed.
     const check = (...ids: string[]) =>
-      spawnSync(
-        path.join(repo, 'node_modules/.bin/tsx'),
-        ['scripts/content/cli.ts', 'check', ...ids],
-        {
-          cwd: t.root,
-          encoding: 'utf8',
-        },
-      );
+      spawnSync(process.execPath, ['--import', 'tsx', 'scripts/content/cli.ts', 'check', ...ids], {
+        cwd: t.root,
+        encoding: 'utf8',
+      });
     const full = check();
     expect(full.status).toBe(1);
     expect(full.stderr).toMatch(
@@ -1786,6 +1813,37 @@ describe('review times', () => {
   });
 });
 
+describe('review times: a real time at the fallback instant', () => {
+  it('records the submission as the source, and keeps the time on reruns and rebuilds', async () => {
+    const t = await setup();
+    await t.importCsv(csv(row({ ...NEW_RESTAURANT, 'Submitted at': '' })));
+    const now = () => '2026-10-14T10:00:00.000Z';
+    const first = await t.prepare('mAbC12', { offline: true, now });
+    expect(first.submittedAt).toEqual({ at: '2026-10-14T10:00:00Z', from: 'fallback' });
+    // The export is corrected with the real time, which is the same instant.
+    const file = t.p('private/submissions/tally-mAbC12/submission.json');
+    await writeFile(
+      file,
+      JSON.stringify({ ...(await t.readJson(file)), submittedAt: '2026-10-14 10:00' }),
+    );
+    const later = () => '2026-11-01T00:00:00.000Z';
+    const again = await t.prepare('mAbC12', { offline: true, now: later });
+    expect(again.submittedAt).toEqual({ at: '2026-10-14T10:00:00Z', from: 'submission' });
+    expect(again.notes.join('\n')).toMatch(
+      /the submission now has a time \(2026-10-14T10:00:00Z\)/,
+    );
+    expect(again.notes.join('\n')).not.toMatch(/no submission time/);
+    const state = await t.readJson(t.p('private/submissions/tally-mAbC12/prepare.json'));
+    expect(state.submittedAt).toEqual({ at: '2026-10-14T10:00:00Z', from: 'submission' });
+    for (const rebuild of [false, true]) {
+      const r = await t.prepare('mAbC12', { offline: true, rebuild, now: later });
+      expect(r.submittedAt).toEqual({ at: '2026-10-14T10:00:00Z', from: 'submission' });
+      expect(r.notes.join('\n')).not.toMatch(/submission now has a time/);
+    }
+    expect((await t.readJson(await t.review('mAbC12'))).submittedAt).toBe('2026-10-14T10:00:00Z');
+  });
+});
+
 describe('price per person', () => {
   it('stores the range a submission gives in its own review, and averages them', async () => {
     const t = await setup();
@@ -1841,5 +1899,205 @@ describe('price per person', () => {
       priceRange: '20-30',
       priceCount: 1,
     });
+  });
+});
+
+describe('rollback when what others use cannot be read', () => {
+  type T = Awaited<ReturnType<typeof setup>>;
+  const NO_PHOTOS = { '照片（选填）': '', '菜品1 照片（选填）': '', '菜品2 照片（选填）': '' };
+  /** A (小明) creates the draft; B (小红) adds "quiet", rates 小笼包, and brings a photo. */
+  async function twoSubmissions() {
+    const t = await setup();
+    await t.importCsv(csv(row(NEW_RESTAURANT)));
+    const a = await t.prepare('mAbC12', { offline: true });
+    const id = a.restaurantId!;
+    await t.importCsv(
+      csv(
+        row({
+          ...NEW_RESTAURANT,
+          ...NO_PHOTOS,
+          'Submission ID': 'subB',
+          '署名（选填）': '小红',
+          '联系邮箱（选填）': 'hong@example.com',
+          '标签（选填）': '安静',
+          '照片（选填）': photo('hong-room'),
+          '菜品2 名称': '',
+          '菜品2 评价': '',
+        }),
+      ),
+    );
+    const b = await t.prepare('subB', { restaurantId: id, offline: true });
+    expect(b.outcome).toBe('drafted');
+    return { t, a, b, id, draft: t.p('private/drafts', id) };
+  }
+  /** Every file of the draft with its bytes, to show nothing changed. */
+  const snapshot = async (t: T, dir: string) =>
+    Object.fromEntries(
+      await Promise.all(
+        (await t.listing(dir)).map(async (f) => {
+          const file = path.join(dir, f);
+          return [
+            f,
+            (await stat(file)).isFile() ? (await readFile(file)).toString('base64') : 'dir',
+          ];
+        }),
+      ),
+    );
+  const statePath = (t: T, s: string) => t.p(`private/submissions/tally-${s}/prepare.json`);
+
+  for (const [what, damage, message] of [
+    [
+      'missing',
+      async (t: T) => rm(statePath(t, 'subB')),
+      /submission subB: prepare.json is missing/,
+    ],
+    [
+      'unreadable',
+      async (t: T) => writeFile(statePath(t, 'subB'), '{ broken'),
+      /submission subB: prepare.json cannot be read/,
+    ],
+    [
+      'about another restaurant',
+      async (t: T) =>
+        writeFile(
+          statePath(t, 'subB'),
+          JSON.stringify({ ...(await t.readJson(statePath(t, 'subB'))), restaurantId: 'r-zzzzzz' }),
+        ),
+      /submission subB: prepare.json is about r-zzzzzz/,
+    ],
+    [
+      'saying nothing was written',
+      async (t: T) => {
+        const state = await t.readJson(statePath(t, 'subB'));
+        delete state.written;
+        await writeFile(statePath(t, 'subB'), JSON.stringify(state));
+      },
+      /submission subB: the log shows it wrote into this draft, but its prepare.json records nothing written/,
+    ],
+  ] as const) {
+    it(`changes nothing while another submission's state is ${what}, also with --resolved`, async () => {
+      const { t, id, draft } = await twoSubmissions();
+      const backup = await readFile(statePath(t, 'subB'), 'utf8');
+      await damage(t);
+      const before = await snapshot(t, draft);
+      for (const resolved of [false, true]) {
+        const result = await t.reject('mAbC12', resolved);
+        expect(result.status).toBe('manual');
+        expect(result.messages.join('\n')).toMatch(message);
+        expect(result.messages.join('\n')).toMatch(/--resolved does not apply/);
+        expect(await snapshot(t, draft)).toEqual(before);
+      }
+      expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
+        /nothing of it was taken out of the draft.*--resolved does not apply/,
+      );
+      // With the state restored, the rejection runs, keeping what B added and uses.
+      await writeFile(statePath(t, 'subB'), backup);
+      expect((await t.reject('mAbC12')).status).toBe('done');
+      const info = await t.readJson(path.join(draft, 'info.json'));
+      expect(info.tags).toEqual(['quiet']);
+      expect(info.dishes).toEqual([{ id: 'd1', name: '小笼包' }]);
+      expect(existsSync(await t.review('subB'))).toBe(true);
+      expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+    });
+  }
+
+  it('runs once the lost state is confirmed by the maintainer (the lost-state workflow)', async () => {
+    const { t, draft } = await twoSubmissions();
+    const reviewB = await t.review('subB');
+    await rm(statePath(t, 'subB'));
+    expect((await t.reject('mAbC12')).status).toBe('manual');
+    // The maintainer takes B's content out by hand and confirms it.
+    await rm(reviewB);
+    const info = path.join(draft, 'info.json');
+    await writeFile(info, JSON.stringify({ ...(await t.readJson(info)), tags: ['date', 'group'] }));
+    await t.mark('subB', 'rejected', false, 'removed its review and tag by hand');
+    expect((await t.reject('mAbC12')).status).toBe('done');
+  });
+
+  it('does not count a finished rejection whose log update was interrupted', async () => {
+    const { t, draft } = await twoSubmissions();
+    expect((await t.reject('subB')).status).toBe('done');
+    // The rejection finished, but the log still says it wrote into the draft.
+    const logFile = t.p('private/submissions/tally-log.json');
+    const log = await t.readJson(logFile);
+    (log.subB as { draftWritten: boolean }).draftWritten = true;
+    await writeFile(logFile, JSON.stringify(log));
+    const result = await t.reject('mAbC12');
+    expect(result.status).toBe('done');
+    expect(existsSync(draft)).toBe(false);
+  });
+
+  it('keeps everything an unreadable review may use until it is repaired', async () => {
+    const { t, a, id, draft } = await twoSubmissions();
+    const fileB = await t.review('subB');
+    const reviewB = await readFile(fileB, 'utf8');
+    const used = reviewImages(JSON.parse(reviewB) as Review);
+    expect(used).toHaveLength(1);
+    // B's review is damaged (a rating that does not exist).
+    await writeFile(fileB, JSON.stringify({ ...JSON.parse(reviewB), rating: 9 }));
+    const before = await snapshot(t, draft);
+    for (const resolved of [false, true]) {
+      const result = await t.reject('mAbC12', resolved);
+      expect(result.status).toBe('manual');
+      expect(result.messages.join('\n')).toMatch(
+        /reviews\/v-[a-z0-9]+\.json cannot be read \(rating: .*\); repair the review/,
+      );
+      expect(await snapshot(t, draft)).toEqual(before);
+    }
+    const info = await t.readJson(path.join(draft, 'info.json'));
+    expect(info.dishes).toEqual([
+      { id: 'd1', name: '小笼包' },
+      { id: 'd2', name: '红烧肉' },
+    ]);
+    expect(existsSync(path.join(draft, 'reviews', `${a.reviewId}.json`))).toBe(true);
+    // Repaired, the rejection runs: B's dish and photo stay, A's review goes.
+    await writeFile(fileB, reviewB);
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect((await t.readJson(path.join(draft, 'info.json'))).dishes).toEqual([
+      { id: 'd1', name: '小笼包' },
+    ]);
+    for (const image of used) expect(existsSync(path.join(draft, image))).toBe(true);
+    expect(existsSync(path.join(draft, 'reviews', `${a.reviewId}.json`))).toBe(false);
+    expect(await readFile(fileB, 'utf8')).toBe(reviewB);
+    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+  });
+  it('keeps a photo the maintainer gave to another review when A is rebuilt', async () => {
+    const { t, a, draft } = await twoSubmissions();
+    const fileA = await t.review('mAbC12');
+    const fileB = await t.review('subB');
+    const photoA = 'images/02-dish-1.jpg';
+    // The maintainer moves A's first 小笼包 photo to B's 小笼包 opinion.
+    const reviewA = (await t.readJson(fileA)) as unknown as Review;
+    reviewA.dishes = reviewA.dishes!.map((d) =>
+      d.dish === 'd1' ? { ...d, images: d.images!.filter((i) => i !== photoA) } : d,
+    );
+    await writeFile(fileA, JSON.stringify(reviewA));
+    const reviewB = (await t.readJson(fileB)) as unknown as Review;
+    reviewB.dishes = reviewB.dishes!.map((d) => (d.dish === 'd1' ? { ...d, images: [photoA] } : d));
+    await writeFile(fileB, JSON.stringify(reviewB));
+    const savedB = await readFile(fileB, 'utf8');
+    // A's source photo is then waived, and A is rebuilt.
+    const sub = t.p('private/submissions/tally-mAbC12');
+    const { waivePhoto } = await import('../../scripts/content/submissions.ts');
+    const stored = JSON.parse(
+      await readFile(path.join(sub, 'submission.json'), 'utf8'),
+    ) as Submission;
+    await rm(path.join(sub, 'photo-02.jpg'));
+    await waivePhoto(sub, stored, 2);
+    const rebuilt = await t.prepare('mAbC12', { offline: true, rebuild: true });
+    expect(rebuilt.outcome).toBe('drafted');
+    expect(rebuilt.reviewId).toBe(a.reviewId);
+    expect(rebuilt.removedImages).toEqual([]);
+    expect(rebuilt.notes.join('\n')).toMatch(
+      /images\/02-dish-1.jpg is no longer this submission's, but another review uses it: kept/,
+    );
+    expect(existsSync(path.join(draft, photoA))).toBe(true);
+    expect(await readFile(fileB, 'utf8')).toBe(savedB);
+    expect(reviewImages((await t.readJson(fileA)) as unknown as Review)).not.toContain(photoA);
+    expect(
+      (await validate(t)).diagnostics.filter(
+        (d) => d.restaurantId === a.restaurantId && (d.level === 'error' || d.draftError),
+      ),
+    ).toEqual([]);
   });
 });

@@ -46,10 +46,11 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import path from 'node:path';
 import { z } from 'zod';
 import {
+  canonicalInstant,
   contributorIdSchema,
+  formatIssues,
   idSchema,
   normalizeKeyword,
-  canonicalInstant,
   restaurantInfoSchema,
   reviewIdSchema,
   reviewSchema,
@@ -172,6 +173,11 @@ const prepareStateSchema = z.strictObject({
       status: z.enum(['pending', 'manual', 'done', 'resolved']),
       at: z.string(),
       details: z.array(z.string()),
+      /**
+       * Set when what other submissions or reviews still use cannot be read:
+       * nothing can be taken out safely, and --resolved does not apply.
+       */
+      unsafe: z.literal(true).optional(),
     })
     .optional(),
   preparedAt: z.string(),
@@ -631,7 +637,8 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   // The review's time follows the submission's; without a valid one, the kept fallback.
   const time = submissionTime(submission.submittedAt);
   if ('at' in time) {
-    if (state.submittedAt.at !== time.at) {
+    // A real time replaces a fallback even at the same instant (its source changes).
+    if (state.submittedAt.at !== time.at || state.submittedAt.from !== 'submission') {
       report.notes.push(
         state.submittedAt.from === 'submission'
           ? `the submission time changed from ${state.submittedAt.at} to ${time.at}; the review follows it`
@@ -680,11 +687,27 @@ export async function prepareSubmission(id: string, options: PrepareOptions): Pr
   const images = existsSync(imagesDir) ? new Set(await readdir(imagesDir)) : new Set<string>();
   const usable = photoState.filter((p) => (p.status === 'downloaded' || p.status === 'recovered') && p.file && p.sha256);
   const saveState = () => writeAtomic(path.join(dir, PREPARE_STATE_FILE), json(state));
-  /** Removes an image this submission imported, unless another slot still uses it or it was changed by hand. */
+  /**
+   * Removes an image this submission imported, unless another slot still uses
+   * it, it was changed by hand, or another review uses it (the maintainer gave
+   * it to that review; an unreadable review might, so it stays then too).
+   */
   const removeOwnImage = async (mapping: PrepareState['photos'][number]) => {
     const file = path.join(target, mapping.image);
     if (state!.photos.some((m) => m.image === mapping.image)) return false;
     if (!images.has(path.basename(mapping.image)) || (await fileHash(file)) !== mapping.stored) return false;
+    const others = await survivingReviews(target, reviewId);
+    if (others.reviews.some((r) => reviewImages(r).includes(mapping.image))) {
+      report.notes.push(`${mapping.image} is no longer this submission's, but another review uses it: kept`);
+      return false;
+    }
+    if (others.unreadable.length) {
+      report.notes.push(
+        `${mapping.image} is no longer this submission's; kept, since ` +
+          `${others.unreadable.map((u) => `${REVIEWS_DIR}/${u.file}`).join(', ')} cannot be read and may use it`,
+      );
+      return false;
+    }
     await rm(file);
     images.delete(path.basename(mapping.image));
     report.removedImages.push(mapping.image);
@@ -1224,14 +1247,6 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
 
   const reviewsDir = path.join(target, REVIEWS_DIR);
   const own = (ext: 'json' | 'md') => path.join(reviewsDir, `${rid}.${ext}`);
-  const parseReview = async (file: string) => {
-    try {
-      return existsSync(file) ? reviewSchema.parse(JSON.parse(await readFile(file, 'utf8'))) : undefined;
-    } catch {
-      // An invalid review is reported by content:check; it keeps whatever it uses.
-      return undefined;
-    }
-  };
   const conflicts: string[] = [];
 
   // Its own review goes while it is exactly what it wrote (with its photos);
@@ -1242,19 +1257,30 @@ export async function rejectSubmission(id: string, options: RejectOptions): Prom
   const keepReview = !ours && !gone;
   if (keepReview) conflicts.push(`${REVIEWS_DIR}/${rid}.json (its text or photos) edited by hand since this submission wrote it`);
 
-  // The reviews that stay in the draft (they keep their dishes and photos).
-  const kept: Review[] = [];
-  if (existsSync(reviewsDir)) {
-    for (const f of await readdir(reviewsDir)) {
-      if (!f.endsWith('.json') || (f === `${rid}.json` && !keepReview)) continue;
-      const review = await parseReview(path.join(reviewsDir, f));
-      if (review) kept.push(review);
-    }
-  }
+  // The reviews that stay in the draft (they keep their dishes and photos),
+  // and the other submissions still in it (what they added or give stays).
+  // When any of them cannot be read, what they use is unknown: nothing is
+  // taken out, whatever the maintainer confirms, until it can be read again.
+  const surviving = await survivingReviews(target, keepReview ? undefined : rid);
+  const kept = surviving.reviews;
   const rated = new Set(kept.flatMap((r) => (r.dishes ?? []).map((d) => d.dish)));
-
-  // The other submissions still in this draft: what they added or give stays.
-  const peers = await activeSubmissions(options.submissionsDir, id, state.restaurantId);
+  const { peers, problems } = await activeSubmissions(options.submissionsDir, id, state.restaurantId);
+  const unsafe = [
+    ...surviving.unreadable.map(({ file, why }) => `${REVIEWS_DIR}/${file} cannot be read (${why}); repair the review`),
+    ...problems,
+  ];
+  if (unsafe.length) {
+    state.rejection = { status: 'manual', at: clock(), details: unsafe, unsafe: true };
+    await saveState();
+    return {
+      status: 'manual',
+      messages: [
+        ...messages,
+        `nothing was taken out of private/drafts/${state.restaurantId}/: it is unknown what these still use: ` +
+          `${unsafe.join('; ')}. --resolved does not apply; fix them and run the rejection again`,
+      ],
+    };
+  }
   const handedOver = new Map<string, OwnedItem[]>();
 
   // info.json: only what this submission added, where it is still as written
@@ -1372,19 +1398,66 @@ function withoutItems(info: Record<string, unknown>, items: InfoItem[]): Record<
   return result;
 }
 
-/** The other submissions prepared into this restaurant's draft and not rejected since. */
+/**
+ * The other submissions prepared into this restaurant's draft and not
+ * rejected since (from the log), and why any of them cannot be used: its
+ * prepare.json is missing, unreadable, or about another restaurant, or says
+ * nothing of it is in the draft although no rejection finished. A finished
+ * rejection whose log update was interrupted is simply not in the draft.
+ */
 async function activeSubmissions(submissionsDir: string, id: string, restaurantId: string) {
-  const found: { id: string; state: PrepareState }[] = [];
-  for (const [other, entry] of Object.entries(await readLog(submissionsDir))) {
+  const peers: { id: string; state: PrepareState }[] = [];
+  const problems: string[] = [];
+  const restore = (other: string) =>
+    `restore private/submissions/tally-${other}/${PREPARE_STATE_FILE} from the backup, or check the draft and run ` +
+    `"npm run content:submission -- mark ${other} --status rejected --state-lost <what you checked>"`;
+  for (const [other, entry] of Object.entries(await readLog(submissionsDir)).sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (other === id || entry.restaurantId !== restaurantId || !entry.draftWritten) continue;
+    let state: PrepareState | undefined;
     try {
-      const state = await readState(submissionDir(submissionsDir, other));
-      if (state && state.restaurantId === restaurantId && state.written !== undefined) found.push({ id: other, state });
-    } catch {
-      // Reported by content:check (rejectionProblems).
+      state = await readState(submissionDir(submissionsDir, other));
+    } catch (e) {
+      problems.push(`submission ${other}: ${PREPARE_STATE_FILE} cannot be read (${(e as Error).message.split('\n')[0]}); ${restore(other)}`);
+      continue;
+    }
+    if (!state) {
+      problems.push(`submission ${other}: ${PREPARE_STATE_FILE} is missing although the log shows it wrote into this draft; ${restore(other)}`);
+    } else if (state.restaurantId !== restaurantId) {
+      problems.push(
+        `submission ${other}: ${PREPARE_STATE_FILE} is about ${state.restaurantId}, but the log links it to ${restaurantId}; ` +
+          'check which restaurant it wrote into and correct the log or the state',
+      );
+    } else if (state.written !== undefined) {
+      peers.push({ id: other, state });
+    } else if (state.rejection?.status !== 'done' && state.rejection?.status !== 'resolved') {
+      problems.push(
+        `submission ${other}: the log shows it wrote into this draft, but its ${PREPARE_STATE_FILE} records nothing written ` +
+          `and no finished rejection; prepare it again or ${restore(other)}`,
+      );
     }
   }
-  return found.sort((a, b) => (a.id < b.id ? -1 : 1));
+  return { peers, problems };
+}
+
+/**
+ * The reviews in a draft other than `except` (a review id), and those that
+ * cannot be read (and why); an unreadable one may still use dishes and photos.
+ */
+async function survivingReviews(target: string, except?: string) {
+  const reviews: Review[] = [];
+  const unreadable: { file: string; why: string }[] = [];
+  const dir = path.join(target, REVIEWS_DIR);
+  if (!existsSync(dir)) return { reviews, unreadable };
+  for (const f of (await readdir(dir)).sort()) {
+    if (!f.endsWith('.json') || f === `${except}.json`) continue;
+    try {
+      reviews.push(reviewSchema.parse(JSON.parse(await readFile(path.join(dir, f), 'utf8'))));
+    } catch (e) {
+      const why = e instanceof z.ZodError ? formatIssues(e).join('; ') : ((e as Error).message.split('\n')[0] ?? 'invalid');
+      unreadable.push({ file: f, why });
+    }
+  }
+  return { reviews, unreadable };
 }
 
 /** The submission whose prepare created this restaurant's draft, if one did (rejected or not). */
@@ -1542,7 +1615,13 @@ export async function rejectionProblems(submissionsDir: string, restaurantId: st
     }
     if (state?.restaurantId !== restaurantId) continue;
     const open = unfinishedRejection(state);
-    if (open?.status === 'manual') {
+    if (open?.status === 'manual' && open.unsafe) {
+      problems.push(
+        `submission ${id} was rejected, but nothing of it was taken out of the draft: it is unknown what other ` +
+          `reviews or submissions still use (${open.details.join('; ')}); fix that and ${again(id)} again ` +
+          '(--resolved does not apply)',
+      );
+    } else if (open?.status === 'manual') {
       problems.push(
         `submission ${id} was rejected, but its content is still in the draft: changed (by hand or by a later submission) where it also wrote ` +
           `(${open.details.join(', ')}); remove its content there and ${again(id)} again, or add --resolved after ` +

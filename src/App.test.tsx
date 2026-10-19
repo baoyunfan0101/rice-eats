@@ -1735,6 +1735,34 @@ describe('submissions', () => {
       expect(overpass).toHaveLength(2);
     });
 
+    it('finds a listed restaurant without a location by another name, without a pin', async () => {
+      index = {
+        ...index,
+        restaurants: [
+          ...index.restaurants,
+          summary('night-market', { name: '夜市小吃', altNames: ['Night Bites'] }),
+        ],
+      };
+      const user = userEvent.setup();
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      expect(screen.queryByRole('button', { name: /图钉：夜市小吃/ })).not.toBeInTheDocument();
+      await user.type(addressBox(), 'night bites{Enter}');
+      const listed = await screen.findByRole('list', { name: '餐厅' });
+      const result = within(listed).getByRole('button', { name: /夜市小吃.*已收录/ });
+      expect(result).toHaveTextContent('地图上暂无位置');
+      await user.click(result);
+      // Still no pin: its location is never invented.
+      expect(screen.queryByRole('button', { name: /图钉：夜市小吃/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: NEXT }));
+      expect(formParams()).toEqual({
+        restaurant_id: 'night-market',
+        restaurant_name: '夜市小吃',
+        selection_method: 'existing',
+        source: 'site',
+      });
+    });
+
     it('shows search errors with the manual fallback', async () => {
       placesStatus = 429;
       overpassStatus = 429;
@@ -1847,6 +1875,28 @@ describe('submissions', () => {
       await user.click(screen.getByRole('button', { name: '搜索' }));
       await user.click(screen.getByRole('button', { name: '搜索' }));
       expect(geocodes).toHaveLength(3);
+    });
+
+    it('keeps a submitted search when the box is edited: editing only prepares the next query', async () => {
+      const user = userEvent.setup();
+      const release = holdGeocode('westheimer');
+      visit('submit/');
+      await screen.findByRole('button', { name: '图钉：Noodle Corner' });
+      const input = addressBox();
+      await user.type(input, 'Westheimer{Enter}');
+      expect(geocodes).toHaveLength(1);
+      // While it is pending, the contributor starts typing another query.
+      await user.type(input, ' Rd');
+      expect(geocodes).toHaveLength(1);
+      release();
+      // The submitted search still answers and moves the map.
+      await waitFor(() => expect(mapView()).toBe('29.7375,-95.4422,16'));
+      expect(input).toHaveValue('Westheimer Rd');
+      // Its results belong to its own query: they show again when the box matches it.
+      expect(screen.queryByRole('list', { name: '地址或地点' })).not.toBeInTheDocument();
+      await user.type(input, '{Backspace}{Backspace}{Backspace}');
+      expect(await screen.findByRole('list', { name: '地址或地点' })).toBeInTheDocument();
+      expect(geocodes).toHaveLength(1);
     });
 
     it('explains failed or empty address searches and retries', async () => {

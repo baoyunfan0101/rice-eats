@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { LatLngValue } from '../../shared/submission';
+import { isValidLatLng, type LatLngValue } from '../../shared/submission';
 import { PRESET_AREAS, saveLastArea, type SearchArea } from '../lib/areas';
 import { useContentIndex } from '../lib/content';
 import type { Place } from '../lib/geocode';
@@ -16,7 +16,7 @@ import {
   type RestaurantCandidate,
 } from '../lib/poi';
 import { PixelCheck, PixelChevron, PixelPin } from '../components/PixelIcons';
-import { ListedBadge, MapSearch, normalizeName } from './MapSearch';
+import { ListedBadge, MapSearch, normalizeName, type ListedRestaurant } from './MapSearch';
 import type { MapArea } from './PickerMap';
 import type { Selection } from './submitTypes';
 
@@ -66,7 +66,10 @@ export function selectionKey(s: Selection): string {
 /** Zoom used when the map focuses on a selected restaurant. */
 const FOCUS_ZOOM = 16;
 
-/** Map pins of restaurants on Rice Eats (with a location). */
+/**
+ * Restaurants on Rice Eats: every one is found by name and other names; only
+ * those with a valid location are map pins (none is ever placed elsewhere).
+ */
 function listedCandidates(
   restaurants: {
     id: string;
@@ -76,25 +79,23 @@ function listedCandidates(
     location?: LatLngValue;
   }[],
 ) {
-  return restaurants.flatMap((r) =>
-    r.location
-      ? [
-          {
-            candidate: {
-              key: `existing:${r.id}`,
-              provider: 'existing',
-              poiId: r.id,
-              restaurantId: r.id,
-              name: r.name,
-              ...(r.address ? { address: r.address } : {}),
-              location: r.location,
-            } satisfies RestaurantCandidate,
-            names: [r.name, ...r.altNames].map(normalizeName),
-          },
-        ]
-      : [],
-  );
+  return restaurants.map((r) => ({
+    candidate: {
+      key: `existing:${r.id}`,
+      provider: 'existing',
+      poiId: r.id,
+      restaurantId: r.id,
+      name: r.name,
+      ...(r.address ? { address: r.address } : {}),
+      ...(isValidLatLng(r.location) ? { location: r.location } : {}),
+    } satisfies ListedRestaurant,
+    names: [r.name, ...r.altNames].map(normalizeName),
+  }));
 }
+
+const located = <T extends { candidate: ListedRestaurant }>(
+  l: T,
+): l is T & { candidate: RestaurantCandidate } => !!l.candidate.location;
 
 /** A map place this close to a listed restaurant with the same name is that restaurant. */
 const SAME_PLACE_METERS = 100;
@@ -249,7 +250,7 @@ export function RestaurantSelector({
       c.location.lng >= area.bounds.west &&
       c.location.lng <= area.bounds.east);
   // Listed restaurants show once the map reports what is in view (never off-map pins).
-  const listedInView = area ? listedAll.filter((l) => inView(l.candidate)) : [];
+  const listedInView = area ? listedAll.filter(located).filter((l) => inView(l.candidate)) : [];
   // A map place that is a listed restaurant shows once, as the listed one.
   const isListed = (c: RestaurantCandidate) =>
     listedInView.some(
@@ -494,14 +495,15 @@ function DiscoveryStatus({
 const sameLocation = (a: LatLngValue, b: LatLngValue | undefined) =>
   !!b && a.lat === b.lat && a.lng === b.lng;
 
-function fromCandidate(c: RestaurantCandidate): Selection {
+function fromCandidate(c: ListedRestaurant): Selection {
   if (c.restaurantId) {
+    // A listed restaurant keeps its id; without a location it has none here either.
     return {
       method: 'existing',
       restaurantId: c.restaurantId,
       name: c.name,
       address: c.address,
-      location: c.location,
+      ...(c.location ? { location: c.location } : {}),
     };
   }
   return {

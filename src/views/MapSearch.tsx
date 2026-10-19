@@ -18,6 +18,12 @@ type Search =
 export const normalizeName = (text: string) =>
   text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
+/**
+ * A restaurant on Rice Eats in the search results: found by name and other
+ * names wherever it is, also without a location (it then has no map pin).
+ */
+export type ListedRestaurant = Omit<RestaurantCandidate, 'location'> & { location?: LatLngValue };
+
 /** A searched place to eat, as a map candidate (its Geoapify POI). */
 const asCandidate = (p: Place): RestaurantCandidate => ({
   key: `${p.restaurant!.provider}:${p.restaurant!.id}`,
@@ -67,9 +73,9 @@ export function MapSearch({
   near: LatLngValue;
   /** Shared with the map, so that moving the map by hand also counts as an action. */
   intent: LocateIntent;
-  /** Restaurants on Rice Eats whose name matches the query, wherever they are. */
-  listed?: RestaurantCandidate[];
-  onChooseRestaurant?: (c: RestaurantCandidate) => void;
+  /** Restaurants on Rice Eats whose name matches the query, wherever they are (with or without a location). */
+  listed?: ListedRestaurant[];
+  onChooseRestaurant?: (c: ListedRestaurant) => void;
   onLocate: (area: SearchArea, place?: Place) => void;
 }) {
   const [locating, setLocating] = useState<Locating>('idle');
@@ -232,8 +238,8 @@ function SearchResults({
   onRetry,
 }: {
   search: Exclude<Search, { status: 'idle' }>;
-  listed: RestaurantCandidate[];
-  onChooseRestaurant?: (c: RestaurantCandidate) => void;
+  listed: ListedRestaurant[];
+  onChooseRestaurant?: (c: ListedRestaurant) => void;
   onChoosePlace: (place: Place) => void;
   onRetry: (query: string) => void;
 }) {
@@ -242,6 +248,7 @@ function SearchResults({
   const isListed = (c: RestaurantCandidate) =>
     listed.some(
       (l) =>
+        !!l.location &&
         normalizeName(l.name) === normalizeName(c.name) &&
         distanceMeters(l.location, c.location) <= 150,
     );
@@ -251,7 +258,7 @@ function SearchResults({
         .map(asCandidate)
         .filter((c) => !isListed(c))
     : [];
-  const restaurants = [...listed, ...found];
+  const restaurants: ListedRestaurant[] = [...listed, ...found];
   const others = onChooseRestaurant ? places.filter((p) => !p.restaurant) : places;
   const note =
     search.status === 'loading'
@@ -297,6 +304,7 @@ function SearchResults({
                   {c.restaurantId && <ListedBadge />}
                 </span>
                 {c.address && <span className="block text-xs text-muted">{c.address}</span>}
+                {!c.location && <span className="block text-xs text-muted">地图上暂无位置</span>}
               </button>
             </li>
           ))}
