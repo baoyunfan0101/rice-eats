@@ -26,12 +26,13 @@ describe('content pipeline', () => {
   it('includes valid published content and writes website data', async () => {
     const root = await tempDir();
     const dir = await writeRestaurant(root, 'noodles', validInfo('noodles'), {
-      'reviews/u-001.json': JSON.stringify({
-        date: '2026-10-01',
+      'reviews/v-u001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
         rating: 4,
         images: ['images/02-bowl.png'],
       }),
-      'reviews/u-001.md': '# Title\n\nHello **world**.\n',
+      'reviews/v-u001.md': '# Title\n\nHello **world**.\n',
     });
     await makeImage(path.join(dir, 'images/01-front.jpg'), { width: 2000, height: 1500 });
     await makeImage(path.join(dir, 'images/02-bowl.png'), { format: 'png' });
@@ -51,8 +52,9 @@ describe('content pipeline', () => {
     // A review's headings start at <h3> (under the page title and "点评").
     expect(detail.reviews).toMatchObject([
       {
-        id: 'u-001',
+        id: 'v-u001',
         contributor: { id: 'u-001', name: 'Tester' },
+        submittedAt: '2026-10-01T12:00:00Z',
         date: '2026-10-01',
         rating: 4,
         imageIndexes: [1],
@@ -87,7 +89,8 @@ describe('content pipeline', () => {
       tags: [],
       images: [],
       dishes: [],
-      reviews: [{ id: 'u-001', html: '', imageIndexes: [], dishes: [] }],
+      reviews: [{ id: 'v-u001', html: '', imageIndexes: [], dishes: [] }],
+      raterCount: 1,
       reviewCount: 1,
       links: {},
     });
@@ -102,8 +105,9 @@ describe('content pipeline', () => {
       'photos',
       { id: 'photos', status: 'published', name: 'Photos' },
       {
-        'reviews/u-001.json': JSON.stringify({
-          date: '2026-10-01',
+        'reviews/v-u001.json': JSON.stringify({
+          contributor: 'u-001',
+          submittedAt: '2026-10-01T12:00:00Z',
           rating: 3,
           images: ['images/01-a.jpg', 'images/02-b.jpg', 'images/03-c.jpg'],
         }),
@@ -251,17 +255,23 @@ describe('content pipeline', () => {
 
   it('detects missing, unsafe, shared, and text-placed image references', async () => {
     const root = await tempDir();
-    const review = (data: object) => JSON.stringify({ date: '2026-10-01', rating: 3, ...data });
+    const review = (data: object) =>
+      JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 3,
+        ...data,
+      });
     await writeRestaurant(root, 'a', validInfo('a', { dishes: [{ id: 'd1', name: 'x' }] }), {
-      'reviews/u-001.json': review({ dishes: [{ dish: 'd1', images: ['images/01-nope.jpg'] }] }),
+      'reviews/v-u001.json': review({ dishes: [{ dish: 'd1', images: ['images/01-nope.jpg'] }] }),
     });
     await writeRestaurant(root, 'b', validInfo('b'), {
-      'reviews/u-001.json': review({ images: ['../a/info.json'] }),
+      'reviews/v-u001.json': review({ images: ['../a/info.json'] }),
     });
     const c = await writeRestaurant(root, 'c', validInfo('c'), {
-      'reviews/u-001.json': review({ images: ['images/01-a.jpg'] }),
-      'reviews/u-001.md': '![x](images/01-a.jpg)\n',
-      'reviews/u-002.json': review({ images: ['images/01-a.jpg'] }),
+      'reviews/v-u001.json': review({ images: ['images/01-a.jpg'] }),
+      'reviews/v-u001.md': '![x](images/01-a.jpg)\n',
+      'reviews/v-u002.json': review({ images: ['images/01-a.jpg'] }),
     });
     await makeImage(path.join(c, 'images/01-a.jpg'));
     const messages = errors(
@@ -272,11 +282,11 @@ describe('content pipeline', () => {
         ]),
       }),
     ).join('\n');
-    expect(messages).toMatch(/a\/reviews\/u-001.json: "images\/01-nope.jpg" is not in images\//);
+    expect(messages).toMatch(/a\/reviews\/v-u001.json: "images\/01-nope.jpg" is not in images\//);
     expect(messages).toMatch(/images.0: must be a file in the restaurant's images\/ folder/);
-    expect(messages).toMatch(/c\/reviews\/u-001.md: the review text may not place images/);
+    expect(messages).toMatch(/c\/reviews\/v-u001.md: the review text may not place images/);
     expect(messages).toMatch(
-      /"images\/01-a.jpg" is also used by the review of u-00\d; a photo belongs to one review/,
+      /"images\/01-a.jpg" is also used by review v-u00\d; a photo belongs to one review/,
     );
   });
 
@@ -298,7 +308,12 @@ describe('content pipeline', () => {
   it('requires a whole-number rating 1-5 in every review', async () => {
     const root = await tempDir();
     const review = (data: object) => ({
-      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 3, ...data }),
+      'reviews/v-u001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 3,
+        ...data,
+      }),
     });
     for (const rating of [1, 2, 3, 4, 5])
       await writeRestaurant(root, `r${rating}`, validInfo(`r${rating}`), review({ rating }));
@@ -309,7 +324,7 @@ describe('content pipeline', () => {
       const bad = await tempDir();
       await writeRestaurant(bad, `x${i}`, validInfo(`x${i}`), review({ rating }));
       expect(errors(await pipeline(bad)).join('\n'), String(rating)).toMatch(
-        /u-001.json: rating: /,
+        /v-u001.json: rating: /,
       );
     }
   });
@@ -317,17 +332,58 @@ describe('content pipeline', () => {
   it('averages the reviews: the level, one decimal, and how many reviewed', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'r', validInfo('r'), {
-      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 5 }),
-      'reviews/u-002.json': JSON.stringify({ date: '2026-10-03', rating: 4 }),
-      'reviews/u-003.json': JSON.stringify({ date: '2026-10-02', rating: 4 }),
-      'reviews/u-004.json': JSON.stringify({ date: '2026-10-02', rating: 4 }),
+      'reviews/v-u001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 5,
+      }),
+      'reviews/v-u002.json': JSON.stringify({
+        contributor: 'u-002',
+        submittedAt: '2026-10-03T12:00:00Z',
+        rating: 4,
+      }),
+      'reviews/v-u003.json': JSON.stringify({
+        contributor: 'u-003',
+        submittedAt: '2026-10-02T12:00:00Z',
+        rating: 4,
+      }),
+      'reviews/v-u004.json': JSON.stringify({
+        contributor: 'u-004',
+        submittedAt: '2026-10-02T12:00:00Z',
+        rating: 4,
+      }),
     });
     const people = [1, 2, 3, 4].map((n) => ({ id: `u-00${n}`, name: `P${n}` }));
     const detail = (await pipeline(root, { contributorsFile: await contributors(people) }))
       .details[0]!;
-    expect(detail).toMatchObject({ rating: 4, ratingAverage: 4.3, reviewCount: 4 });
-    // Newest first; the same day by contributor id.
-    expect(detail.reviews.map((r) => r.id)).toEqual(['u-002', 'u-003', 'u-004', 'u-001']);
+    expect(detail).toMatchObject({ rating: 4, ratingAverage: 4.3, raterCount: 4, reviewCount: 4 });
+    // Newest first; the same instant by review id.
+    expect(detail.reviews.map((r) => r.id)).toEqual(['v-u002', 'v-u003', 'v-u004', 'v-u001']);
+  });
+
+  it('orders by the instant, not the text or the day, and breaks ties by review id', async () => {
+    const root = await tempDir();
+    const at = (contributor: string, submittedAt: string, rating: number) =>
+      JSON.stringify({ contributor, submittedAt, rating });
+    await writeRestaurant(root, 'r', validInfo('r'), {
+      // 20:00 in Houston is 01:00Z the next day: later than 23:00Z.
+      'reviews/v-late.json': at('u-001', '2026-10-14T20:00:00-05:00', 5),
+      'reviews/v-early.json': at('u-001', '2026-10-14T23:00:00Z', 1),
+      'reviews/v-b.json': at('u-002', '2026-10-14T12:00:00Z', 2),
+      'reviews/v-a.json': at('u-002', '2026-10-14T12:00:00Z', 4),
+    });
+    const people = [
+      { id: 'u-001', name: 'A' },
+      { id: 'u-002', name: 'B' },
+    ];
+    for (let i = 0; i < 2; i++) {
+      const detail = (await pipeline(root, { contributorsFile: await contributors(people) }))
+        .details[0]!;
+      expect(detail.reviews.map((r) => r.id)).toEqual(['v-late', 'v-early', 'v-a', 'v-b']);
+      // Each contributor's latest: v-late (5) and, tied at the same instant, v-a (4).
+      expect(detail).toMatchObject({ ratingAverage: 4.5, raterCount: 2, reviewCount: 4 });
+      expect(detail.contributors.map((c) => c.id)).toEqual(['u-001', 'u-002']);
+    }
   });
 
   it('counts dish verdicts 1 and -1 (none is no opinion) and rejects other values', async () => {
@@ -338,8 +394,9 @@ describe('content pipeline', () => {
       { id: 'd3', name: 'Iced Tea' },
     ];
     await writeRestaurant(root, 'r', validInfo('r', { dishes }), {
-      'reviews/u-001.json': JSON.stringify({
-        date: '2026-10-01',
+      'reviews/v-u001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
         rating: 3,
         dishes: [
           { dish: 'd1', verdict: 1, comment: 'Good' },
@@ -347,8 +404,9 @@ describe('content pipeline', () => {
           { dish: 'd3' },
         ],
       }),
-      'reviews/u-002.json': JSON.stringify({
-        date: '2026-10-02',
+      'reviews/v-u002.json': JSON.stringify({
+        contributor: 'u-002',
+        submittedAt: '2026-10-02T12:00:00Z',
         rating: 3,
         dishes: [{ dish: 'd1', verdict: 1 }],
       }),
@@ -368,8 +426,8 @@ describe('content pipeline', () => {
     ]);
     // Every review's word on the dish, newest first.
     expect(d[0]!.reviews.map((r) => [r.reviewId, r.verdict, r.comment])).toEqual([
-      ['u-002', 1, undefined],
-      ['u-001', 1, 'Good'],
+      ['v-u002', 1, undefined],
+      ['v-u001', 1, 'Good'],
     ]);
     for (const [i, verdict] of [0, 2, '推荐', true, null].entries()) {
       const bad = await tempDir();
@@ -378,8 +436,9 @@ describe('content pipeline', () => {
         `x${i}`,
         validInfo(`x${i}`, { dishes: [{ id: 'd1', name: 'd' }] }),
         {
-          'reviews/u-001.json': JSON.stringify({
-            date: '2026-10-01',
+          'reviews/v-u001.json': JSON.stringify({
+            contributor: 'u-001',
+            submittedAt: '2026-10-01T12:00:00Z',
             rating: 3,
             dishes: [{ dish: 'd1', verdict }],
           }),
@@ -392,8 +451,9 @@ describe('content pipeline', () => {
     // A review may only rate the restaurant's dishes.
     const unknown = await tempDir();
     await writeRestaurant(unknown, 'u', validInfo('u'), {
-      'reviews/u-001.json': JSON.stringify({
-        date: '2026-10-01',
+      'reviews/v-u001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
         rating: 3,
         dishes: [{ dish: 'd9' }],
       }),
@@ -415,8 +475,9 @@ describe('content pipeline', () => {
         ],
       }),
       {
-        'reviews/u-001.json': JSON.stringify({
-          date: '2026-10-01',
+        'reviews/v-u001.json': JSON.stringify({
+          contributor: 'u-001',
+          submittedAt: '2026-10-01T12:00:00Z',
           rating: 3,
           images: ['images/01-front.jpg'],
           dishes: [
@@ -470,8 +531,9 @@ describe('content pipeline', () => {
       'a',
       validInfo('a', { cuisines: ['sichuan'], tags: ['date'], dishes: [{ id: 'd1', name: 'd' }] }),
       {
-        'reviews/u-001.json': JSON.stringify({
-          date: '2026-10-01',
+        'reviews/v-u001.json': JSON.stringify({
+          contributor: 'u-001',
+          submittedAt: '2026-10-01T12:00:00Z',
           rating: 2,
           dishes: [{ dish: 'd1', verdict: -1 }],
         }),
@@ -485,27 +547,38 @@ describe('content pipeline', () => {
     expect(json).not.toMatch(/NPC|川菜|避雷/);
   });
 
-  it('needs a review to publish, by a known contributor, in reviews/<contributor id>.json', async () => {
+  it('needs a review to publish, by a known contributor, in reviews/<review id>.json', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'a', validInfo('a'), { 'images/.keep': '' });
     const { rm } = await import('node:fs/promises');
     await rm(path.join(root, 'a', 'reviews'), { recursive: true });
     await writeRestaurant(root, 'b', validInfo('b'), {
-      'reviews/u-999.json': JSON.stringify({ date: '2026-10-01', rating: 3 }),
+      'reviews/v-u999.json': JSON.stringify({
+        contributor: 'u-999',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 3,
+      }),
     });
     await writeRestaurant(root, 'c', validInfo('c'), {
-      'reviews/u-001.json': JSON.stringify({ date: 'yesterday' }),
+      'reviews/v-u001.json': JSON.stringify({ submittedAt: 'yesterday', rating: 3 }),
+      'reviews/u-001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 3,
+      }),
       'reviews/notes.txt': 'x',
-      'reviews/u-002.md': 'text without its review',
+      'reviews/v-u002.md': 'text without its review',
     });
     const messages = errors(await pipeline(root)).join('\n');
     expect(messages).toMatch(
       /a\/info.json: published restaurants need at least one review in reviews\//,
     );
-    expect(messages).toMatch(/b\/reviews\/u-999.json: "u-999" is not a known contributor/);
-    expect(messages).toMatch(/c\/reviews\/u-001.json: date: must be a date like "2026-10-14"/);
+    expect(messages).toMatch(/b\/reviews\/v-u999.json: "u-999" is not a known contributor/);
+    expect(messages).toMatch(/c\/reviews\/v-u001.json: submittedAt: /);
+    expect(messages).toMatch(/c\/reviews\/v-u001.json: contributor: /);
     expect(messages).toMatch(/c\/reviews\/notes.txt: unexpected file/);
-    expect(messages).toMatch(/c\/reviews\/u-002.md: a review text needs its u-002.json/);
+    expect(messages).toMatch(/c\/reviews\/u-001.json: unexpected file/);
+    expect(messages).toMatch(/c\/reviews\/v-u002.md: a review text needs its v-u002.json/);
   });
 
   it('keeps contact details out of the public contributor list', async () => {
@@ -528,8 +601,12 @@ describe('content pipeline', () => {
   it('sanitizes review Markdown', async () => {
     const root = await tempDir();
     await writeRestaurant(root, 'a', validInfo('a'), {
-      'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 3 }),
-      'reviews/u-001.md': [
+      'reviews/v-u001.json': JSON.stringify({
+        contributor: 'u-001',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 3,
+      }),
+      'reviews/v-u001.md': [
         '<script>alert(1)</script>',
         '<img src=x onerror=alert(1)>',
         '[bad](javascript:alert(1)) [good](https://example.com)',
@@ -590,7 +667,13 @@ describe('content pipeline', () => {
       drafts,
       'wip',
       { id: 'wip', status: 'draft', name: 'WIP' },
-      { 'reviews/u-002.json': JSON.stringify({ date: '2026-10-01', rating: 3 }) },
+      {
+        'reviews/v-u002.json': JSON.stringify({
+          contributor: 'u-002',
+          submittedAt: '2026-10-01T12:00:00Z',
+          rating: 3,
+        }),
+      },
     );
     await writeRestaurant(drafts, 'early', validInfo('early'));
 
@@ -611,7 +694,11 @@ describe('content pipeline', () => {
 
     // A public restaurant may not reference a contributor who is still private.
     await writeRestaurant(root, 'leak', validInfo('leak'), {
-      'reviews/u-002.json': JSON.stringify({ date: '2026-10-01', rating: 3 }),
+      'reviews/v-u002.json': JSON.stringify({
+        contributor: 'u-002',
+        submittedAt: '2026-10-01T12:00:00Z',
+        rating: 3,
+      }),
     });
     const leak = await pipeline(root, {
       draftsDir: drafts,

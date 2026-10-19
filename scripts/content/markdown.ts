@@ -1,4 +1,4 @@
-// A review's text (reviews/<contributor id>.md) -> sanitized HTML. Raw HTML in Markdown is dropped, links are
+// A review's text (reviews/<review id>.md) -> sanitized HTML. Raw HTML in Markdown is dropped, links are
 // limited to safe protocols, and local images are replaced by processed renditions.
 
 import type { Element, Root as HastRoot } from 'hast';

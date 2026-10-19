@@ -164,16 +164,30 @@ const images = z
   .min(1, 'leave "images" out when there is no photo')
   .refine(unique, 'must not repeat');
 
+/** Review ids look like "v-7k3m9q": generated once, never derived from content or contributor. */
+export const reviewIdSchema = z.string().regex(/^v-[a-z0-9]+$/, 'must look like "v-7k3m9q"');
+
+/** An instant with a time zone, e.g. "2026-10-14T19:30:00Z", so reviews of one day still have an order. */
+const timestamp = z
+  .string()
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/,
+    'must be a time like "2026-10-14T19:30:00Z"',
+  )
+  .refine((value) => !Number.isNaN(Date.parse(value)), 'must be a valid time');
+
 /**
- * content/restaurants/<id>/reviews/<contributor id>.json: one contributor's
- * review of the restaurant (one per contributor; a later submission by the
- * same contributor updates it). The review text, if any, is the .md file
- * with the same name. Photos are stored in the restaurant's images/ and
+ * content/restaurants/<id>/reviews/<review id>.json: one review of the
+ * restaurant, from one submission. A contributor may have several reviews of
+ * one restaurant; each stands on its own. The review text, if any, is the .md
+ * file with the same name. Photos are stored in the restaurant's images/ and
  * belong to one review each.
  */
 export const reviewSchema = z.strictObject({
-  /** The day the review was submitted (or last updated), YYYY-MM-DD. */
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date like "2026-10-14"'),
+  /** Who wrote it (content/contributors.json). */
+  contributor: contributorIdSchema,
+  /** When it was submitted; orders reviews (newest first) and picks a contributor's latest. */
+  submittedAt: timestamp,
   rating,
   /** Photos of the restaurant (not of one dish), in display order. */
   images: images.optional(),

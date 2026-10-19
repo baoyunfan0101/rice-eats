@@ -64,7 +64,8 @@ describe('module boundaries', () => {
     ).toBe(true);
     expect(
       reviewSchema.safeParse({
-        date: '2026-10-14',
+        contributor: 'u-001',
+        submittedAt: '2026-10-14T19:30:00Z',
         rating: 2,
         dishes: [{ dish: 'd1', verdict: -1 }],
       }).success,

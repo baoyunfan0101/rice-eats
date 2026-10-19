@@ -189,10 +189,11 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
         ) : (
           <ol className="mt-4 space-y-4">
             {r.reviews.map((review) => (
-              <li key={review.id} className="card space-y-3 p-4">
+              <li key={review.id} id={`review-${review.id}`} className="card space-y-3 p-4">
                 <ReviewHeader
                   rating={review.rating}
                   name={review.contributor.name}
+                  submittedAt={review.submittedAt}
                   date={review.date}
                 />
                 {review.html && (
@@ -276,14 +277,19 @@ function Detail({ restaurant: r }: { restaurant: RestaurantDetail }) {
   );
 }
 
-/** "顶级 · 4.3 · 6 人评分", or "暂无评分". */
+/**
+ * "顶级 · 4.3 · 6 人评分", or "暂无评分". The count is of people: each
+ * contributor's latest review counts once (the reviews below are all of them).
+ */
 function RatingSummary({ restaurant: r }: { restaurant: RestaurantDetail }) {
   if (r.rating === undefined) return <p className="text-sm font-bold text-muted">暂无评分</p>;
   return (
     <p className="flex flex-wrap items-center gap-2" title={RATING_HINT}>
       <RatingBadge rating={r.rating} size="lg" />
       <span className="font-black">{r.ratingAverage!.toFixed(1)}</span>
-      <span className="text-sm text-muted">{r.reviewCount} 人评分</span>
+      <span className="text-sm text-muted" title="每人只计最近一条点评的评级">
+        {r.raterCount} 人评分
+      </span>
     </p>
   );
 }
@@ -301,12 +307,22 @@ function DishCounts({ dish }: { dish: Dish }) {
   );
 }
 
-function ReviewHeader({ rating, name, date }: { rating: Rating; name: string; date: string }) {
+function ReviewHeader({
+  rating,
+  name,
+  submittedAt,
+  date,
+}: {
+  rating: Rating;
+  name: string;
+  submittedAt: string;
+  date: string;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <RatingBadge rating={rating} />
       <span className="font-bold">{name}</span>
-      <time dateTime={date} className="text-sm text-muted">
+      <time dateTime={submittedAt} className="text-sm text-muted">
         {date}
       </time>
     </div>
@@ -422,7 +438,7 @@ function DishPanel({
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <VerdictBadge verdict={m.verdict} />
                   <span className="font-bold">{m.contributor.name}</span>
-                  <time dateTime={m.date} className="text-sm text-muted">
+                  <time dateTime={m.submittedAt} className="text-sm text-muted">
                     {m.date}
                   </time>
                 </div>

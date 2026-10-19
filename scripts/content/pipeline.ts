@@ -29,7 +29,7 @@ import {
   privateContributorsSchema,
   privateTagsSchema,
   publicContributorsSchema,
-  contributorIdSchema,
+  reviewIdSchema,
   restaurantInfoSchema,
   reviewSchema,
   tagRegistrySchema,
@@ -38,7 +38,7 @@ import {
 } from '../../shared/content/schema.ts';
 
 export const INFO_FILE = 'info.json';
-/** One file pair per contributor: <contributor id>.json and an optional <contributor id>.md. */
+/** One file pair per review: <review id>.json and an optional <review id>.md. */
 export const REVIEWS_DIR = 'reviews';
 export const IMAGES_DIR = 'images';
 /** Restaurants farther than this from Rice are almost certainly typos or swapped lat/lng. */
@@ -91,18 +91,32 @@ export interface LoadedRestaurant {
   /** "public": tracked in Git. "private": a local, git-ignored draft. */
   visibility: 'public' | 'private';
   info: RestaurantInfo;
-  /** Valid reviews, by contributor id (the file name). */
+  /** Valid reviews (each named by its review id). */
   reviews: LoadedReview[];
   /** Image paths relative to the folder ("images/01-x.jpg"), in display order. */
   images: string[];
 }
 
 export interface LoadedReview {
-  contributorId: string;
+  /** The review id: its file name, reviews/<id>.json. */
+  id: string;
   review: Review;
   /** The .md text, when there is one. */
   text?: string;
 }
+
+/**
+ * Newest first by submission time; reviews submitted at the same instant by
+ * review id, so the order never depends on the file system.
+ */
+export const newestFirst = (a: LoadedReview, b: LoadedReview) =>
+  Date.parse(b.review.submittedAt) - Date.parse(a.review.submittedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/** Each contributor's latest review (in newestFirst order): what the restaurant's rating counts. */
+export const latestPerContributor = (reviews: LoadedReview[]) => {
+  const seen = new Set<string>();
+  return [...reviews].sort(newestFirst).filter((r) => !seen.has(r.review.contributor) && seen.add(r.review.contributor));
+};
 
 /** Every photo a review uses: its own, then its dishes'. */
 export const reviewImages = (r: Review) => [
@@ -318,8 +332,9 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
     }
 
     // Each review belongs to a contributor; public restaurants may only use public ids.
-    for (const { contributorId: id } of restaurant.reviews) {
-      const file = display(path.join(dir, REVIEWS_DIR, `${id}.json`));
+    for (const { id: reviewId, review } of restaurant.reviews) {
+      const file = display(path.join(dir, REVIEWS_DIR, `${reviewId}.json`));
+      const id = review.contributor;
       if (!contributors.has(id)) {
         error(`"${id}" is not a known contributor (add it with "npm run content:contributor")`, file);
       } else if (isPublic && !publicContributorIds.has(id)) {
@@ -372,7 +387,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
     const known = new Set(restaurant.images);
     const dishIds = new Set((info.dishes ?? []).map((d) => d.id));
     const owner = new Map<string, string>();
-    for (const { contributorId: id, review, text } of restaurant.reviews) {
+    for (const { id, review, text } of restaurant.reviews) {
       const file = display(path.join(dir, REVIEWS_DIR, `${id}.json`));
       review.dishes?.forEach((d, i) => {
         if (!dishIds.has(d.dish)) error(`dishes.${i}.dish: "${d.dish}" is not one of the dishes in ${INFO_FILE}`, file);
@@ -380,7 +395,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
       for (const image of reviewImages(review)) {
         if (!known.has(image)) error(`"${image}" is not in ${IMAGES_DIR}/`, file);
         else if (owner.has(image) && owner.get(image) !== id) {
-          error(`"${image}" is also used by the review of ${owner.get(image)}; a photo belongs to one review`, file);
+          error(`"${image}" is also used by review ${owner.get(image)}; a photo belongs to one review`, file);
         }
         owner.set(image, id);
       }
@@ -457,7 +472,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
   return { diagnostics, restaurants: valid, contributors, tags, index, details, failed: finalFailed };
 }
 
-/** Reads reviews/: each <contributor id>.json with its optional .md; problems become diagnostics. */
+/** Reads reviews/: each <review id>.json with its optional .md; problems become diagnostics. */
 async function loadReviews(
   dir: string,
   diagnostics: Diagnostic[],
@@ -472,13 +487,13 @@ async function loadReviews(
   const reviews: LoadedReview[] = [];
   for (const file of names) {
     const match = /^(.+)\.(json|md)$/.exec(file);
-    if (!match || !contributorIdSchema.safeParse(match[1]).success) {
-      report(file, `unexpected file; ${REVIEWS_DIR}/ holds <contributor id>.json (and .md), e.g. u-001.json`);
+    if (!match || !reviewIdSchema.safeParse(match[1]).success) {
+      report(file, `unexpected file; ${REVIEWS_DIR}/ holds <review id>.json (and .md), e.g. v-7k3m9q.json`);
       continue;
     }
     const [, id, ext] = match as unknown as [string, string, string];
     if (ext === 'md') {
-      if (!names.includes(`${id}.json`)) report(file, `a review text needs its ${id}.json (date, rating, dishes)`);
+      if (!names.includes(`${id}.json`)) report(file, `a review text needs its ${id}.json (contributor, time, rating)`);
       continue;
     }
     let raw: unknown;
@@ -495,7 +510,7 @@ async function loadReviews(
     }
     const textFile = path.join(reviewsDir, `${id}.md`);
     reviews.push({
-      contributorId: id,
+      id,
       review: parsed.data,
       ...(existsSync(textFile) ? { text: await readFile(textFile, 'utf8') } : {}),
     });
@@ -563,10 +578,8 @@ async function renderRestaurant(
   const name = info.name;
   const dishById = new Map((info.dishes ?? []).map((d) => [d.id, d]));
   const people = (id: string) => contributors.get(id)!;
-  // Newest first (the same day: by contributor id, for a stable order).
-  const reviews = [...restaurant.reviews].sort(
-    (a, b) => b.review.date.localeCompare(a.review.date) || a.contributorId.localeCompare(b.contributorId),
-  );
+  const reviews = [...restaurant.reviews].sort(newestFirst);
+  const day = (time: string) => time.slice(0, 10);
 
   // Alt text: the restaurant name for the cover, the dish name (numbered when
   // a review has several photos of it), otherwise the name with the photo's position.
@@ -586,11 +599,12 @@ async function renderRestaurant(
   const indexes = (refs: string[] | undefined) => (refs ?? []).map(indexOf).filter((i) => i >= 0);
 
   const reviewDetails: ReviewDetail[] = [];
-  for (const { contributorId: id, review, text } of reviews) {
+  for (const { id, review, text } of reviews) {
     reviewDetails.push({
       id,
-      contributor: people(id),
-      date: review.date,
+      contributor: people(review.contributor),
+      submittedAt: review.submittedAt,
+      date: day(review.submittedAt),
       rating: review.rating,
       html: text?.trim()
         ? await renderMarkdown(text, (url) => {
@@ -608,13 +622,14 @@ async function renderRestaurant(
   // Placement is recorded as indexes into `images`, so the website can decide
   // where each photo appears without inspecting HTML.
   const dishes: Dish[] = (info.dishes ?? []).map((dish) => {
-    const mentions: DishReview[] = reviews.flatMap(({ contributorId: id, review }) =>
+    const mentions: DishReview[] = reviews.flatMap(({ id, review }) =>
       (review.dishes ?? [])
         .filter((d) => d.dish === dish.id)
         .map((d) => ({
           reviewId: id,
-          contributor: people(id),
-          date: review.date,
+          contributor: people(review.contributor),
+          submittedAt: review.submittedAt,
+          date: day(review.submittedAt),
           ...(d.verdict !== undefined ? { verdict: d.verdict } : {}),
           ...(d.comment ? { comment: d.comment } : {}),
           imageIndexes: indexes(d.images),
@@ -629,8 +644,10 @@ async function renderRestaurant(
       reviews: mentions,
     };
   });
-  const average = reviews.length
-    ? reviews.reduce((sum, r) => sum + r.review.rating, 0) / reviews.length
+  // Each contributor counts once, with their latest review.
+  const counted = latestPerContributor(reviews);
+  const average = counted.length
+    ? counted.reduce((sum, r) => sum + r.review.rating, 0) / counted.length
     : undefined;
 
   return {
@@ -645,6 +662,7 @@ async function renderRestaurant(
     ...(average !== undefined
       ? { rating: Math.min(5, Math.max(1, Math.round(average))) as Rating, ratingAverage: Math.round(average * 10) / 10 }
       : {}),
+    raterCount: counted.length,
     reviewCount: reviews.length,
     pricePerPerson: info.pricePerPerson,
     cover: images[0],
@@ -652,7 +670,7 @@ async function renderRestaurant(
     images,
     dishes,
     reviews: reviewDetails,
-    contributors: reviews.map((r) => people(r.contributorId)),
+    contributors: [...new Set(reviews.map((r) => r.review.contributor))].map(people),
   };
 }
 
@@ -668,6 +686,7 @@ function toSummary(detail: RestaurantDetail): RestaurantSummary {
     location: detail.location,
     rating: detail.rating,
     ratingAverage: detail.ratingAverage,
+    raterCount: detail.raterCount,
     reviewCount: detail.reviewCount,
     pricePerPerson: detail.pricePerPerson,
     cover: detail.cover,

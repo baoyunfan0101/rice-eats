@@ -494,15 +494,21 @@ test('restaurant pages render rich content and survive reloads', async ({ page }
   const response = await page.goto('/rice-eats/r/fixture-dim-sum-hall/');
   expect(response?.status()).toBe(200);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('点心大堂（虚构示例）');
-  // The overall rating is the average of every reviewer's rating.
+  // The overall rating counts each reviewer once, with their latest review
+  // (示例作者 reviewed twice: 3, then 4; the other reviewer 4).
+  await expect(page.getByText('4.0', { exact: true })).toBeVisible();
   await expect(page.getByText('2 人评分')).toBeVisible();
   // Every review, newest first, each with its reviewer's rating; Markdown headings sit below the section's.
-  const reviews = page.getByRole('region', { name: '点评（2）' });
+  const reviews = page.getByRole('region', { name: '点评（3）' });
   const items = reviews.getByRole('listitem').filter({ has: page.locator('time') });
-  await expect(items).toHaveCount(2);
-  await expect(items.first()).toContainText('另一位示例作者（虚构）');
-  await expect(items.first().locator('time')).toHaveText('2026-09-20');
+  await expect(items).toHaveCount(3);
+  await expect(items.first()).toContainText('示例作者（虚构）');
+  await expect(items.first()).toContainText('同一位作者第二次来');
+  await expect(items.first().locator('time')).toHaveText('2026-10-05');
+  await expect(items.nth(1)).toContainText('另一位示例作者（虚构）');
+  await expect(items.nth(1).locator('time')).toHaveText('2026-09-20');
   await expect(items.last()).toContainText('🤤 人上人');
+  await expect(page.getByText('点评作者：示例作者（虚构）、另一位示例作者（虚构）')).toBeVisible();
   const review = items.last();
   await expect(review.getByRole('heading', { level: 3, name: '早茶时间' })).toBeVisible();
   await expect(review.getByRole('img')).toHaveCount(4);

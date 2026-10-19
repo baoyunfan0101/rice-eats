@@ -6,7 +6,8 @@ import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 import { publishContributors } from '../../scripts/content/contributors.ts';
 import { moveDraft } from '../../scripts/content/intake.ts';
-import { runPipeline } from '../../scripts/content/pipeline.ts';
+import { reviewImages, runPipeline } from '../../scripts/content/pipeline.ts';
+import type { Review } from '../../shared/content/schema.ts';
 import {
   markOutcome,
   prepareSubmission,
@@ -191,7 +192,14 @@ async function setup() {
     JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   const listing = async (dir: string) =>
     existsSync(dir) ? (await readdir(dir, { recursive: true })).map(String).sort() : [];
-  return { root, p, net, options, importCsv, prepare, mark, reject, readJson, listing };
+  /** The file of a submission's own review (from its prepare.json). */
+  const review = async (submissionId: string, ext: 'json' | 'md' = 'json') => {
+    const state = JSON.parse(
+      await readFile(p(`private/submissions/tally-${submissionId}/prepare.json`), 'utf8'),
+    ) as { restaurantId: string; reviewId: string };
+    return p('private/drafts', state.restaurantId, 'reviews', `${state.reviewId}.${ext}`);
+  };
+  return { root, p, net, options, importCsv, prepare, mark, reject, readJson, listing, review };
 }
 
 const validate = (t: Awaited<ReturnType<typeof setup>>) =>
@@ -237,7 +245,7 @@ describe('prepare', () => {
     const report = await t.prepare('mAbC12');
     expect(report.outcome).toBe('drafted');
     expect(report.mode).toBe('new');
-    expect(report.updatesReview).toBe(false);
+    expect(report.reviewId).toMatch(/^v-[a-z0-9]{6}$/);
     const id = report.restaurantId!;
     const draft = t.p('private/drafts', id);
     const info = await t.readJson(path.join(draft, 'info.json'));
@@ -255,9 +263,14 @@ describe('prepare', () => {
       ],
     });
     expect(info).not.toHaveProperty('rating');
-    // The review is the contributor's own file: rating, date, and every photo with its dish.
-    expect(await t.readJson(path.join(draft, 'reviews/u-002.json'))).toEqual({
-      date: '2026-10-14',
+    // The submission's own review: its contributor, time, rating, and every photo with its dish.
+    expect(await readdir(path.join(draft, 'reviews'))).toEqual([
+      `${report.reviewId}.json`,
+      `${report.reviewId}.md`,
+    ]);
+    expect(await t.readJson(await t.review('mAbC12'))).toEqual({
+      contributor: 'u-002',
+      submittedAt: '2026-10-14T19:30:00Z',
       rating: 4,
       images: ['images/01-photo.jpg'],
       dishes: [
@@ -282,7 +295,7 @@ describe('prepare', () => {
     for (const image of images) {
       expect(await findSensitiveMetadata(path.join(draft, 'images', image))).toEqual([]);
     }
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toBe(
+    expect(await readFile(await t.review('mAbC12', 'md'), 'utf8')).toBe(
       '汤底很浓，环境安静。\n适合两个人慢慢吃。\n',
     );
 
@@ -321,7 +334,7 @@ describe('prepare', () => {
     for (const part of [
       'mAbC12',
       'new restaurant',
-      'Review: a new review',
+      "this submission's own review",
       'Rating: 4',
       'Dishes: 2',
       '6 stored of 6',
@@ -368,8 +381,8 @@ describe('prepare', () => {
   it('keeps a draft edited by hand unless asked to rebuild it', async () => {
     const t = await setup();
     await t.importCsv(csv(row(NEW_RESTAURANT)));
-    const id = (await t.prepare('mAbC12')).restaurantId!;
-    const file = t.p('private/drafts', id, 'reviews/u-002.md');
+    await t.prepare('mAbC12');
+    const file = await t.review('mAbC12', 'md');
     await writeFile(file, '编辑过的点评。\n');
     expect((await t.prepare('mAbC12')).outcome).toBe('edited');
     expect(await readFile(file, 'utf8')).toBe('编辑过的点评。\n');
@@ -449,189 +462,6 @@ describe('prepare', () => {
     expect((await t.readJson(t.options.tagFiles.privateFile)).proposed).toEqual([]);
   });
 
-  it("adds a second contributor's review to a public restaurant, keeping the first one", async () => {
-    const t = await setup();
-    await writeRestaurant(
-      t.options.restaurantsDir,
-      'r-abc234',
-      {
-        id: 'r-abc234',
-        status: 'published',
-        name: '示例汤包馆',
-        location: { lat: 29.7174, lng: -95.4018 },
-        tags: ['group'],
-        dishes: [{ id: 'd1', name: '小笼包', altNames: ['Xiaolongbao'] }],
-      },
-      {
-        'reviews/u-001.json': JSON.stringify({
-          date: '2026-09-01',
-          rating: 5,
-          dishes: [{ dish: 'd1', verdict: -1 }],
-        }),
-        'reviews/u-001.md': '第一位作者的点评。\n',
-      },
-    );
-    const publicBefore = await t.listing(t.options.restaurantsDir);
-    await t.importCsv(
-      csv(
-        row({
-          ...NEW_RESTAURANT,
-          'Submission ID': 'second',
-          restaurant_id: 'r-abc234',
-          selection_method: 'existing',
-          source: 'restaurant-page',
-        }),
-      ),
-    );
-    const report = await t.prepare('second');
-    expect(report.outcome).toBe('drafted');
-    expect(report.mode).toBe('existing');
-    expect(report.updatesReview).toBe(false);
-    // The public restaurant is untouched until the draft is promoted.
-    expect(await t.listing(t.options.restaurantsDir)).toEqual(publicBefore);
-    const draft = t.p('private/drafts/r-abc234');
-    expect(await readFile(path.join(draft, 'reviews/u-001.md'), 'utf8')).toBe(
-      '第一位作者的点评。\n',
-    );
-    // The same dish is the same dish; a new name is a new dish.
-    const info = await t.readJson(path.join(draft, 'info.json'));
-    expect(info.dishes).toEqual([
-      { id: 'd1', name: '小笼包', altNames: ['Xiaolongbao'] },
-      { id: 'd2', name: '红烧肉' },
-    ]);
-    expect(report.dishes.map((d) => [d.name, d.dish, d.newDish])).toEqual([
-      ['小笼包', 'd1', false],
-      ['红烧肉', 'd2', true],
-    ]);
-    const review = await t.readJson(path.join(draft, 'reviews/u-002.json'));
-    expect(review).toMatchObject({ date: '2026-10-14', rating: 4 });
-    expect((review.dishes as { dish: string }[]).map((d) => d.dish)).toEqual(['d1', 'd2']);
-    expect((await readLog(t.options.submissionsDir)).second).toMatchObject({
-      status: 'drafted',
-      restaurantId: 'r-abc234',
-    });
-    const result = await validate(t);
-    expect(
-      result.diagnostics.filter(
-        (d) => d.restaurantId === 'r-abc234' && (d.level === 'error' || d.draftError),
-      ),
-    ).toEqual([]);
-  });
-
-  it("updates a contributor's earlier review instead of adding a second one", async () => {
-    const t = await setup();
-    await writeRestaurant(
-      t.options.restaurantsDir,
-      'r-abc234',
-      {
-        id: 'r-abc234',
-        status: 'published',
-        name: '示例汤包馆',
-        location: { lat: 29.7174, lng: -95.4018 },
-        dishes: [{ id: 'd1', name: '锅贴' }],
-      },
-      {
-        'reviews/u-001.json': JSON.stringify({ date: '2026-09-01', rating: 5 }),
-        'reviews/u-002.json': JSON.stringify({
-          date: '2026-08-01',
-          rating: 2,
-          dishes: [{ dish: 'd1', verdict: 1, comment: '好吃' }],
-        }),
-        'reviews/u-002.md': '旧的点评。\n',
-      },
-    );
-    await mkdir(path.dirname(t.options.contributorFiles.privateFile), { recursive: true });
-    await writeFile(
-      t.options.contributorFiles.privateFile,
-      JSON.stringify({ 'u-002': { name: '小明', email: 'ming@example.com' } }),
-    );
-    await t.importCsv(
-      csv(
-        row({
-          ...NEW_RESTAURANT,
-          'Submission ID': 'again',
-          restaurant_id: 'r-abc234',
-          selection_method: 'existing',
-          source: 'restaurant-page',
-        }),
-      ),
-    );
-    const report = await t.prepare('again');
-    expect(report.outcome).toBe('drafted');
-    expect(report.updatesReview).toBe(true);
-    const draft = t.p('private/drafts/r-abc234');
-    expect((await readdir(path.join(draft, 'reviews'))).sort()).toEqual([
-      'u-001.json',
-      'u-002.json',
-      'u-002.md',
-    ]);
-    const review = await t.readJson(path.join(draft, 'reviews/u-002.json'));
-    // The new rating, date and text; the dish it does not mention again stays.
-    expect(review).toMatchObject({ date: '2026-10-14', rating: 4 });
-    expect((review.dishes as { dish: string }[]).map((d) => d.dish)).toEqual(['d2', 'd3', 'd1']);
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toMatch(/^汤底很浓/);
-
-    // Rejecting it puts the earlier review back; the draft then equals the
-    // public restaurant, so it goes.
-    const rejected = await t.reject('again');
-    expect(rejected.status).toBe('done');
-    expect(rejected.messages.join('\n')).toMatch(/removed private\/drafts\/r-abc234/);
-    expect(existsSync(draft)).toBe(false);
-    expect(await readFile(t.p('content/restaurants/r-abc234/reviews/u-002.md'), 'utf8')).toBe(
-      '旧的点评。\n',
-    );
-  });
-
-  it('keeps a later review in the draft when the submission that created it is rejected', async () => {
-    const t = await setup();
-    await t.importCsv(csv(row(NEW_RESTAURANT)));
-    const id = (await t.prepare('mAbC12')).restaurantId!;
-    // A second, anonymous submission about the new draft adds its own review...
-    await t.importCsv(
-      csv(
-        row({
-          ...NEW_RESTAURANT,
-          'Submission ID': 'later',
-          '署名（选填）': '',
-          '联系邮箱（选填）': '',
-          总体评级: '🤤 人上人',
-        }),
-      ),
-    );
-    const later = await t.prepare('later', { restaurantId: id });
-    expect(later.outcome).toBe('drafted');
-    expect(later.contributor?.id).toBe('u-003');
-    const draft = t.p('private/drafts', id);
-    expect((await readdir(path.join(draft, 'reviews'))).sort()).toEqual([
-      'u-002.json',
-      'u-002.md',
-      'u-003.json',
-      'u-003.md',
-    ]);
-    // ...and the first one is rejected: only its review and photos go.
-    const rejected = await t.reject('mAbC12');
-    expect(rejected.status).toBe('done');
-    expect((await readdir(path.join(draft, 'reviews'))).sort()).toEqual(['u-003.json', 'u-003.md']);
-    const review = await t.readJson(path.join(draft, 'reviews/u-003.json'));
-    const images = await readdir(path.join(draft, 'images'));
-    expect(images.map((i) => `images/${i}`).sort()).toEqual(
-      [
-        ...((review.images as string[] | undefined) ?? []),
-        ...(review.dishes as { images?: string[] }[]).flatMap((d) => d.images ?? []),
-      ].sort(),
-    );
-    // The dishes it rates stay; what only the rejected submission gave can be filled again.
-    expect((await t.readJson(path.join(draft, 'info.json'))).dishes).toHaveLength(2);
-    expect((await t.prepare('later', { restaurantId: id })).outcome).toBe('drafted');
-    expect(await t.readJson(path.join(draft, 'info.json'))).toMatchObject({
-      address: '6100 Main St, Houston',
-      location: { lat: 29.7174, lng: -95.4018 },
-    });
-    expect((await t.readJson(t.options.contributorFiles.privateFile))['u-003']).toEqual({
-      name: '匿名',
-    });
-  });
-
   it('produces a valid draft without website, price, or cuisine, and survives a failed lookup', async () => {
     const t = await setup();
     t.net.down.add('/api/interpreter');
@@ -654,10 +484,10 @@ describe('prepare', () => {
     expect(report.poi?.status).toBe('failed');
     const info = await t.readJson(t.p('private/drafts', report.restaurantId!, 'info.json'));
     expect(Object.keys(info)).toEqual(['id', 'status', 'name', 'location']);
-    expect(
-      await t.readJson(t.p('private/drafts', report.restaurantId!, 'reviews/u-002.json')),
-    ).toEqual({
-      date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    // Without a time in the export, the review is timed when it is prepared.
+    expect(await t.readJson(await t.review('bare'))).toEqual({
+      contributor: 'u-002',
+      submittedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
       rating: 3,
     });
     expect(report.missing).toEqual(['address', 'cuisines', 'pricePerPerson', 'website']);
@@ -752,8 +582,9 @@ describe('prepare', () => {
     const decided = await t.prepare('mAbC12', { restaurantId: 'r-near01' });
     expect(decided.outcome).toBe('drafted');
     expect(decided.mode).toBe('existing');
-    expect(existsSync(t.p('private/drafts/r-near01/reviews/u-001.json'))).toBe(true);
-    expect(existsSync(t.p('private/drafts/r-near01/reviews/u-002.json'))).toBe(true);
+    expect(await readdir(t.p('private/drafts/r-near01/reviews'))).toEqual(
+      [`${decided.reviewId}.json`, `${decided.reviewId}.md`, 'v-u001.json'].sort(),
+    );
     // The id of that restaurant with another name, right there, is not used without a decision.
     await t.importCsv(
       csv(
@@ -988,7 +819,7 @@ describe('rejecting a prepared submission', () => {
       /altNames \(\+小汤包, Example Dumpling House, from the submission\)/,
     );
     expect(prepared.tags).toEqual(['quiet', 'date', 'group']);
-    expect(existsSync(path.join(dir, 'reviews/u-002.json'))).toBe(true);
+    expect(existsSync(await t.review('mAbC12'))).toBe(true);
     expect(prepared.links).toEqual({ website: 'https://dumplings.example/' });
     expect(await readdir(path.join(dir, 'images'))).toHaveLength(7);
 
@@ -1006,8 +837,11 @@ describe('rejecting a prepared submission', () => {
     );
     const second = await t.prepare('second', { restaurantId: 'r-manual1' });
     expect(second.outcome).toBe('drafted');
-    expect(second.updatesReview).toBe(false);
-    expect(await readdir(path.join(dir, 'reviews'))).toEqual(['u-003.json', 'u-003.md']);
+    expect(second.reviewId).not.toBe(report.reviewId);
+    expect(await readdir(path.join(dir, 'reviews'))).toEqual([
+      `${second.reviewId}.json`,
+      `${second.reviewId}.md`,
+    ]);
   });
 
   it('keeps edits the maintainer made to other fields', async () => {
@@ -1026,7 +860,7 @@ describe('rejecting a prepared submission', () => {
       name: '示例汤包馆',
       pricePerPerson: 20,
     });
-    expect(existsSync(t.p('private/drafts', id, 'reviews/u-002.json'))).toBe(false);
+    expect(existsSync(t.p('private/drafts', id, 'reviews'))).toBe(false);
     expect(await readdir(t.p('private/drafts', id, 'images'))).toEqual([]);
   });
 
@@ -1060,7 +894,7 @@ describe('rejecting a prepared submission', () => {
       name: '示例汤包馆',
       address: '6100 Main Street, Houston, TX',
     });
-    expect(existsSync(path.join(draft, 'reviews/u-002.json'))).toBe(false);
+    expect(existsSync(path.join(draft, 'reviews'))).toBe(false);
     expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
   });
 
@@ -1134,7 +968,7 @@ describe('rebuilding a draft', () => {
     const after = await hashes(t, id);
     expect(after['03-dish-1.jpg']).not.toBe(before['03-dish-1.jpg']);
     expect(after['01-photo.jpg']).toBe(before['01-photo.jpg']); // the cover stays
-    const review = await t.readJson(t.p('private/drafts', id, 'reviews/u-002.json'));
+    const review = await t.readJson(await t.review('mAbC12'));
     expect((review.dishes as { images?: string[] }[]).map((d) => d.images)).toEqual([
       ['images/02-dish-1.jpg', 'images/03-dish-1.jpg', 'images/04-dish-1.jpg'],
       ['images/06-dish-2.jpg'],
@@ -1492,125 +1326,271 @@ describe('lost prepare state', () => {
   });
 });
 
-describe('rolling back a submission keeps later contributions', () => {
+describe('every submission is an independent review', () => {
   type T = Awaited<ReturnType<typeof setup>>;
-  /** The files of a draft and their contents (what a rollback must or must not change). */
-  const contents = async (t: T, dir: string) => {
-    const out: Record<string, string> = {};
-    for (const file of await t.listing(dir)) {
-      if (!file.endsWith('.json') && !file.endsWith('.md')) continue;
-      out[file] = await readFile(path.join(dir, file), 'utf8');
-    }
-    return out;
-  };
-  /** A: the new-restaurant submission by 小明 (u-002), prepared offline. */
-  async function preparedA() {
+  const NO_PHOTOS = { '照片（选填）': '', '菜品1 照片（选填）': '', '菜品2 照片（选填）': '' };
+  /** A: 小明's (u-002) new-restaurant submission, prepared offline. */
+  async function withA(values: Record<string, string> = {}) {
     const t = await setup();
-    await t.importCsv(csv(row(NEW_RESTAURANT)));
-    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
-    return { t, id, draft: t.p('private/drafts', id) };
+    await t.importCsv(csv(row({ ...NEW_RESTAURANT, ...values })));
+    const a = await t.prepare('mAbC12', { offline: true });
+    expect(a.outcome).toBe('drafted');
+    return { t, a, id: a.restaurantId!, draft: t.p('private/drafts', a.restaurantId!) };
   }
-  /** B: another submission about the same draft; `same` is from the same contributor. */
-  async function prepareB(t: T, id: string, values: Record<string, string>) {
-    await t.importCsv(csv(row({ ...NEW_RESTAURANT, 'Submission ID': 'subB', ...values })));
-    const report = await t.prepare('subB', { restaurantId: id, offline: true });
+  /** Another submission about the same draft (小明 again unless the values say otherwise). */
+  async function add(t: T, id: string, submissionId: string, values: Record<string, string>) {
+    await t.importCsv(csv(row({ ...NEW_RESTAURANT, 'Submission ID': submissionId, ...values })));
+    const report = await t.prepare(submissionId, { restaurantId: id, offline: true });
     expect(report.outcome).toBe('drafted');
     return report;
   }
+  const BY_HONG = { '署名（选填）': '小红', '联系邮箱（选填）': 'hong@example.com' };
+  /** Every review file of the draft with its contents. */
+  const reviewFiles = async (draft: string) => {
+    const dir = path.join(draft, 'reviews');
+    const out: Record<string, string> = {};
+    if (!existsSync(dir)) return out;
+    for (const f of (await readdir(dir)).sort()) out[f] = await readFile(path.join(dir, f), 'utf8');
+    return out;
+  };
+  const only = (files: Record<string, string>, reviewId: string) =>
+    Object.fromEntries(Object.entries(files).filter(([f]) => f.startsWith(`${reviewId}.`)));
+  const details = async (t: T, id: string) => (await validate(t)).details.find((d) => d.id === id)!;
 
-  it('keeps a later review by the same contributor, and the restaurant', async () => {
-    const { t, id, draft } = await preparedA();
-    const b = await prepareB(t, id, {
+  it('1. keeps both reviews when the same contributor submits twice; B does not change A', async () => {
+    const { t, a, id, draft } = await withA();
+    const before = await reviewFiles(draft);
+    const b = await add(t, id, 'subB', {
+      ...NO_PHOTOS,
+      'Submitted at': '2026-10-15 09:00:00',
       '你的点评（选填）': '第二次来，汤底更好了。',
       总体评级: '🥵 夯',
-      '照片（选填）': '',
-      '菜品1 照片（选填）': '',
-      '菜品2 照片（选填）': '',
     });
-    expect(b.updatesReview).toBe(true);
-    const before = await contents(t, draft);
-    expect(JSON.parse(before['reviews/u-002.json']!)).toMatchObject({ rating: 5 });
-
-    const result = await t.reject('mAbC12');
-    expect(result.status).toBe('manual');
-    expect(result.messages.join('\n')).toMatch(/reviews\/u-002\.json .*changed since/);
-    expect(result.messages.join('\n')).toMatch(/subB/);
-    expect(existsSync(path.join(draft, 'info.json'))).toBe(true);
-    expect(await contents(t, draft)).toEqual(before);
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toBe(
-      '第二次来，汤底更好了。\n',
-    );
-
-    // Confirmed by the maintainer: the later review stays, with every photo it uses.
-    expect((await t.reject('mAbC12', true)).status).toBe('resolved');
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toBe(
-      '第二次来，汤底更好了。\n',
-    );
-    const review = await t.readJson(path.join(draft, 'reviews/u-002.json'));
-    expect(review.rating).toBe(5);
-    const used = [
-      ...((review.images as string[] | undefined) ?? []),
-      ...((review.dishes as { images?: string[] }[] | undefined) ?? []).flatMap(
-        (d) => d.images ?? [],
-      ),
-    ];
-    for (const image of used) expect(existsSync(path.join(draft, image))).toBe(true);
-    expect(
-      (await validate(t)).diagnostics.filter(
-        (d) => d.restaurantId === id && (d.level === 'error' || d.draftError),
-      ),
-    ).toEqual([]);
+    expect(b.contributor?.id).toBe('u-002');
+    expect(b.reviewId).not.toBe(a.reviewId);
+    const after = await reviewFiles(draft);
+    expect(only(after, a.reviewId!)).toEqual(before);
+    expect(JSON.parse(after[`${b.reviewId}.json`]!)).toMatchObject({
+      contributor: 'u-002',
+      submittedAt: '2026-10-15T09:00:00Z',
+      rating: 5,
+    });
+    expect(after[`${b.reviewId}.md`]).toBe('第二次来，汤底更好了。\n');
   });
 
-  it('keeps a hand-edited review and reports the unsafe rollback', async () => {
-    const { t, id, draft } = await preparedA();
-    await writeFile(path.join(draft, 'reviews/u-002.md'), '维护者修改过的点评。\n');
-    const before = await contents(t, draft);
-    const result = await t.reject('mAbC12');
-    expect(result.status).toBe('manual');
-    expect(result.messages.join('\n')).toMatch(/reviews\/u-002\.json .*changed since/);
-    expect(await contents(t, draft)).toEqual(before);
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toBe(
-      '维护者修改过的点评。\n',
-    );
-    expect((await rejectionProblems(t.options.submissionsDir, id)).join('\n')).toMatch(
-      /still in the draft/,
-    );
+  for (const first of ['A', 'B'] as const) {
+    it(`2. keeps identical submissions apart; rejecting ${first} keeps the other`, async () => {
+      const { t, a, id, draft } = await withA();
+      const b = await add(t, id, 'subB', {});
+      expect(b.reviewId).not.toBe(a.reviewId);
+      const files = await reviewFiles(draft);
+      expect(Object.keys(files)).toHaveLength(4);
+      const [gone, stays] = first === 'A' ? [a, b] : [b, a];
+      expect((await t.reject(first === 'A' ? 'mAbC12' : 'subB')).status).toBe('done');
+      const left = await reviewFiles(draft);
+      expect(left).toEqual(only(files, stays.reviewId!));
+      expect(only(left, gone.reviewId!)).toEqual({});
+      // Every photo the remaining review uses is still there.
+      const review = JSON.parse(left[`${stays.reviewId}.json`]!) as Review;
+      for (const image of reviewImages(review))
+        expect(existsSync(path.join(draft, image))).toBe(true);
+      expect(reviewImages(review)).toHaveLength(6);
+    });
+  }
+
+  it('3. keeps its review id over repeated prepares, without a duplicate', async () => {
+    const { t, a, draft } = await withA();
+    const files = await reviewFiles(draft);
+    for (let i = 0; i < 3; i++) {
+      const again = await t.prepare('mAbC12', { offline: true });
+      expect(again.reviewId).toBe(a.reviewId);
+    }
+    expect(await reviewFiles(draft)).toEqual(files);
+    // A rebuild rebuilds only its own review, under the same id.
+    await writeFile(await t.review('mAbC12', 'md'), '改过\n');
+    expect((await t.prepare('mAbC12', { offline: true, rebuild: true })).reviewId).toBe(a.reviewId);
+    expect(await reviewFiles(draft)).toEqual(files);
   });
 
-  it("keeps another submission's tag and review when the first is prepared again", async () => {
-    const { t, id, draft } = await preparedA();
-    await prepareB(t, id, {
-      '联系邮箱（选填）': 'hong@example.com',
-      '署名（选填）': '小红',
-      '标签（选填）': '安静',
-      '你的点评（选填）': '很安静，适合看书。',
-      '照片（选填）': '',
-      '菜品1 照片（选填）': '',
+  it('4. takes no text, photos, or dish opinions from an earlier review', async () => {
+    const { t, id, draft } = await withA();
+    const b = await add(t, id, 'subB', {
+      ...NO_PHOTOS,
+      '你的点评（选填）': '',
+      '菜品1 名称': '',
+      '菜品1 评价': '',
+      '菜品1 点评（选填）': '',
+      '菜品2 名称': '',
+      '菜品2 评价': '',
+      总体评级: '🤤 人上人',
+    });
+    expect(await t.readJson(path.join(draft, 'reviews', `${b.reviewId}.json`))).toEqual({
+      contributor: 'u-002',
+      submittedAt: '2026-10-14T19:30:00Z',
+      rating: 3,
+    });
+    expect(existsSync(path.join(draft, 'reviews', `${b.reviewId}.md`))).toBe(false);
+  });
+
+  for (const order of [
+    ['mAbC12', 'subB'],
+    ['subB', 'mAbC12'],
+  ]) {
+    it(`5. rejects ${order.join(' then ')}: each takes out only its own review, none comes back`, async () => {
+      const { t, a, id, draft } = await withA();
+      const b = await add(t, id, 'subB', { ...NO_PHOTOS, '你的点评（选填）': 'B 的点评' });
+      const files = await reviewFiles(draft);
+      const ids = { mAbC12: a.reviewId!, subB: b.reviewId! };
+      const [first, second] = order as ['mAbC12' | 'subB', 'mAbC12' | 'subB'];
+      expect((await t.reject(first)).status).toBe('done');
+      expect(await reviewFiles(draft)).toEqual(only(files, ids[second]));
+      expect((await t.reject(second)).status).toBe('done');
+      // Nothing else was ever in the draft A created, so it goes.
+      expect(existsSync(draft)).toBe(false);
+      expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
+    });
+  }
+
+  it('6. never touches a hand-edited review when another submission is prepared or rejected', async () => {
+    const { t, a, id, draft } = await withA();
+    await writeFile(await t.review('mAbC12', 'md'), '维护者修改过的点评。\n');
+    const edited = only(await reviewFiles(draft), a.reviewId!);
+    await add(t, id, 'subB', { ...NO_PHOTOS, ...BY_HONG });
+    expect(only(await reviewFiles(draft), a.reviewId!)).toEqual(edited);
+    expect((await t.reject('subB')).status).toBe('done');
+    expect(only(await reviewFiles(draft), a.reviewId!)).toEqual(edited);
+    // Its own operations stay protected.
+    expect((await t.prepare('mAbC12', { offline: true })).outcome).toBe('edited');
+    const result = await t.reject('mAbC12');
+    expect(result.status).toBe('manual');
+    expect(result.messages.join('\n')).toMatch(/edited by hand since this submission wrote it/);
+    expect(only(await reviewFiles(draft), a.reviewId!)).toEqual(edited);
+  });
+
+  it('7. keeps every dish and photo another review still uses', async () => {
+    const { t, id, draft } = await withA();
+    const b = await add(t, id, 'subB', {
+      ...BY_HONG,
+      '菜品1 照片（选填）': photo('hong-xlb'),
+      '照片（选填）': photo('hong-room'),
+      '菜品2 名称': '',
+      '菜品2 评价': '',
       '菜品2 照片（选填）': '',
     });
-    expect((await t.readJson(path.join(draft, 'info.json'))).tags).toEqual([
-      'date',
-      'group',
-      'quiet',
-    ]);
-    const reviewB = await readFile(path.join(draft, 'reviews/u-003.json'), 'utf8');
-    await t.prepare('mAbC12', { offline: true });
-
+    const reviewB = await readFile(path.join(draft, 'reviews', `${b.reviewId}.json`), 'utf8');
     expect((await t.reject('mAbC12')).status).toBe('done');
     const info = await t.readJson(path.join(draft, 'info.json'));
-    expect(info.tags).toEqual(['quiet']);
-    expect(await readFile(path.join(draft, 'reviews/u-003.json'), 'utf8')).toBe(reviewB);
-    expect(await readFile(path.join(draft, 'reviews/u-003.md'), 'utf8')).toBe(
-      '很安静，适合看书。\n',
+    // B rates 小笼包; only A rated 红烧肉.
+    expect(info.dishes).toEqual([{ id: 'd1', name: '小笼包' }]);
+    expect(await readFile(path.join(draft, 'reviews', `${b.reviewId}.json`), 'utf8')).toBe(reviewB);
+    const used = reviewImages(JSON.parse(reviewB) as Review);
+    expect(used).toHaveLength(2);
+    expect((await t.listing(path.join(draft, 'images'))).map((f) => `images/${f}`)).toEqual(
+      used.sort(),
     );
-    expect(existsSync(path.join(draft, 'reviews/u-002.json'))).toBe(false);
-    // The dishes B rates stay.
-    expect((info.dishes as { id: string }[]).map((d) => d.id)).toEqual(['d1', 'd2']);
+  });
+
+  it('8. keeps tags another submission added or gives, also one it added back after A', async () => {
+    const { t, id, draft } = await withA({ '标签（选填）': '适合约会，适合聚餐' });
+    const file = path.join(draft, 'info.json');
+    expect((await t.readJson(file)).tags).toEqual(['date', 'group']);
+    // The maintainer removes "group"; B adds it again and also gives "date".
+    await writeFile(file, JSON.stringify({ ...(await t.readJson(file)), tags: ['date'] }));
+    await add(t, id, 'subB', { ...NO_PHOTOS, ...BY_HONG, '标签（选填）': '适合聚餐，适合约会' });
+    expect((await t.readJson(file)).tags).toEqual(['date', 'group']);
+    for (let i = 0; i < 2; i++) await t.prepare('mAbC12', { offline: true });
+
+    expect((await t.reject('mAbC12')).status).toBe('done');
+    expect((await t.readJson(file)).tags).toEqual(['date', 'group']);
+    expect((await t.reject('mAbC12')).status).toBe('nothing');
+    expect((await t.readJson(file)).tags).toEqual(['date', 'group']);
+    // Both are B's now: rejecting B takes them out.
+    expect((await t.reject('subB')).status).toBe('done');
+    expect(existsSync(draft)).toBe(false);
+  });
+
+  it('9. counts each contributor once, with their latest review', async () => {
+    const { t, a, id, draft } = await withA({ 总体评级: '🫤 NPC' });
+    const b = await add(t, id, 'subB', {
+      ...NO_PHOTOS,
+      'Submitted at': '2026-10-15 09:00:00',
+      总体评级: '🥵 夯',
+    });
+    await add(t, id, 'subC', {
+      ...NO_PHOTOS,
+      ...BY_HONG,
+      'Submitted at': '2026-10-16 09:00:00',
+      总体评级: '🤤 人上人',
+    });
+    let detail = await details(t, id);
+    expect(detail).toMatchObject({ ratingAverage: 4, rating: 4, raterCount: 2, reviewCount: 3 });
+    expect(detail.reviews.map((r) => r.rating)).toEqual([3, 5, 2]);
+    expect(detail.contributors.map((c) => c.id)).toEqual(['u-003', 'u-002']);
+
+    const reviewA = only(await reviewFiles(draft), a.reviewId!);
+    expect((await t.reject('subB')).status).toBe('done');
+    detail = await details(t, id);
+    expect(detail).toMatchObject({ ratingAverage: 2.5, raterCount: 2, reviewCount: 2 });
+    expect(detail.reviews.map((r) => r.id)).not.toContain(b.reviewId);
+    expect(only(await reviewFiles(draft), a.reviewId!)).toEqual(reviewA);
+  });
+
+  it('10. orders reviews of one day by their time, and the same instant by review id', async () => {
+    const { t, a, id } = await withA({ 'Submitted at': '2026-10-14 08:00:00', 总体评级: '🫤 NPC' });
+    const b = await add(t, id, 'subB', {
+      ...NO_PHOTOS,
+      'Submitted at': '2026-10-14 20:00:00',
+      总体评级: '🥵 夯',
+    });
+    const c = await add(t, id, 'subC', {
+      ...NO_PHOTOS,
+      ...BY_HONG,
+      'Submitted at': '2026-10-14 20:00:00',
+      总体评级: '🤤 人上人',
+    });
+    const detail = await details(t, id);
+    const tied = [b.reviewId!, c.reviewId!].sort();
+    expect(detail.reviews.map((r) => r.id)).toEqual([...tied, a.reviewId]);
+    // 小明's latest is B (20:00, not A at 08:00 the same day).
+    expect(detail).toMatchObject({ ratingAverage: 4, raterCount: 2, reviewCount: 3 });
+    expect((await details(t, id)).reviews.map((r) => r.id)).toEqual(
+      detail.reviews.map((r) => r.id),
+    );
+  });
+
+  it('11. promotes and publishes several reviews by one contributor', async () => {
+    const { t, a, id } = await withA();
+    const b = await add(t, id, 'subB', {
+      ...NO_PHOTOS,
+      'Submitted at': '2026-10-15 09:00:00',
+      '你的点评（选填）': '又来了一次。',
+    });
+    await publishContributors(t.options.contributorFiles, ['u-002']);
+    await publishTags(t.options.tagFiles, ['date', 'group']);
+    await moveDraft(t.options.draftsDir, t.options.restaurantsDir, id);
+    const { setStatus } = await import('../../scripts/content/intake.ts');
+    await setStatus(t.p('content/restaurants', id), 'published');
+    const result = await runPipeline({
+      restaurantsDir: t.options.restaurantsDir,
+      contributorsFile: t.options.contributorFiles.publicFile,
+      tagsFile: t.options.tagFiles.publicFile,
+      source: 'content',
+      includeDrafts: false,
+      base: '/',
+      cacheDir: t.options.imageCacheDir,
+    });
+    expect(result.diagnostics.filter((d) => d.level === 'error')).toEqual([]);
+    const detail = result.details.find((d) => d.id === id)!;
+    expect(detail.status).toBe('published');
+    expect(detail.reviews.map((r) => r.id)).toEqual([b.reviewId, a.reviewId]);
+    expect(detail.contributors).toEqual([{ id: 'u-002', name: '小明' }]);
+    expect(detail).toMatchObject({ raterCount: 1, reviewCount: 2 });
+    // Each dish opinion points at its own review.
+    expect(detail.dishes[0]!.reviews.map((r) => r.reviewId)).toEqual([b.reviewId, a.reviewId]);
   });
 
   it('keeps restaurant information the maintainer added between two prepares', async () => {
-    const { t, id, draft } = await preparedA();
+    const { t, id, draft } = await withA();
     const file = path.join(draft, 'info.json');
     await writeFile(
       file,
@@ -1629,218 +1609,9 @@ describe('rolling back a submission keeps later contributions', () => {
   });
 
   it('removes an unchanged new restaurant entirely', async () => {
-    const { t, id, draft } = await preparedA();
-    const result = await t.reject('mAbC12');
-    expect(result.status).toBe('done');
-    expect(result.messages.join('\n')).toMatch(/removed private\/drafts/);
+    const { t, id, draft } = await withA();
+    expect((await t.reject('mAbC12')).messages.join('\n')).toMatch(/removed private\/drafts/);
     expect(existsSync(draft)).toBe(false);
     expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
-  });
-
-  it("puts back the contributor's earlier review when its update is rejected unchanged", async () => {
-    const t = await setup();
-    const earlier = { date: '2026-08-01', rating: 2, dishes: [{ dish: 'd1', verdict: 1 }] };
-    await writeRestaurant(
-      t.options.restaurantsDir,
-      'r-abc234',
-      {
-        id: 'r-abc234',
-        status: 'published',
-        name: '示例汤包馆',
-        location: { lat: 29.7174, lng: -95.4018 },
-        dishes: [{ id: 'd1', name: '锅贴' }],
-      },
-      {
-        'reviews/u-002.json': JSON.stringify(earlier),
-        'reviews/u-002.md': '旧的点评。\n',
-      },
-    );
-    await mkdir(path.dirname(t.options.contributorFiles.privateFile), { recursive: true });
-    await writeFile(
-      t.options.contributorFiles.privateFile,
-      JSON.stringify({ 'u-002': { name: '小明', email: 'ming@example.com' } }),
-    );
-    await t.importCsv(
-      csv(
-        row({
-          ...NEW_RESTAURANT,
-          restaurant_id: 'r-abc234',
-          selection_method: 'existing',
-          source: 'restaurant-page',
-        }),
-      ),
-    );
-    expect((await t.prepare('mAbC12', { offline: true })).updatesReview).toBe(true);
-    const draft = t.p('private/drafts/r-abc234');
-    expect(await t.readJson(path.join(draft, 'reviews/u-002.json'))).toMatchObject({ rating: 4 });
-    expect((await t.reject('mAbC12')).status).toBe('done');
-    // The draft held only this update, so it goes; the public review is the earlier one.
-    expect(existsSync(draft)).toBe(false);
-    expect(await t.readJson(t.p('content/restaurants/r-abc234/reviews/u-002.json'))).toEqual(
-      earlier,
-    );
-    expect(await readFile(t.p('content/restaurants/r-abc234/reviews/u-002.md'), 'utf8')).toBe(
-      '旧的点评。\n',
-    );
-  });
-
-  it('keeps ownership stable over repeated prepares and rollbacks', async () => {
-    const { t, id, draft } = await preparedA();
-    await prepareB(t, id, {
-      '联系邮箱（选填）': 'hong@example.com',
-      '署名（选填）': '小红',
-      '标签（选填）': '安静',
-      '照片（选填）': '',
-      '菜品1 照片（选填）': '',
-      '菜品2 照片（选填）': '',
-    });
-    const file = path.join(draft, 'info.json');
-    await writeFile(file, JSON.stringify({ ...(await t.readJson(file)), pricePerPerson: 25 }));
-    for (let i = 0; i < 3; i++) await t.prepare('mAbC12', { offline: true });
-
-    expect((await t.reject('mAbC12')).status).toBe('done');
-    const after = await contents(t, draft);
-    const info = await t.readJson(file);
-    expect(info.tags).toEqual(['quiet']);
-    expect(info.pricePerPerson).toBe(25);
-    expect(Object.keys(after).filter((f) => f.startsWith('reviews/'))).toEqual([
-      'reviews/u-003.json',
-      'reviews/u-003.md',
-    ]);
-    const images = await t.listing(path.join(draft, 'images'));
-    // Rejecting again changes nothing.
-    expect((await t.reject('mAbC12')).status).toBe('nothing');
-    expect(await contents(t, draft)).toEqual(after);
-    expect(await t.listing(path.join(draft, 'images'))).toEqual(images);
-    // Preparing a rejected submission is refused, so it cannot claim anything again.
-    expect((await t.prepare('mAbC12', { offline: true })).outcome).toBe('blocked');
-    expect(await contents(t, draft)).toEqual(after);
-  });
-});
-
-describe('rejecting a later update after the earlier one was rejected', () => {
-  type T = Awaited<ReturnType<typeof setup>>;
-  const NO_PHOTOS = { '照片（选填）': '', '菜品1 照片（选填）': '', '菜品2 照片（选填）': '' };
-  /** B: 小明 (u-002) again, updating the review A wrote. */
-  async function prepareB(t: T, restaurantId: string) {
-    await t.importCsv(
-      csv(
-        row({
-          ...NEW_RESTAURANT,
-          ...NO_PHOTOS,
-          'Submission ID': 'subB',
-          '你的点评（选填）': '第二次来，汤底更好了。',
-          总体评级: '🥵 夯',
-        }),
-      ),
-    );
-    const report = await t.prepare('subB', { restaurantId, offline: true });
-    expect(report.outcome).toBe('drafted');
-    expect(report.updatesReview).toBe(true);
-  }
-  /** Rejects A while B's update is in the draft: the maintainer keeps B's review. */
-  async function rejectAKeepingB(t: T) {
-    expect((await t.reject('mAbC12')).status).toBe('manual');
-    expect((await t.reject('mAbC12', true)).status).toBe('resolved');
-  }
-
-  it("restores the review from before A, not A's rejected review", async () => {
-    const t = await setup();
-    const earlier = { date: '2026-08-01', rating: 2, dishes: [{ dish: 'd1', verdict: 1 }] };
-    await writeRestaurant(
-      t.options.restaurantsDir,
-      'r-abc234',
-      {
-        id: 'r-abc234',
-        status: 'published',
-        name: '示例汤包馆',
-        location: { lat: 29.7174, lng: -95.4018 },
-        dishes: [{ id: 'd1', name: '锅贴' }],
-      },
-      { 'reviews/u-002.json': JSON.stringify(earlier), 'reviews/u-002.md': '旧的点评。\n' },
-    );
-    const publicBefore = await t.listing(t.options.restaurantsDir);
-    await mkdir(path.dirname(t.options.contributorFiles.privateFile), { recursive: true });
-    await writeFile(
-      t.options.contributorFiles.privateFile,
-      JSON.stringify({ 'u-002': { name: '小明', email: 'ming@example.com' } }),
-    );
-    await t.importCsv(
-      csv(
-        row({
-          ...NEW_RESTAURANT,
-          restaurant_id: 'r-abc234',
-          selection_method: 'existing',
-          source: 'restaurant-page',
-        }),
-      ),
-    );
-    await t.prepare('mAbC12', { offline: true });
-    await prepareB(t, 'r-abc234');
-    await rejectAKeepingB(t);
-    const draft = t.p('private/drafts/r-abc234');
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toBe(
-      '第二次来，汤底更好了。\n',
-    );
-
-    expect((await t.reject('subB')).status).toBe('done');
-    // Nothing of A or B is left: the draft equals the public restaurant and goes.
-    expect(existsSync(draft)).toBe(false);
-    expect(await t.listing(t.options.restaurantsDir)).toEqual(publicBefore);
-    expect(await t.readJson(t.p('content/restaurants/r-abc234/reviews/u-002.json'))).toEqual(
-      earlier,
-    );
-  });
-
-  it('removes the review, and the draft A created, when there was no review before A', async () => {
-    const t = await setup();
-    await t.importCsv(csv(row(NEW_RESTAURANT)));
-    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
-    const draft = t.p('private/drafts', id);
-    await prepareB(t, id);
-    await rejectAKeepingB(t);
-    expect(await t.readJson(path.join(draft, 'reviews/u-002.json'))).toMatchObject({ rating: 5 });
-
-    const result = await t.reject('subB');
-    expect(result.status).toBe('done');
-    expect(result.messages.join('\n')).toMatch(/removed private\/drafts/);
-    expect(existsSync(draft)).toBe(false);
-    expect(await rejectionProblems(t.options.submissionsDir, id)).toEqual([]);
-  });
-
-  it('keeps a hand-made addition to the draft A created', async () => {
-    const t = await setup();
-    await t.importCsv(csv(row(NEW_RESTAURANT)));
-    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
-    const draft = t.p('private/drafts', id);
-    await prepareB(t, id);
-    await rejectAKeepingB(t);
-    const file = path.join(draft, 'info.json');
-    await writeFile(file, JSON.stringify({ ...(await t.readJson(file)), pricePerPerson: 25 }));
-
-    expect((await t.reject('subB')).status).toBe('done');
-    expect(await t.readJson(file)).toEqual({
-      id,
-      status: 'draft',
-      name: '示例汤包馆',
-      pricePerPerson: 25,
-    });
-    expect(existsSync(path.join(draft, 'reviews'))).toBe(false);
-    expect(await t.listing(path.join(draft, 'images'))).toEqual([]);
-  });
-
-  it('works in the other order: B first, then A', async () => {
-    const t = await setup();
-    await t.importCsv(csv(row(NEW_RESTAURANT)));
-    const id = (await t.prepare('mAbC12', { offline: true })).restaurantId!;
-    const draft = t.p('private/drafts', id);
-    const writtenByA = await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8');
-    await prepareB(t, id);
-
-    expect((await t.reject('subB')).status).toBe('done');
-    expect(await readFile(path.join(draft, 'reviews/u-002.md'), 'utf8')).toBe(writtenByA);
-    expect(await t.readJson(path.join(draft, 'reviews/u-002.json'))).toMatchObject({ rating: 4 });
-    expect((await t.reject('mAbC12')).status).toBe('done');
-    expect(existsSync(draft)).toBe(false);
   });
 });

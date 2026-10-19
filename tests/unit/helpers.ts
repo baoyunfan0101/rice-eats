@@ -55,7 +55,11 @@ export const validInfo = (id: string, extra: Record<string, unknown> = {}) => ({
 
 /** A minimal review by u-001 (a published restaurant needs one). */
 export const TEST_REVIEW = {
-  'reviews/u-001.json': JSON.stringify({ date: '2026-10-01', rating: 4 }),
+  'reviews/v-u001.json': JSON.stringify({
+    contributor: 'u-001',
+    submittedAt: '2026-10-01T12:00:00Z',
+    rating: 4,
+  }),
 };
 
 /**

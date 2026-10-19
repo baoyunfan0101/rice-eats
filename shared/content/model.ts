@@ -32,9 +32,11 @@ export interface Contributor {
 
 /** One review's word on a dish. */
 export interface DishReview {
-  /** The review it comes from (its contributor id). */
+  /** The review it comes from. */
   reviewId: string;
   contributor: Contributor;
+  /** The review's submission time (ISO 8601) and its day, YYYY-MM-DD. */
+  submittedAt: string;
   date: string;
   verdict?: Verdict;
   comment?: string;
@@ -54,12 +56,13 @@ export interface Dish {
   reviews: DishReview[];
 }
 
-/** One contributor's review of the restaurant. */
+/** One review of the restaurant (one submission); a contributor may have several. */
 export interface Review {
-  /** Its contributor id (one review per contributor). */
+  /** The review id (reviews/<id>.json). */
   id: string;
   contributor: Contributor;
-  /** YYYY-MM-DD. */
+  /** When it was submitted (ISO 8601), and its day, YYYY-MM-DD. */
+  submittedAt: string;
   date: string;
   rating: Rating;
   /** Sanitized HTML of the review text; empty without text. */
@@ -94,10 +97,16 @@ export interface RestaurantSummary {
   tags: Tag[];
   address?: string;
   location?: LatLng;
-  /** The average of the reviews' ratings, rounded to a level; absent without reviews (a draft). */
+  /**
+   * The average rating over contributors: each contributor's latest review
+   * counts once. Rounded to a level; absent without reviews (a draft).
+   */
   rating?: Rating;
   /** The average itself, one decimal. */
   ratingAverage?: number;
+  /** How many contributors the rating counts (one latest review each). */
+  raterCount: number;
+  /** How many reviews there are (a contributor may have several). */
   reviewCount: number;
   pricePerPerson?: number;
   /** The first image of the restaurant, if any. */
@@ -111,6 +120,7 @@ export interface RestaurantDetail extends RestaurantSummary {
   dishes: Dish[];
   /** Every review, newest first. */
   reviews: Review[];
+  /** The people who wrote them, each once. */
   contributors: Contributor[];
 }
 

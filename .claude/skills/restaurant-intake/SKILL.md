@@ -47,12 +47,12 @@ so everything unapproved lives in the git-ignored `private/` folder:
   needs at least one review. Never fill fields to satisfy a layout.
 - **Keep uncertainty explicit.** Ambiguous or conflicting information ("near
   Rice Village, not sure of the address") stays out and is reported.
-- **Opinions belong to the contributor.** Each contributor has their own
-  review, `reviews/<contributor id>.json` (date, rating, dish verdicts and
-  comments, photos) and `reviews/<contributor id>.md` (the text). Keep their
-  wording and tone. You may fix typos, add paragraphs and headings, and make
-  lists; do not rewrite, summarize, or add opinions, and never change another
-  contributor's review. Write the `.md` only when there is meaningful written
+- **Opinions belong to the contributor.** Every submission is a review of
+  its own, `reviews/<review id>.json` (contributor, submission time, rating,
+  dish verdicts and comments, photos) and `reviews/<review id>.md` (the
+  text). Keep their wording and tone. You may fix typos, add paragraphs and
+  headings, and make lists; do not rewrite, summarize, or add opinions, and
+  never change another review, also not one by the same contributor. Write the `.md` only when there is meaningful written
   content; a photos-only submission has none.
 - **Controlled values use keys**, never display text:
   - `rating`: only if the contributor clearly gave one of the five labels:
@@ -80,10 +80,11 @@ so everything unapproved lives in the git-ignored `private/` folder:
   one review: in its `images`, or in one of its dishes' `images`; never put
   photos in the text. The website shows the cover, each dish's photos from
   every review, each review's own photos, and a gallery for the rest.
-- **One review per contributor:** a later submission from the same
-  contributor updates their review (`prepare` does this); other contributors
-  add their own. The restaurant's rating is the average of the reviews'
-  ratings, computed by the build: never store it in `info.json`.
+- **Independent reviews:** a contributor may review a restaurant several
+  times; each submission becomes its own review and never takes text,
+  dishes, or photos from another. The restaurant's rating is computed by the
+  build from each contributor's latest review (one vote each): never store
+  it in `info.json`, and never merge or delete reviews to change it.
 - **Dishes:** `info.json` lists the restaurant's dishes (`{ id, name,
 altNames? }`); reviews rate them by id. The same name (or an `altNames`
   entry) is the same dish; `prepare` adds a new name as a new dish. Point
@@ -188,8 +189,8 @@ npm run content:submission -- prepare <submission id>
 ```
 
 This does the mapping deterministically (see `docs/submissions.md#prepare`):
-restaurant and contributor matching, the contributor's review (a new one, or
-an update of their earlier review), dishes matched by name and all photos,
+restaurant and contributor matching, the submission's own review (its review
+id is kept across reruns), dishes matched by name and all photos,
 keywords to tags, the contributor's other names added to `altNames`,
 restaurant information from the map listing, validation,
 and a private review report (`review-report.md`). It never overwrites a
@@ -199,9 +200,10 @@ draft edited by hand and never promotes or publishes. Act on the report:
   the display name, or an uncertain restaurant. For the restaurant, compare
   the candidates, ask the maintainer when unsure, then rerun with
   `--id <restaurant id>` or `--new`.
-- **review**: "a new review" or "updates the contributor's earlier review";
-  for an update, tell the maintainer what changed. New dishes are listed
-  with their id.
+- **review**: the review file it wrote (`reviews/<review id>.json`). When the
+  same contributor reviewed the restaurant before, tell the maintainer (both
+  reviews stay; only the latest counts for the rating). New dishes are
+  listed with their id.
 - **map listing identity** (`verified`, `ambiguous`, `rejected`): only a
   verified listing's information is applied. Report the others to the
   maintainer; never decide them yourself.
@@ -273,6 +275,7 @@ import each photo once.
 npm run content:check                         # lists every restaurant with its id and name
 npm run content:edit -- <id>                  # existing restaurant: copy to private/drafts/<id>/
 npm run content:new -- --name "<name>"   # new restaurant; other names go in altNames; prints the id
+npm run content:review -- <id> --contributor <u-NNN> --rating <1-5>   # a new review in the draft
 npm run content:contributor -- find "<name or email>"
 npm run content:contributor -- add --name "<display name>" --email "<email>"
 ```
@@ -289,10 +292,11 @@ npm run content:add-images -- <id> private/submissions/<name>/IMG_0001.HEIC ...
 This stores numbered copies (`01-…jpg`, `02-…jpg`; new photos are appended),
 upright, at most 2400 px, with all metadata (GPS, camera, time) removed. Then
 edit `private/drafts/<id>/info.json` (only supported fields, see
-`docs/content.md`; dishes as `{ id, name }`) and write the contributor's
-review: `reviews/<contributor id>.json` (date, rating, dish verdicts by dish
-id, and the photos) and, if there is written content,
-`reviews/<contributor id>.md`. Keep `"status": "draft"`.
+`docs/content.md`; dishes as `{ id, name }`) and start the review with
+`npm run content:review -- <id> --contributor <u-NNN> --rating <1-5>`,
+which writes `reviews/<review id>.json` with a new id and the time; add the
+dish verdicts (by dish id) and the photos there and, if there is written
+content, the text in `reviews/<review id>.md`. Keep `"status": "draft"`.
 
 ### 4. Validate and report
 

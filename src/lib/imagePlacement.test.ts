@@ -22,6 +22,7 @@ const dish = (name: string, imageIndexes: number[]): Dish => ({
 const review = (imageIndexes: number[]): Review => ({
   id: 'u-001',
   contributor: { id: 'u-001', name: 'A' },
+  submittedAt: '2026-10-01T12:00:00Z',
   date: '2026-10-01',
   rating: 4,
   html: '',

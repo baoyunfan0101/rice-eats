@@ -32,8 +32,8 @@ content/                          public database (tracked)
   tags.json                       public tag registry: [{ "id", "label", "aliases"? }]
   restaurants/<id>/               one folder per restaurant, named after its id
     info.json                     the restaurant's facts and dishes (Restaurant Schema below)
-    reviews/<contributor id>.json one contributor's review: date, rating, dish verdicts, photos
-    reviews/<contributor id>.md   optional; that review's text
+    reviews/<review id>.json      one review: contributor, time, rating, dish verdicts, photos
+    reviews/<review id>.md        optional; that review's text
     images/01-<name>.jpg          standardized photos; the first is the cover
 private/                          git-ignored, never committed or deployed
   submissions/                    raw submissions while they are processed
@@ -110,10 +110,14 @@ contact details; the checks are described in
 | 2        | 🫤 NPC    |     |           |         |
 | 1        | 🤮 拉完了 |     |           |         |
 
-The overall rating is not stored: the build averages the ratings of every
-review (one decimal, shown with the label of the nearest level and the number
-of reviewers). Sorting by rating uses that average; a draft without reviews
-sorts last.
+The overall rating is not stored: the build averages the ratings of each
+contributor's latest review, so every contributor counts once however often
+they reviewed (one decimal, shown with the label of the nearest level and the
+number of contributors counted, "N 人评分"; the review list shows every
+review, "点评（M）"). A contributor's latest review is the one with the latest
+`submittedAt`, and for the same instant the smallest review id. Rejecting
+that review makes their previous one count again; nothing is rewritten.
+Sorting by rating uses that average; a draft without reviews sorts last.
 
 Example:
 
@@ -136,22 +140,28 @@ Example:
 
 ## Reviews (`reviews/`)
 
-A restaurant has one review per contributor, each in
-`reviews/<contributor id>.json` with an optional `reviews/<contributor id>.md`.
-The file name is the credit: public names come from `content/contributors.json`.
-A later submission by the same contributor updates their review instead of
-adding another. A published restaurant needs at least one review.
+Every review is its own file, `reviews/<review id>.json` with an optional
+`reviews/<review id>.md`. A review id (`v-` and six letters or digits, e.g.
+`v-7k3m9q`) is generated once, never derived from the content or the
+contributor, and never changes. Each submission is a review of its own: a
+contributor may review a restaurant several times, and no review takes
+anything (text, dishes, photos) from another. `contributor` is the credit:
+public names come from `content/contributors.json`. A published restaurant
+needs at least one review. Start one by hand with
+`npm run content:review -- <id> --contributor <u-NNN> --rating <1-5>`.
 
-| Field    | Type / values                             | Notes                                                                                                                         |
-| -------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `date`   | `"YYYY-MM-DD"`                            | Required. When it was submitted (or last updated); reviews are shown newest first.                                            |
-| `rating` | integer `1`-`5`                           | Required. This contributor's rating (labels above).                                                                           |
-| `images` | `["images/<file>", ...]`                  | Photos of the restaurant (not of one dish), in display order.                                                                 |
-| `dishes` | `{ dish, verdict?, comment?, images? }[]` | `dish`: an id from `info.json` `dishes` (each at most once). `verdict`: `1` 推荐, `-1` 避雷, absent = no opinion. Its photos. |
+| Field         | Type / values                                            | Notes                                                                                                                         |
+| ------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `contributor` | e.g. `"u-001"`                                           | Required. Who wrote it.                                                                                                       |
+| `submittedAt` | ISO 8601 time with a zone, e.g. `"2026-10-14T19:30:00Z"` | Required. When it was submitted; reviews are shown newest first (the same instant: by review id). The page shows its day.     |
+| `rating`      | integer `1`-`5`                                          | Required. This review's rating (labels above).                                                                                |
+| `images`      | `["images/<file>", ...]`                                 | Photos of the restaurant (not of one dish), in display order.                                                                 |
+| `dishes`      | `{ dish, verdict?, comment?, images? }[]`                | `dish`: an id from `info.json` `dishes` (each at most once). `verdict`: `1` 推荐, `-1` 避雷, absent = no opinion. Its photos. |
 
 ```json
 {
-  "date": "2026-10-14",
+  "contributor": "u-001",
+  "submittedAt": "2026-10-14T19:30:00Z",
   "rating": 4,
   "images": ["images/01-storefront.jpg"],
   "dishes": [
@@ -172,7 +182,7 @@ in `private/contributors.json`; a contributor's display name is copied to the
 public list when a restaurant crediting them is promoted. Contact details never
 reach Git, the build, or the website (the build output is checked for them).
 
-## Review text (`reviews/<contributor id>.md`)
+## Review text (`reviews/<review id>.md`)
 
 Optional Markdown (GitHub flavor) with no required structure. Leave it out
 when there is no written content.
@@ -205,8 +215,10 @@ On a restaurant page every stored photo is reachable
    thumbnails to switch between them (buttons; the arrow keys move between
    them). Its panel (`#dish-<id>`, a shareable link) lists every reviewer's
    verdict, comment, and photos, newest first.
-3. **Reviews**: every review, newest first, starts with its reviewer's rating,
-   name, and date, then its text, dish verdicts, and its own photos.
+3. **Reviews**: every review, newest first (several by one contributor
+   included), starts with its rating, the contributor's name, and the day,
+   then its text, dish verdicts, and its own photos. Each has an anchor,
+   `#review-<review id>`.
 4. **照片 gallery**: photos no review uses (added by the maintainer), in
    stored order.
 
@@ -222,14 +234,14 @@ Contributors send material to a maintainer directly or through the public
 Tally form on the website; [docs/submissions.md](submissions.md) describes the
 form, the Gmail notifications, and `npm run content:submission`, which brings
 Tally submissions into `private/submissions/` before the steps below. A
-submission about a restaurant that already has reviews adds the contributor's
-review (or updates their earlier one); other reviews are never changed.
+submission is always a review of its own; other reviews are never changed.
 
 1. **Prepare** a private draft. For a Tally submission,
    `npm run content:submission -- prepare <submission id>` builds it (see
    docs/submissions.md). By hand: `content:new` or `content:edit`,
-   `content:contributor`, `content:add-images`, edit `info.json` and
-   the contributor's `reviews/<contributor id>.json` (and `.md`), then `content:check -- <id>`. Preview with
+   `content:contributor`, `content:add-images`, `content:review` (a new
+   review with its id), edit `info.json` and the review's
+   `reviews/<review id>.json` (and `.md`), then `content:check -- <id>`. Preview with
    `npm run dev:drafts`. Problems in drafts are warnings and never block builds.
 2. **Review** the content and the contributor's permission and attribution.
 3. **Add to the database**: `npm run content:promote -- <id>` lists what would
@@ -252,25 +264,26 @@ else.
 
 ## Commands
 
-| Command                                                       | What it does                                                                    |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `npm run content:new -- --name <name>`                        | Create a private draft with a new id; add other names to `altNames`.            |
-| `npm run content:edit -- <id>`                                | Copy a public restaurant into `private/drafts/` to change it.                   |
-| `npm run content:contributor -- find <name or email>`         | Find existing contributors to reuse their ids.                                  |
-| `npm run content:contributor -- add --name <n> [--email <e>]` | Register a contributor privately.                                               |
-| `npm run content:add-images -- <id> <files...>`               | Store standardized photo copies.                                                |
-| `npm run content:extract -- <file>`                           | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`.        |
-| `npm run content:submission -- import <csv or json>`          | Import Tally submissions privately (see docs/submissions.md).                   |
-| `npm run content:submission -- status`/`retry-photos <id>`    | Check a submission; retry its missing photos (also `add-photo`, `waive-photo`). |
-| `npm run content:submission -- prepare <id>`                  | Build or update the private draft from a submission, with a review report.      |
-| `npm run content:submission -- fetch-page <url>`              | Save a public page's text privately as evidence for restaurant information.     |
-| `npm run content:submission -- list` / `mark <id> --status …` | Show or update the private log of imported submissions.                         |
-| `npm run content:check [-- <id>...]`                          | Validate drafts and the database; list ids, names, missing information.         |
-| `npm run images [-- <id>...]`                                 | Process photos and print the renditions.                                        |
-| `npm run content:promote -- <id> [--approved]`                | Move an approved draft into the public database.                                |
-| `npm run content:publish -- <id> [--approved]`                | Show a restaurant on the website.                                               |
-| `npm run content:build`                                       | Write site data to `public/generated/` (part of `build`).                       |
-| `npm run check:privacy`                                       | Check tracked files for private material and image metadata.                    |
+| Command                                                         | What it does                                                                    |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `npm run content:new -- --name <name>`                          | Create a private draft with a new id; add other names to `altNames`.            |
+| `npm run content:edit -- <id>`                                  | Copy a public restaurant into `private/drafts/` to change it.                   |
+| `npm run content:review -- <id> --contributor <u> --rating <n>` | Start a new review (a new review id) in a draft.                                |
+| `npm run content:contributor -- find <name or email>`           | Find existing contributors to reuse their ids.                                  |
+| `npm run content:contributor -- add --name <n> [--email <e>]`   | Register a contributor privately.                                               |
+| `npm run content:add-images -- <id> <files...>`                 | Store standardized photo copies.                                                |
+| `npm run content:extract -- <file>`                             | Print text from `.txt`, `.md`, `.docx`, `.doc`, `.rtf`, `.odt`, `.html`.        |
+| `npm run content:submission -- import <csv or json>`            | Import Tally submissions privately (see docs/submissions.md).                   |
+| `npm run content:submission -- status`/`retry-photos <id>`      | Check a submission; retry its missing photos (also `add-photo`, `waive-photo`). |
+| `npm run content:submission -- prepare <id>`                    | Build or update the private draft from a submission, with a review report.      |
+| `npm run content:submission -- fetch-page <url>`                | Save a public page's text privately as evidence for restaurant information.     |
+| `npm run content:submission -- list` / `mark <id> --status …`   | Show or update the private log of imported submissions.                         |
+| `npm run content:check [-- <id>...]`                            | Validate drafts and the database; list ids, names, missing information.         |
+| `npm run images [-- <id>...]`                                   | Process photos and print the renditions.                                        |
+| `npm run content:promote -- <id> [--approved]`                  | Move an approved draft into the public database.                                |
+| `npm run content:publish -- <id> [--approved]`                  | Show a restaurant on the website.                                               |
+| `npm run content:build`                                         | Write site data to `public/generated/` (part of `build`).                       |
+| `npm run check:privacy`                                         | Check tracked files for private material and image metadata.                    |
 
 Add `--source fixtures` to `content:check`, `content:build`, or `images` to
 work with the fictional fixtures.

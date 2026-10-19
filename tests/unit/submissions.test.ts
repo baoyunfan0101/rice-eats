@@ -162,7 +162,7 @@ async function setup() {
     restaurantsDir,
     'r-abc234',
     validInfo('r-abc234', { name: '测试餐厅', altNames: ['Test Place'], address: '1 Main St' }),
-    { ...TEST_REVIEW, 'reviews/u-001.md': review },
+    { ...TEST_REVIEW, 'reviews/v-u001.md': review },
   );
   await writeRestaurant(
     restaurantsDir,
@@ -713,7 +713,7 @@ describe('importing submissions', () => {
     await retryPhotos('sub2', options());
     await submissionStatus('sub3', options());
     expect(await snapshot()).toEqual(before);
-    expect(await readFile(path.join(restaurantsDir, 'r-abc234/reviews/u-001.md'), 'utf8')).toBe(
+    expect(await readFile(path.join(restaurantsDir, 'r-abc234/reviews/v-u001.md'), 'utf8')).toBe(
       review,
     );
     expect(existsSync(draftsDir)).toBe(false);

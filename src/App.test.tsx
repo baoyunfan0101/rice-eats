@@ -210,6 +210,7 @@ const summary = (
   cuisines: [],
   tags: tags.map((t) => ({ id: t, label: TAG_LABELS[t] ?? t })),
   links: {},
+  raterCount: 1,
   reviewCount: 1,
   ...(extra.rating !== undefined ? { ratingAverage: extra.rating } : {}),
   ...extra,
@@ -230,6 +231,7 @@ const restaurants = [
     tags: ['group'],
     rating: 5,
     ratingAverage: 4.5,
+    raterCount: 2,
     reviewCount: 2,
     pricePerPerson: 28,
     location: { lat: 29.74, lng: -95.39 },
@@ -249,6 +251,8 @@ const restaurants = [
 // review's own photo, 4 used by no review (gallery), 5 of another dish.
 const A = { id: 'u-001', name: '作者甲' };
 const B = { id: 'u-002', name: '作者乙' };
+/** The detail the fake server answers with; tests may replace it. */
+let served: RestaurantDetail;
 const detail: RestaurantDetail = {
   ...restaurants[0]!,
   address: '1 Example St',
@@ -270,16 +274,18 @@ const detail: RestaurantDetail = {
       imageIndexes: [1, 2],
       reviews: [
         {
-          reviewId: 'u-002',
+          reviewId: 'v-b2',
           contributor: B,
+          submittedAt: '2026-10-05T12:00:00Z',
           date: '2026-10-05',
           verdict: 1,
           comment: '也好吃',
           imageIndexes: [],
         },
         {
-          reviewId: 'u-001',
+          reviewId: 'v-a1',
           contributor: A,
+          submittedAt: '2026-09-01T12:00:00Z',
           date: '2026-09-01',
           verdict: 1,
           comment: '好吃',
@@ -293,7 +299,15 @@ const detail: RestaurantDetail = {
       recommend: 0,
       avoid: 0,
       imageIndexes: [],
-      reviews: [{ reviewId: 'u-001', contributor: A, date: '2026-09-01', imageIndexes: [] }],
+      reviews: [
+        {
+          reviewId: 'v-a1',
+          contributor: A,
+          submittedAt: '2026-09-01T12:00:00Z',
+          date: '2026-09-01',
+          imageIndexes: [],
+        },
+      ],
     },
     {
       id: 'd3',
@@ -302,7 +316,14 @@ const detail: RestaurantDetail = {
       avoid: 1,
       imageIndexes: [],
       reviews: [
-        { reviewId: 'u-001', contributor: A, date: '2026-09-01', verdict: -1, imageIndexes: [] },
+        {
+          reviewId: 'v-a1',
+          contributor: A,
+          submittedAt: '2026-09-01T12:00:00Z',
+          date: '2026-09-01',
+          verdict: -1,
+          imageIndexes: [],
+        },
       ],
     },
     {
@@ -312,14 +333,22 @@ const detail: RestaurantDetail = {
       avoid: 0,
       imageIndexes: [5],
       reviews: [
-        { reviewId: 'u-001', contributor: A, date: '2026-09-01', verdict: 1, imageIndexes: [5] },
+        {
+          reviewId: 'v-a1',
+          contributor: A,
+          submittedAt: '2026-09-01T12:00:00Z',
+          date: '2026-09-01',
+          verdict: 1,
+          imageIndexes: [5],
+        },
       ],
     },
   ],
   reviews: [
     {
-      id: 'u-002',
+      id: 'v-b2',
       contributor: B,
+      submittedAt: '2026-10-05T12:00:00Z',
       date: '2026-10-05',
       rating: 4,
       html: '<h3>标题</h3><p>第二条点评</p>',
@@ -327,8 +356,9 @@ const detail: RestaurantDetail = {
       dishes: [{ id: 'd1', name: '牛胸', verdict: 1 }],
     },
     {
-      id: 'u-001',
+      id: 'v-a1',
       contributor: A,
+      submittedAt: '2026-09-01T12:00:00Z',
       date: '2026-09-01',
       rating: 5,
       html: '<p>第一条点评</p>',
@@ -350,6 +380,7 @@ let failIndex = false;
 beforeEach(() => {
   index = { source: 'content', includesDrafts: false, restaurants };
   failIndex = false;
+  served = detail;
   clearContentCache();
   vi.stubGlobal(
     'fetch',
@@ -357,7 +388,7 @@ beforeEach(() => {
       if (url.endsWith('generated/index.json')) {
         return failIndex ? new Response('', { status: 500 }) : Response.json(index);
       }
-      if (url.endsWith(`generated/restaurants/${detail.id}.json`)) return Response.json(detail);
+      if (url.endsWith(`generated/restaurants/${served.id}.json`)) return Response.json(served);
       return new Response('', { status: 404 });
     }),
   );
@@ -800,6 +831,37 @@ describe('browsing', () => {
 });
 
 describe('restaurant details', () => {
+  it('shows every review of a contributor who reviewed twice, and counts them once in the rating', async () => {
+    served = {
+      ...detail,
+      ratingAverage: 4,
+      rating: 4,
+      raterCount: 2,
+      reviewCount: 3,
+      reviews: [
+        {
+          id: 'v-a2',
+          contributor: A,
+          submittedAt: '2026-10-09T08:00:00Z',
+          date: '2026-10-09',
+          rating: 4,
+          html: '<p>又来了一次</p>',
+          imageIndexes: [],
+          dishes: [],
+        },
+        ...detail.reviews,
+      ],
+    };
+    visit('r/bayou-bbq/');
+    const region = await screen.findByRole('region', { name: '点评（3）' });
+    expect(screen.getByText('2 人评分')).toHaveAttribute('title', '每人只计最近一条点评的评级');
+    const items = [...region.querySelectorAll('ol > li')];
+    expect(items.map((li) => li.id)).toEqual(['review-v-a2', 'review-v-b2', 'review-v-a1']);
+    expect(items.filter((li) => li.textContent?.includes('作者甲'))).toHaveLength(2);
+    // The people who wrote them, each once.
+    expect(screen.getByText('点评作者：作者乙、作者甲')).toBeInTheDocument();
+  });
+
   it('opens from the list and shows the average rating, dishes with their counts, and every review', async () => {
     const user = userEvent.setup();
     visit('');

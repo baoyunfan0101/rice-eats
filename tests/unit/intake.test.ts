@@ -217,9 +217,10 @@ describe('agent content workflow (synthetic submissions)', () => {
     ]);
     await mkdir(path.join(dir, 'reviews'));
     await writeFile(
-      path.join(dir, 'reviews', `${contributor}.json`),
+      path.join(dir, 'reviews', `v-${contributor.replace('-', '')}.json`),
       JSON.stringify({
-        date: '2026-10-14',
+        contributor,
+        submittedAt: '2026-10-14T12:00:00Z',
         rating: 3, // the contributor wrote "人上人"
         images: [shelf],
         dishes: [
@@ -228,7 +229,10 @@ describe('agent content workflow (synthetic submissions)', () => {
         ],
       }),
     );
-    await writeFile(path.join(dir, 'reviews', `${contributor}.md`), '店面很小，周末早上要排队。\n');
+    await writeFile(
+      path.join(dir, 'reviews', `v-${contributor.replace('-', '')}.md`),
+      '店面很小，周末早上要排队。\n',
+    );
     const reviewed = await check(true);
     expect(reviewed.diagnostics.filter((d) => d.level === 'error' || d.draftError)).toEqual([]);
     expect(reviewed.details[0]!.cover?.alt).toBe('晨光面包坊（虚构）');
@@ -262,8 +266,13 @@ describe('agent content workflow (synthetic submissions)', () => {
     );
     await mkdir(path.join(dir, 'reviews'));
     await writeFile(
-      path.join(dir, 'reviews', `${contributor}.json`),
-      JSON.stringify({ date: '2026-10-14', rating: 3, images: stored }),
+      path.join(dir, 'reviews', `v-${contributor.replace('-', '')}.json`),
+      JSON.stringify({
+        contributor,
+        submittedAt: '2026-10-14T12:00:00Z',
+        rating: 3,
+        images: stored,
+      }),
     );
     await moveDraft(db.drafts, db.restaurants, 'r-photos');
     await setStatus(path.join(db.restaurants, 'r-photos'), 'published');
@@ -281,10 +290,10 @@ describe('agent content workflow (synthetic submissions)', () => {
     const dir = await createDraft(db.drafts, 'r-update', 'Original Name');
     await mkdir(path.join(dir, 'reviews'));
     await writeFile(
-      path.join(dir, 'reviews', `${first}.json`),
-      JSON.stringify({ date: '2026-10-01', rating: 5 }),
+      path.join(dir, 'reviews', `v-${first.replace('-', '')}.json`),
+      JSON.stringify({ contributor: first, submittedAt: '2026-10-01T12:00:00Z', rating: 5 }),
     );
-    await writeFile(path.join(dir, 'reviews', `${first}.md`), 'First visit.\n');
+    await writeFile(path.join(dir, 'reviews', `v-${first.replace('-', '')}.md`), 'First visit.\n');
     await moveDraft(db.drafts, db.restaurants, 'r-update');
     await setStatus(path.join(db.restaurants, 'r-update'), 'published');
 
@@ -294,16 +303,22 @@ describe('agent content workflow (synthetic submissions)', () => {
       /already exists/,
     );
     await writeFile(
-      path.join(draft, 'reviews', `${second}.json`),
-      JSON.stringify({ date: '2026-10-05', rating: 4 }),
+      path.join(draft, 'reviews', `v-${second.replace('-', '')}.json`),
+      JSON.stringify({ contributor: second, submittedAt: '2026-10-05T12:00:00Z', rating: 4 }),
     );
-    await writeFile(path.join(draft, 'reviews', `${second}.md`), 'Second visit: still good.\n');
+    await writeFile(
+      path.join(draft, 'reviews', `v-${second.replace('-', '')}.md`),
+      'Second visit: still good.\n',
+    );
     const edited = JSON.parse(await readFile(path.join(draft, 'info.json'), 'utf8'));
     await writeFile(path.join(draft, 'info.json'), JSON.stringify({ ...edited, name: 'Renamed' }));
 
     const changes = await folderChanges(draft, path.join(db.restaurants, 'r-update'));
     expect(changes).toEqual({
-      added: [`reviews/${second}.json`, `reviews/${second}.md`],
+      added: [
+        `reviews/v-${second.replace('-', '')}.json`,
+        `reviews/v-${second.replace('-', '')}.md`,
+      ],
       changed: ['info.json'],
       removed: [],
     });
@@ -314,7 +329,7 @@ describe('agent content workflow (synthetic submissions)', () => {
       ['r-update', 'Renamed', 'published', 4.5],
     ]);
     expect(await readdir(db.restaurants)).toEqual(['r-update']);
-    expect(result.details[0]!.reviews.map((r) => r.id)).toEqual([second, first]);
+    expect(result.details[0]!.reviews.map((r) => r.contributor.id)).toEqual([second, first]);
     expect(existsSync(path.join(db.drafts, 'r-update'))).toBe(false);
   });
 });

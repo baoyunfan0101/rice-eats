@@ -36,6 +36,25 @@ export function newRestaurantId(taken: Set<string>): string {
   }
 }
 
+/** A review id ("v-" and six letters or digits) not in `taken`; never derived from the review. */
+export function newReviewId(taken: Set<string>): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  for (;;) {
+    const id = `v-${[...randomBytes(6)].map((b) => alphabet[b % alphabet.length]).join('')}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** The review ids already used in these restaurant folders (a draft and its public version). */
+export async function takenReviewIds(...dirs: string[]): Promise<Set<string>> {
+  const taken = new Set<string>();
+  for (const dir of dirs) {
+    const reviews = path.join(dir, 'reviews');
+    if (existsSync(reviews)) for (const f of await readdir(reviews)) taken.add(f.replace(/\.(json|md)$/, ''));
+  }
+  return taken;
+}
+
 /** Creates a draft folder (info.json and images/) in the private drafts directory. */
 export async function createDraft(draftsDir: string, id: string, name: string) {
   const parsedId = idSchema.safeParse(id);

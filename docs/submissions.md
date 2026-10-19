@@ -448,13 +448,14 @@ touches `content/`, and it can be run again at any time.
   name alone; a submission without an email gets its own contributor (with a
   note when the name is already taken), and anonymous and named submissions
   are never merged.
-- **One review per contributor**: the submission becomes the contributor's
-  review, `reviews/<contributor id>.json` (date, rating, dish verdicts and
-  comments, photos) and `.md` (the text). Other contributors' reviews are
-  never changed. A later submission from the same contributor updates their
-  review: the new date, rating, and text, with their earlier photos and the
-  dishes it does not mention again kept (the report says "updates the
-  contributor's earlier review").
+- **Every submission is a review of its own**: `reviews/<review id>.json`
+  (contributor, submission time, rating, dish verdicts and comments, photos)
+  and `.md` (the text), with only this submission's content. Its review id is
+  generated on the first prepare and kept in `prepare.json`, so a rerun
+  rewrites the same review and never adds a second one; another submission,
+  even by the same contributor with the same words, always gets its own.
+  No review is ever changed by another submission. The submission time is
+  Tally's "Submitted at" (UTC), so reviews of one day still have an order.
 - **Dishes**: a dish name (or one of its `altNames`, ignoring width, case,
   and spacing) that the restaurant already has is that dish; any other name
   becomes a new dish (`d1`, `d2`, …) in `info.json`. To merge two dishes,
@@ -465,6 +466,11 @@ touches `content/`, and it can be run again at any time.
   content hash, so a rerun or a recovered photo never creates a second copy.
   Values already in the draft or the public record are never overwritten; a
   different value is reported as a conflict.
+- **Shared restaurant information**: tags, other names, cuisines, facts,
+  and dishes in `info.json` are shared by every review. `prepare.json`
+  records what each run itself added, and when (`owned`), and what the
+  submission gives whoever added it (`claims`); equal values elsewhere are
+  never taken as its own.
 - **Idempotent and recoverable**: progress is kept in `prepare.json` next to
   the submission; an interrupted run continues where it stopped, and a run
   with nothing new reports `unchanged`. A draft edited by hand since the last
@@ -492,29 +498,30 @@ npm run content:submission -- mark <submission id> --status rejected
 
 The raw submission stays in `private/submissions/` (rejection never deletes
 it). Its contribution is taken back out of the draft, using what
-`prepare.json` recorded: the contributor's review before the submission, a
-fingerprint of the review and photos as prepare last wrote them, and what the
-submission itself added to `info.json` (`owned`: each run records only the
-values it added, never what other submissions or the maintainer added in
-between, so preparing it again never widens what it owns):
+`prepare.json` recorded: its review id, a fingerprint of the review and
+photos as prepare last wrote them, and what the submission itself added to
+`info.json` (`owned`: each run records only what it added, never what other
+submissions or the maintainer added in between, so preparing it again never
+widens what it owns):
 
-- the contributor's review goes (or, for an update, their earlier review is
-  put back), but only while it is exactly what the submission wrote; other
-  reviews are never touched. When that earlier review came from another
-  submission by the same contributor that was rejected since (say A, kept
-  with `--resolved` under this one), the review from before A is put back
-  instead, or none, so a rejected submission never comes back; what A left
-  only because this review used it (photos, dishes) goes with it;
-- each field of `info.json` the submission filled and nobody changed since
-  goes; one changed since is a conflict (below);
-- lists (`tags`, `altNames`, `cuisines`): only the entries the submission
-  added are removed; dishes it added go unless another review rates them;
-- images the submission brought (recognized by content) are removed, unless
-  another review uses them; images that were there before or were added by
-  hand stay;
-- a draft folder that prepare created is removed when nothing else is left
-  in it (no other review, no other information or photo; for a checked-out
-  restaurant, nothing that differs from the public one); a restaurant's
+- its own review goes, but only while it is exactly what the submission
+  wrote. Other reviews are never touched, whoever wrote them and whatever
+  they say, and no review is ever put back: when a contributor's latest
+  review goes, their previous one simply counts for the rating again;
+- what it added to `info.json` goes where it is still as written, unless
+  another submission still in the draft added it later (say the maintainer
+  removed a tag after A and B added it again) or gives it too: that one
+  owns it from then on, so rejecting it later takes it out. A dish also
+  stays while another review rates it. A field changed since is a conflict
+  (below);
+- images the submission stored, at the path it stored them and unchanged,
+  are removed, unless another review uses them; images that were there
+  before or were added by hand stay (a copy with the same content is not
+  taken as its own);
+- a draft folder that prepare created (for this or another submission) is
+  removed when nothing else is left in it (no review, no other submission,
+  no other information or photo; for a checked-out restaurant, nothing that
+  differs from the public one); a restaurant's
   earlier draft (`content:new`, `content:edit`) keeps
   everything that did not come from the submission;
 - tags the submission proposed are withdrawn from `private/tags.json` unless
@@ -532,10 +539,8 @@ other status, `prepare` refuses the submission, and `content:check` and
 `content:promote` (also with `--approved`) fail for that restaurant's draft,
 whatever the log says. This happens when:
 
-- something the submission wrote was changed since: the contributor's review
-  (its text, data, or photos), by hand or by a later submission from the same
-  contributor that updated it (the message names that submission); a field
-  of `info.json` it filled (say the maintainer corrected the address it
+- something the submission wrote was changed since: its review (text, data,
+  or photos) edited by hand; a field of `info.json` it filled (say the maintainer corrected the address it
   gave); a dish it added; or another review now uses one of its photos.
   Nothing is changed and the command exits with code 1 listing them. Remove
   the submission's content from them (or put back what was there before) and
